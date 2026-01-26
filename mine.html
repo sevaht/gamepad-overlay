@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Gamepad Overlay</title>
+        <style>
+            body {
+                background: lightblue;
+            }
+
+            #overlayRoot {
+                border: 1px solid red;  /* temporary for development */ 
+                width: 800px;
+                height: auto;
+            }
+
+            .outer-border {
+                fill: none;
+                stroke: white;
+                stroke-width: 4; /* 2 outward total */
+            }
+
+            .inner-border {
+                fill: none;
+                stroke: black;
+                stroke-width: 2; /* 1 outward */
+            }
+
+            .gamepad-button {
+                #fill: #ccc;  /* rgba(0,0,0,0.5); */
+                fill: rgba(0,0,0,0.2);
+                stroke: black;
+                stroke-width: 0;
+            }
+
+            .gamepad-button.pressed {
+                fill: #c00;
+            }
+        </style>
+        <script src="svg-shapes.js"></script>
+    </head>
+    <body>
+        <svg viewBox="0 0 800 400" id="overlayRoot">
+        </svg>
+        <script defer>
+            // TODO: fix variable pollution
+            let radius = 30;
+            let extents = {x: radius, y: radius};
+            let analogRadius = radius * Math.SQRT2; // distance from center to corner of a cell
+            let legendOffset = (analogRadius - radius) / 2;
+
+            let dpadCenter = {x:radius*3+2, y:radius*3+2};
+
+            const svg = document.getElementById('overlayRoot');
+
+            const dpad = new Cross({svg, cellExtent: radius});
+            const dpadGroupMeta = dpad.appendGroup({
+                center: dpadCenter,
+                layers: [{classes:"outer-border", cutout:true}, {classes:"inner-border", cutout:true}]
+                
+            });
+            const dpadGroup = dpadGroupMeta.group;
+
+            const dpadButton = new Shape({svg, extents, shapeType: ShapeType.RECTANGLE});
+            dpadButton.appendGroup({  // up button
+                container: dpadGroup,
+                center: dpad.north.center,
+                layers: [{classes:"gamepad-button"}],
+            });
+            new Shape({  // up legend
+                svg,
+                extents: {x: extents.x / 2, y: extents.y / 2},
+                shapeType: ShapeType.TRIANGLE_UP
+            }).appendGroup({
+                container: dpadGroup,
+                center: {x: dpad.north.center.x, y: dpad.north.center.y - legendOffset},
+                layers: [{classes:"outer-border", cutout:true}, {classes:"inner-border", cutout:true}],
+            });
+
+            dpadButton.appendGroup({  // down button
+                container: dpadGroup,
+                center: dpad.south.center,
+                layers: [{classes:"gamepad-button"}],
+            });
+            new Shape({  // down legend
+svg,
+                extents: {x: extents.x / 2, y: extents.y / 2},
+                shapeType: ShapeType.TRIANGLE_DOWN
+            }).appendGroup({
+                container: dpadGroup,
+                center: {x: dpad.south.center.x, y: dpad.south.center.y + legendOffset},
+                layers: [{classes:"outer-border", cutout:true}, {classes:"inner-border", cutout:true}],
+            });
+
+            dpadButton.appendGroup({  // left button
+                container: dpadGroup,
+                center: dpad.west.center,
+                layers: [{classes:"gamepad-button"}],
+            });
+            new Shape({  // left legend
+                svg,
+                extents: {x: extents.x / 2, y: extents.y / 2},
+                shapeType: ShapeType.TRIANGLE_LEFT
+            }).appendGroup({
+                container: dpadGroup,
+                center: {x: dpad.west.center.x - legendOffset, y: dpad.west.center.y},
+                layers: [{classes:"outer-border", cutout:true}, {classes:"inner-border", cutout:true}],
+            });
+
+            const rightGroupMeta = dpadButton.appendGroup({  // right button
+                container: dpadGroup,
+                center: dpad.east.center,
+                layers: [{classes:"gamepad-button"}],
+            });
+            const rightGroup = rightGroupMeta.group;
+            const rightLegend = new Shape({  // right legend
+                svg,
+                extents: {x: extents.x / 2, y: extents.y / 2},
+                shapeType: ShapeType.TRIANGLE_RIGHT
+            })
+            rightLegend.appendGroup({
+                container: dpadGroup,
+                center: {x: dpad.east.center.x + legendOffset, y: dpad.east.center.y},
+                layers: [{classes:"outer-border", cutout:true}, {classes:"inner-border", cutout:true}],
+            });
+
+            
+
+            
+
+
+
+
+            const centerButton = new Shape({
+                svg,
+                extents: {x: analogRadius, y: analogRadius},
+                shapeType: ShapeType.ELLIPSE
+            });
+            const centerGroupMeta = centerButton.appendGroup({
+                //container: dpadGroup,
+                center: dpadCenter,
+                layers: [{classes:"outer-border", cutout:true}, {classes:"inner-border", cutout:true}, {classes:"gamepad-button"}],
+            });
+
+            // to make centerButton cut through rightButton, enclose right button in a new group with a new filter
+            // and have that filter include a group translated to match the center with the center inside
+
+            // hack
+            //dpadGroup.setAttribute("mask", `url(#${centerGroupMeta.cutoutId})`);
+
+            const oldElement = rightGroup;
+            const newGroup = document.createElementNS(SVG_NS, 'g');
+            oldElement.replaceWith(newGroup);
+            newGroup.appendChild(oldElement);
+
+            // TODO: maybe this would be simpler if I didn't put everything into the dpad group?
+            // but then I couldn't cutout everything at once...
+            // ALSO, making too many filters... and the everythingMask should be a ref!
+
+            const newFilterGroup = document.createElementNS(SVG_NS, 'g');
+            newFilterGroup.setAttribute(
+                "transform",
+                `translate(${centerGroupMeta.center.x - dpadGroupMeta.center.x} ${centerGroupMeta.center.y - dpadGroupMeta.center.x})`
+            );
+
+            const HALF_MAX = 100_000;
+            const FULL_MAX = HALF_MAX*2;
+            const allCoordinates = {
+                x: -HALF_MAX,
+                y: -HALF_MAX,
+                width: FULL_MAX,
+                height: FULL_MAX,
+            };
+            let everythingMask = document.createElementNS(SVG_NS, 'rect');
+            everythingMask.setAttribute("id", monotonicId("everything-mask"));
+            everythingMask.setAttribute("x", allCoordinates.x);
+            everythingMask.setAttribute("y", allCoordinates.y);
+            everythingMask.setAttribute("width", allCoordinates.width);
+            everythingMask.setAttribute("height", allCoordinates.height);
+            everythingMask.setAttribute("fill", "white");
+            newFilterGroup.appendChild(everythingMask);
+            const newFilterUse = document.createElementNS(SVG_NS, 'use');
+            newFilterUse.setAttribute("href", `#${centerGroupMeta.id}`);
+            newFilterUse.setAttribute("fill", "black");
+            newFilterGroup.appendChild(newFilterUse);
+            
+            let newMask = document.createElementNS(SVG_NS, 'mask');
+            newMask.setAttribute("id", monotonicId("cutout"));
+            newMask.setAttribute("maskUnits", "userSpaceOnUse");
+            newMask.setAttribute("maskContentUnits", "userSpaceOnUse");
+            newMask.appendChild(newFilterGroup);
+
+            let myDefs = svg.querySelector("defs");
+            myDefs.appendChild(newMask);
+
+            newGroup.setAttribute("mask", `url(#${newMask.getAttribute("id")})`);
+            /*
+            const myOffset = {
+                x: centerGroupMeta.center.x + rightGroupMeta.center.x,
+                y: centerGroupMeta.center.y + rightGroupMeta.center.y,
+            };
+            const rightCutout = document.getElementById(rightGroupMeta.cutoutId);
+
+            const cutoutGroup = document.createElementNS(SVG_NS, 'g');
+            cutoutGroup.setAttribute(
+                "transform",
+                `translate(${myOffset.x} ${myOffset.y})`
+            );
+
+            rightCutout.appendChild(cutoutGroup);
+            
+            //rightCutout.appendChild(
+            */
+
+
+        </script>
+    </body>
+</html>
