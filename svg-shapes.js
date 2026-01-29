@@ -1,8 +1,16 @@
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
-let nextMonotonicId = 0;
+// TODO: allow users to give id prefixes instead of just using the tag name
+
+const nextMonotonicId = new Map();
 function monotonicId(prefix) {
-    return `${prefix}-${nextMonotonicId++}`;
+    const n = nextMonotonicId.get(prefix) ?? 1;
+    nextMonotonicId.set(prefix, n + 1);
+    return `${prefix}-${n}`;
+}
+
+function getIdPrefixedChild({target, prefix}) {
+    return target.querySelector(`:scope > [id^="${prefix}-"]`);
 }
 
 function toClassList(classes) {
@@ -15,6 +23,25 @@ function toDimensions(value) {
         return {x: value, y: value};
     }
     return {x: value.x, y: value.y};
+}
+
+/**
+ * Set multiple attributes on an element.
+ *
+ * - null/undefined → attribute removed
+ * - everything else → String(value)
+ *
+ * returns the element.
+ */
+function setAttributes(element, attributes) {
+    for (const [name, value] of Object.entries(attributes)) {
+        if (value == null) {
+            element.removeAttribute(name);
+        } else {
+            element.setAttribute(name, String(value));
+        }
+    }
+    return element;
 }
 
 const ShapeType = Object.freeze({
@@ -47,142 +74,152 @@ class Point {
     }
 }
 
-class LayeredSvgElement {
-    #id;
-    #svg;
-    #element;
-    #cutoutId;
-    constructor({svg, element, cell}) {
-        this.#id = element.getAttribute("id") ?? monotonicId(element.tagName);
-        this.#svg = svg;
-        this.#element = element;
-        this.#element.setAttribute("id", this.#id);
 
-        let defs = this.#svg.querySelector("defs");
-        if (!defs) {
-            defs = document.createElementNS(SVG_NS, "defs");
-            svg.insertBefore(defs, svg.firstChild);
-        }
-        defs.appendChild(this.#element);
+
+function createUseElement(id, attributes) {
+    const element = document.createElementNS(SVG_NS, "use");
+    element.setAttribute("href", `#${id}`);
+    if (attributes != null) {
+        setAttributes(element, attributes);
+    }
+    return element;
+}
+
+class SvgEntity {
+    #container;
+    #group;
+    //#center;
+    #maskId;
+    #id;
+    constructor({container, group, maskId, id}) {  // center?
+        this.#container = container;
+        this.#group = group;
+        this.#maskId = maskId;
+        this.#id = id;
+    }
+    get container() { return this.#container; }
+    get group() { return this.#group; }
+    get maskId() { return this.#maskId; }
+    get id() { return this.#id; }
+}
+
+// creates/uses defs and a mask of everything
+class SvgContext {
+    #svg;
+    #defs;
+    #everythingRectId;
+    #maskSizeAttributes;
+
+    static #MASK_SIZE_ATTRIBUTES = (() => {
         // NOTE: this needs to be large enough to cover anything in the
         // coordinate systems of rendered objects.  Just picking a large
         // value, but in my testing 30_000_000 works, but 40_000_000
         // fails due to rendering engine limits.  This should be safe.
-        const HALF_MAX = 100_000;
-        const FULL_MAX = HALF_MAX*2;
-        const allCoordinates = {
-            x: -HALF_MAX,
-            y: -HALF_MAX,
-            width: FULL_MAX,
-            height: FULL_MAX,
-        };
-        let mask = document.createElementNS(SVG_NS, 'mask');
-        mask.setAttribute("id", monotonicId("cutout"));
-        mask.setAttribute("maskUnits", "userSpaceOnUse");
-        mask.setAttribute("maskContentUnits", "userSpaceOnUse");
-        // add double the area
-        mask.setAttribute("x", allCoordinates.x);
-        mask.setAttribute("y", allCoordinates.y);
-        mask.setAttribute("width", allCoordinates.width);
-        mask.setAttribute("height", allCoordinates.height);
-        defs.appendChild(mask, svg.firstChild);
-        this.#cutoutId = mask.getAttribute("id");
-        let everythingMask = document.createElementNS(SVG_NS, 'rect');
-        everythingMask.setAttribute("id", monotonicId("everything-mask"));
-        everythingMask.setAttribute("x", allCoordinates.x);
-        everythingMask.setAttribute("y", allCoordinates.y);
-        everythingMask.setAttribute("width", allCoordinates.width);
-        everythingMask.setAttribute("height", allCoordinates.height);
-        everythingMask.setAttribute("fill", "white");
-        mask.appendChild(everythingMask, mask.firstChild);
-        let shapeRemove = this.#createUseElement();
-        shapeRemove.setAttribute("fill", "black");
-        mask.appendChild(shapeRemove);
-    }
-
-    #createUseElement() {
-        const element = document.createElementNS(SVG_NS, 'use');
-        element.setAttribute("href", `#${this.#id}`);
-        return element;
-    }
-
-    get element() { return this.#element; }
-    /**
-     * Create and append an SVG group positioned around a center point, containing one or more
-     * layered `<use>` elements that reference this instance’s predefined SVG definition.
-     *
-     * The group is positioned so that the referenced artwork is centered at the given point.
-     * Layers are appended in the order provided; earlier layers render beneath later ones.
-     *
-     * @param {Object} params
-     *
-     * @param {SVGElement} [params.container]
-     *   The SVG element to append the group into. If omitted or `null`, the root SVG element
-     *   provided to the constructor is used. If provided, it must be a descendant of that
-     *   root SVG element so the referenced definition is available.
-     *
-     * @param {Object} params.center
-     *   The point (in SVG user units) at which the referenced artwork will be centered.
-     * @param {number} params.center.x
-     *   X coordinate of the center point.
-     * @param {number} params.center.y
-     *   Y coordinate of the center point.
-     *
-     * @param {Array<Object>} [params.layers]
-     *   Ordered list of layer descriptors. Each descriptor produces one `<use>` element
-     *   referencing the same definition. If omitted, a single default layer is created.
-     *
-     * @param {string|string[]} [params.layers[].classes]
-     *   Optional CSS class name or list of class names to apply to the layer.
-     *
-     * @param {string} [params.layers[].id]
-     *   Optional `id` attribute to assign to the layer’s `<use>` element.
-     *
-     * @returns {SVGGElement}
-     *   The created `<g>` element containing the layered `<use>` elements.
-     *
-     * @throws {Error}
-     *   If `container` is provided and is not a descendant of the root SVG element associated
-     *   with this instance.
-     */
-    appendGroup({container, center, layers}) {
-        layers ??= [{}];
-        if (container == null) {
-            container = this.#svg;
-        } else if (!this.#svg.contains(container)) {
-            // this matters because the def won't be defined.
-            throw new Error("Passed container is not a child of the svg given in the constructor.");
+        const HALF = 100_000;
+        const FULL = HALF * 2;
+        return Object.freeze({
+            x: -HALF,
+            y: -HALF,
+            width: FULL,
+            height: FULL,
+        });
+    })();
+    constructor(svg) {
+        this.#svg = svg;
+        this.#defs = this.#svg.querySelector("defs");
+        if (!this.#defs) {
+            this.#defs = document.createElementNS(SVG_NS, "defs");
+            this.#svg.insertBefore(this.#defs, this.#svg.firstChild);
         }
-        const group = document.createElementNS(SVG_NS, 'g');
-        group.setAttribute(
-            "transform",
-            `translate(${center.x} ${center.y})`
-        );
-        const baseUse = this.#createUseElement();
+        let prefix = "everything-rect";
+        let everythingRect = getIdPrefixedChild({target: this.#defs, prefix});
+        if (!everythingRect) {
+            // NOTE: this needs to be large enough to cover anything in the
+            // coordinate systems of rendered objects.  Just picking a large
+            // value, but in my testing 30_000_000 works, but 40_000_000
+            // fails due to rendering engine limits.  This should be safe.
+            const HALF_MAX = 100_000;
+            const FULL_MAX = HALF_MAX*2;
+            everythingRect = setAttributes(document.createElementNS(SVG_NS, "rect"), {
+                id: monotonicId("everything-rect"),
+                ...this.constructor.#MASK_SIZE_ATTRIBUTES,
+            });
+            this.#defs.insertBefore(everythingRect, this.#defs.firstChild);
+        }
+        this.#everythingRectId = everythingRect.getAttribute("id");
+    }
+    get svg() { return this.#svg; }
+    get defs() { return this.#defs; }
 
+    hasAncestor(element) {
+        return this.#svg.contains(element);
+    }
+
+    ensureMask(id) {
+        const maskId = `cutout-${id}`;
+        let mask = this.#defs.querySelector(`:scope > #${maskId}`);
+        if (mask == null) {
+            mask = setAttributes(document.createElementNS(SVG_NS, 'mask'), {
+                id: maskId,
+                maskUnits: "userSpaceOnUse",
+                maskContentUnits: "userSpaceOnUse",
+                ...this.constructor.#MASK_SIZE_ATTRIBUTES,
+            });
+            mask.appendChild(setAttributes(document.createElementNS(SVG_NS, 'use'), {
+                href: `#${this.#everythingRectId}`,
+                fill: "white",
+            }));
+            mask.appendChild(createUseElement(id, {fill: "black"}));
+            this.#defs.appendChild(mask);
+        }
+        return maskId;
+    }
+
+    registerDefinition(element) {
+        let id = element.getAttribute("id");
+        if (!id) {
+            id = monotonicId(element.tagName);
+            element.setAttribute("id", id);
+        }
+        this.#defs.appendChild(element);
+        return id;
+    }
+
+    appendEntity({id, center, layers, target}) {
+        layers ??= [{}];
+        if (target == null) {
+            target = this.#svg;
+        } else if (!this.hasAncestor(target)) {
+            throw new Error("Passed target is not a child of the svg given in the constructor.");
+        }
+        const container = setAttributes(document.createElementNS(SVG_NS, "g"), {
+            "transform": `translate(${center.x} ${center.y})`
+        });
+        const group = document.createElementNS(SVG_NS, "g");
+        container.appendChild(group);
+
+        const baseUseElement = createUseElement(id);
+        let maskId;
         for (const layer of layers) {
-            const use = baseUse.cloneNode(false);
+            const useElement = baseUseElement.cloneNode(false);
             for (const className of toClassList(layer.classes)) {
-                use.classList.add(className);
+                useElement.classList.add(className);
             }
             if (layer.id) {
-                use.setAttribute("id", id);
+                useElement.setAttribute("id", layer.id);
             }
             if (layer.cutout) {
-                use.setAttribute("mask", `url(#${this.#cutoutId})`);
+                maskId = this.ensureMask(id);
+                useElement.setAttribute("mask", `url(#${maskId})`);
             }
-            group.appendChild(use);
+            group.appendChild(useElement);
         }
-        container.appendChild(group);
-        //return group;
-        return {
-            group,
-            center,
-            cutoutId: this.#cutoutId,
-            id: this.#id,
-        };
+        target.appendChild(container);
+
+        return new SvgEntity({container, group, maskId, id}); // center?
     }
-}
+};
+
 
 /**
  * Computes geometric positions for a grid cell.
@@ -271,112 +308,110 @@ class CompassLayout {
 
 
 class Cross extends CompassLayout {
-    #svg;
-    #layeredSvgElement;
-    constructor({svg, cellExtent}) {
+    #context;
+    #definition;
+    #id;
+    constructor({context, cellExtent}) {
         super(cellExtent);
-        this.#svg = svg;
-        const element = document.createElementNS(SVG_NS, 'polygon');
-        element.setAttribute(
-            "points",
-            `${this.west.bottomRight} ` +
-            `${this.west.bottomLeft} ` +
-            `${this.west.topLeft} ` +
-            `${this.north.bottomLeft} ` +
-            `${this.north.topLeft} ` +
-            `${this.north.topRight} ` +
-            `${this.east.topLeft} ` +
-            `${this.east.topRight} ` +
-            `${this.east.bottomRight} ` +
-            `${this.south.topRight} ` +
-            `${this.south.bottomRight} ` +
-            `${this.south.bottomLeft}`
-        );
-        this.#layeredSvgElement = new LayeredSvgElement({svg, element, cell: this.cell});
+        this.#context = context;
+        this.#definition = setAttributes(document.createElementNS(SVG_NS, 'polygon'), {
+            "points":
+                `${this.west.bottomRight} ` +
+                `${this.west.bottomLeft} ` +
+                `${this.west.topLeft} ` +
+                `${this.north.bottomLeft} ` +
+                `${this.north.topLeft} ` +
+                `${this.north.topRight} ` +
+                `${this.east.topLeft} ` +
+                `${this.east.topRight} ` +
+                `${this.east.bottomRight} ` +
+                `${this.south.topRight} ` +
+                `${this.south.bottomRight} ` +
+                `${this.south.bottomLeft}`,
+        });
+        this.#id = this.#context.registerDefinition(this.#definition);
     }
-    get element() { return this.#layeredSvgElement.element; }
+    get definition() { return this.#definition; }
 
-    appendGroup({container, center, layers}) {
-        return this.#layeredSvgElement.appendGroup({container, center, layers});
+    appendEntity({center, layers, target}) {
+        return this.#context.appendEntity({id: this.#id, center, layers, target});
     }
 }
 
 class Shape {
-    #svg;
+    #context;
+    #definition;
+    #id;
     #cell;
-    #layeredSvgElement;
-    constructor({svg, extents, shapeType, corner_radius_percent}) {
-        corner_radius_percent = toDimensions(corner_radius_percent ?? { x: 0, y: 0 });
-        this.#svg = svg;
+    constructor({context, extents, shapeType, corner_radius_percent}) {
+        corner_radius_percent = toDimensions(corner_radius_percent ?? { x: 0, y: 0 }); // ?
+        this.#context = context;
         extents = toDimensions(extents); // freeze?
         const originOffset = new Point(-extents.x, -extents.y);
         this.#cell = gridCell({extents: extents, column: 0, row: 0, offset: originOffset});
 
-        let element;
         switch (shapeType) {
             case ShapeType.RECTANGLE:
-                element = document.createElementNS(SVG_NS, 'rect');
-                element.setAttribute('width', this.#cell.width);
-                element.setAttribute('height', this.#cell.height);
-                element.setAttribute('rx', this.#cell.extents.x * corner_radius_percent.x);
-                element.setAttribute('ry', this.#cell.extents.y * corner_radius_percent.y);
-                element.setAttribute('x', this.#cell.topLeft.x);
-                element.setAttribute('y', this.#cell.topLeft.y);
+                this.#definition = setAttributes(document.createElementNS(SVG_NS, 'rect'), {
+                    width: this.#cell.width,
+                    height: this.#cell.height,
+                    rx: this.#cell.extents.x * corner_radius_percent.x,
+                    ry: this.#cell.extents.y * corner_radius_percent.y,
+                    x: this.#cell.topLeft.x,
+                    y: this.#cell.topLeft.y,
+                });
                 break;
             case ShapeType.ELLIPSE:
-                element = document.createElementNS(SVG_NS, 'ellipse');
-                element.setAttribute('rx', this.#cell.extents.x);
-                element.setAttribute('ry', this.#cell.extents.y);
-                element.setAttribute('cx', this.#cell.center.x);
-                element.setAttribute('cy', this.#cell.center.y);
+                this.#definition = setAttributes(document.createElementNS(SVG_NS, 'ellipse'), {
+                    rx: this.#cell.extents.x,
+                    ry: this.#cell.extents.y,
+                    cx: this.#cell.center.x,
+                    cy: this.#cell.center.y,
+                });
                 break;
             case ShapeType.TRIANGLE_UP:
-                element = document.createElementNS(SVG_NS, 'polygon');
-                element.setAttribute(
-                    "points",
-                    `${this.#cell.topCenter} ` +
-                    `${this.#cell.bottomLeft} ` +
-                    `${this.#cell.bottomRight}`
-                );
+                this.#definition = setAttributes(document.createElementNS(SVG_NS, 'polygon'), {
+                    points:
+                        `${this.#cell.topCenter} ` +
+                        `${this.#cell.bottomLeft} ` +
+                        `${this.#cell.bottomRight}`,
+                });
                 break;
             case ShapeType.TRIANGLE_DOWN:
-                element = document.createElementNS(SVG_NS, 'polygon');
-                element.setAttribute(
-                    "points",
-                    `${this.#cell.bottomCenter} ` +
-                    `${this.#cell.topLeft} ` +
-                    `${this.#cell.topRight}`
-                );
+                this.#definition = setAttributes(document.createElementNS(SVG_NS, 'polygon'), {
+                    points:
+                        `${this.#cell.bottomCenter} ` +
+                        `${this.#cell.topLeft} ` +
+                        `${this.#cell.topRight}`,
+                });
                 break;
             case ShapeType.TRIANGLE_LEFT:
-                element = document.createElementNS(SVG_NS, 'polygon');
-                element.setAttribute(
-                    "points",
-                    `${this.#cell.centerLeft} ` +
-                    `${this.#cell.topRight} ` +
-                    `${this.#cell.bottomRight}`
-                );
+                this.#definition = setAttributes(document.createElementNS(SVG_NS, 'polygon'), {
+                    points:
+                        `${this.#cell.centerLeft} ` +
+                        `${this.#cell.topRight} ` +
+                        `${this.#cell.bottomRight}`,
+                });
                 break;
             case ShapeType.TRIANGLE_RIGHT:
-                element = document.createElementNS(SVG_NS, 'polygon');
-                element.setAttribute(
-                    "points",
-                    `${this.#cell.centerRight} ` +
-                    `${this.#cell.topLeft} ` +
-                    `${this.#cell.bottomLeft}`
-                );
+                this.#definition = setAttributes(document.createElementNS(SVG_NS, 'polygon'), {
+                    points:
+                        `${this.#cell.centerRight} ` +
+                        `${this.#cell.topLeft} ` +
+                        `${this.#cell.bottomLeft}`,
+                });
                 break;
             default:
                 throw new Error(`Unknown shape type: ${String(shapeType)}`);
         }
-        this.#layeredSvgElement = new LayeredSvgElement({svg, element, cell: this.cell});
+        this.#id = this.#context.registerDefinition(this.#definition);
     }
-    get element() { return this.#layeredSvgElement.element; }
+    get definition() { return this.#definition; }
 
     get cell() { return this.#cell; }
 
-    appendGroup({container, center, layers}) {
-        return this.#layeredSvgElement.appendGroup({container, center, layers});
+    appendEntity({center, layers, target}) {
+        return this.#context.appendEntity({id: this.#id, center, layers, target});
     }
 }
 
