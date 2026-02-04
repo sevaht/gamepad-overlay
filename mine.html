@@ -45,6 +45,7 @@
             // TODO: fix variable pollution
             let radius = 30;
             let extents = {x: radius, y: radius};
+            let halfExtents = {x: extents.x / 2, y: extents.y / 2};
             let analogRadius = radius * Math.SQRT2; // distance from center to corner of a cell
             let legendOffset = (analogRadius - radius) / 2;
             let dpadCenter = {x:radius*3+2, y:radius*3+2};
@@ -66,7 +67,7 @@
             });
             new Shape({  // up legend
                 context,
-                extents: {x: extents.x / 2, y: extents.y / 2},
+                extents: halfExtents,
                 shapeType: ShapeType.TRIANGLE_UP
             }).appendEntity({
                 target: dpadEntity.group,
@@ -81,7 +82,7 @@
             });
             new Shape({  // down legend
                 context,
-                extents: {x: extents.x / 2, y: extents.y / 2},
+                extents: halfExtents,
                 shapeType: ShapeType.TRIANGLE_DOWN
             }).appendEntity({
                 target: dpadEntity.group,
@@ -96,7 +97,7 @@
             });
             new Shape({  // left legend
                 context,
-                extents: {x: extents.x / 2, y: extents.y / 2},
+                extents: halfExtents,
                 shapeType: ShapeType.TRIANGLE_LEFT
             }).appendEntity({
                 target: dpadEntity.group,
@@ -112,7 +113,7 @@
             const rightGroup = rightEntity.container;
             const rightLegend = new Shape({  // right legend
                 context,
-                extents: {x: extents.x / 2, y: extents.y / 2},
+                extents: halfExtents,
                 shapeType: ShapeType.TRIANGLE_RIGHT
             })
             rightLegend.appendEntity({
@@ -121,20 +122,39 @@
                 layers: [{classes:"outer-border", cutout:true}, {classes:"inner-border", cutout:true}],
             });
 
-            const centerButton = new Shape({
-                context,
-                extents: {x: analogRadius, y: analogRadius},
-                shapeType: ShapeType.ELLIPSE
-            });
-            const centerEntity = centerButton.appendEntity({
-                target: dpadEntity.container,
-                center: dpad.origin.center,
-                layers: [{classes:"outer-border", cutout:true}, {classes:"inner-border", cutout:true}, {classes:"gamepad-button"}],
-            });
+            let hasAnalogArea = true;
+            if (hasAnalogArea) {
+                const centerButton = new Shape({
+                    context,
+                    extents: {x: analogRadius, y: analogRadius},
+                    shapeType: ShapeType.ELLIPSE
+                });
+                const centerEntity = centerButton.appendEntity({
+                    target: dpadEntity.container,
+                    center: dpad.origin.center,
+                    layers: [{classes:"outer-border", cutout:true}, {classes:"inner-border", cutout:true}, {classes:"gamepad-button"}],
+                });
 
-            // only works this way because the shape itself and its position on the dpad are both centered
-            // if not, a different mask would need to be created
-            dpadEntity.group.setAttribute("mask", `url(#${centerEntity.maskId})`);
+                // only works this way because the shape itself and its position on the dpad are both centered
+                // if not, a different mask would need to be created
+                dpadEntity.group.setAttribute("mask", `url(#${centerEntity.maskId})`);
+            } else {
+                dpadButton.appendEntity({  // center area
+                    target: dpadEntity.group,
+                    center: dpad.origin.center,
+                    layers: [{classes:"gamepad-button"}],
+                });
+                new Shape({  // center ring
+                    context,
+                    extents: {x: extents.x * 0.80, y: extents.y * 0.80},  // : halfExtents,
+                    shapeType: ShapeType.ELLIPSE
+                }).appendEntity({
+                    target: dpadEntity.group,
+                    center: dpad.origin.center,
+                    layers: [{classes:"outer-border", cutout:true}, {classes:"inner-border", cutout:true}],
+                });
+                
+            }
         </script>
     </body>
 </html>

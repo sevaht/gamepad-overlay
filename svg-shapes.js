@@ -25,14 +25,6 @@ function toDimensions(value) {
     return {x: value.x, y: value.y};
 }
 
-/**
- * Set multiple attributes on an element.
- *
- * - null/undefined → attribute removed
- * - everything else → String(value)
- *
- * returns the element.
- */
 function setAttributes(element, attributes) {
     for (const [name, value] of Object.entries(attributes)) {
         if (value == null) {
@@ -43,38 +35,273 @@ function setAttributes(element, attributes) {
     }
     return element;
 }
+///////////////////////////////////////////////
+const OVERLAY_ASSERTION_ENABLE = true; // flip to false for production
 
-const ShapeType = Object.freeze({
-    RECTANGLE: Symbol("RECTANGLE"),
-    ELLIPSE: Symbol("ELLIPSE"),
-    TRIANGLE_UP: Symbol("TRIANGLE_UP"),
-    TRIANGLE_DOWN: Symbol("TRIANGLE_DOWN"),
-    TRIANGLE_LEFT: Symbol("TRIANGLE_LEFT"),
-    TRIANGLE_RIGHT: Symbol("TRIANGLE_RIGHT"),
-});
+function requireFiniteNumber(value, name) {
+    if (Number.isFinite(value)) {
+        return value;
+    }
+    const type = typeof value;
+    const got = value?.constructor?.name ?? type;
+    if (type !== "number") {
+        throw new TypeError(`${name} must be a number; got ${got}`);
+    }
+    throw new RangeError(`${name} must be a finite number; got ${value}`);
+}
+function assertFiniteNumber(value, name) {
+    if (!OVERLAY_ASSERTION_ENABLE) {
+        return value;
+    }
+    return requireFiniteNumber(value, name);
+}
 
-class Point {
+function requireInstanceOf(value, ctor, name) {
+    if (value instanceof ctor) {
+        return value;
+    }
+    const got = value?.constructor?.name ?? typeof value;
+    throw new TypeError(`${name} must be an instance of ${ctor.name}; got ${got}`);
+}
+function assertInstanceOf(value, ctor, name) {
+    if (!OVERLAY_ASSERTION_ENABLE) {
+        return value;
+    }
+    return requireInstanceOf(value, ctor, name);
+}
+
+
+function unreachable(message = "Unreachable") {
+    const error = new Error(message);
+    error.name = "AssertionError";
+    throw error;
+}
+
+class Vector2 {
+    static ZERO = Object.freeze(new this({x: 0, y: 0}));
+
+    static #ADD = 0;
+    static #SUBTRACT = 1;
+    static #MULTIPLY = 2;
+    static #DIVIDE = 3;
+
+    static require(value, name) {
+        return requireInstanceOf(value, this, name);
+    }
+
+    static assert(value, name) {
+        return assertInstanceOf(value, this, name);
+    }
+
     #x;
     #y;
-
-    constructor(x, y) {
-        this.#x = x;
-        this.#y = y;
+    constructor({ x, y } = {}) {
+        this.set({x, y});
     }
-
-    static from({ x, y }) {
-        return new this(x, y);
+    set x(value) { this.#x = assertFiniteNumber(value, "x"); }
+    set y(value) { this.#y = assertFiniteNumber(value, "y"); }
+    set({ x, y } = {}) {
+        this.x = x;
+        this.y = y;
+        return this;
     }
+    update({ x, y } = {}) {
+        if (x != null) { this.x = x; }
+        if (y != null) { this.y = y; }
+        return this;
+    }
+    add({ x, y } = {}) {
+        this.#applyComponent(Vector2.#ADD, true, x, 0);
+        this.#applyComponent(Vector2.#ADD, false, y, 0);
+        return this;
+    }
+    subtract({ x, y } = {}) {
+        this.#applyComponent(Vector2.#SUBTRACT, true, x, 0);
+        this.#applyComponent(Vector2.#SUBTRACT, false, y, 0);
+        return this;
+    }
+    multiply({ x, y } = {}) {
+        this.#applyComponent(Vector2.#MULTIPLY, true, x, 1);
+        this.#applyComponent(Vector2.#MULTIPLY, false, y, 1);
+        return this;
+    }
+    divide({ x, y } = {}) {
+        this.#applyComponent(Vector2.#DIVIDE, true, x, 1);
+        this.#applyComponent(Vector2.#DIVIDE, false, y, 1);
+        return this;
+    }
+    half() { return this.divide({ x: 2, y: 2 }); }
 
     get x() { return this.#x; }
     get y() { return this.#y; }
 
-    toString() {
-        return `${this.#x},${this.#y}`;
+    clone() { return new this.constructor(this); }
+    toString() { return `${this.x},${this.y}`; }
+
+    #applyComponent(operation, isX, operand, skipValue) {
+        if (operand == null || operand === skipValue) { return; }
+        const name = isX ? "x" : "y";
+        assertFiniteNumber(operand, name);
+        let result = isX ? this.#x : this.#y;
+        switch (operation) {
+            case Vector2.#ADD:
+                result += operand;
+                break;
+            case Vector2.#SUBTRACT:
+                result -= operand;
+                break;
+            case Vector2.#MULTIPLY:
+                result *= operand;
+                break;
+            case Vector2.#DIVIDE:
+                if (operand === 0) { throw new RangeError(`${name} divisor must not be 0`); }
+                result /= operand;
+                break;
+            default:
+                unreachable("Invalid operation");
+        }
+        assertFiniteNumber(result, name);
+        if (isX) { this.#x = result; }
+        else { this.#y = result; }
     }
 }
 
+class Cell {
+    #topLeft;
+    #size;
+    #cache;
+    constructor({ topLeft, size }) {
+        this.set({topLeft, size});
+    }
+    set topLeft(value) {
+        this.#setTopLeft(value);
+        this.#clearCache();
+    }
+    set size(value) {
+        this.#setSize(value);
+        this.#clearCache();
+    }
+    set({ topLeft, size }) {
+        this.#setTopLeft(topLeft);
+        this.#setSize(size);
+        this.#clearCache();
+        return this;
+    }
+    update({ topLeft, size } = {}) {
+        let changed = false;
+        if (topLeft != null) { this.#setTopLeft(topLeft); changed=true; }
+        if (size != null) { this.#setSize(size); changed=true; }
+        if (changed) {
+            this.#clearCache();
+        }
+        return this;
+    }
+    get topLeft() { return this.#topLeft; }
+    get size() { return this.#size; }
+    get halfSize() {
+        return this.#cache.halfSize ??=
+            Object.freeze(this.#size.clone().half());
+    }
+    get topCenter() {
+        return this.#cache.topCenter ??=
+            Object.freeze(this.#topLeft.clone().add({x: this.halfSize.x}));
+    }
+    get topRight() {
+        return this.#cache.topRight ??=
+            Object.freeze(this.#topLeft.clone().add({x: this.#size.x}));
+    }
+    get centerLeft() {
+        return this.#cache.centerLeft ??=
+            Object.freeze(this.#topLeft.clone().add({y: this.halfSize.y}));
+    }
+    get center() {
+        return this.#cache.center ??=
+            Object.freeze(this.#topLeft.clone().add(this.halfSize));
+    }
+    get centerRight() {
+        return this.#cache.centerRight ??=
+            Object.freeze(this.#topLeft.clone().add({x: this.#size.x, y: this.halfSize.y}));
+    }
+    get bottomLeft() {
+        return this.#cache.bottomLeft ??=
+            Object.freeze(this.#topLeft.clone().add({y: this.#size.y}));
+    }
+    get bottomCenter() {
+        return this.#cache.bottomCenter ??=
+            Object.freeze(this.#topLeft.clone().add({x: this.halfSize.x, y: this.#size.y}));
+    }
+    get bottomRight() {
+        return this.#cache.bottomRight ??=
+            Object.freeze(this.#topLeft.clone().add(this.#size));
+    }
 
+    clone() { return new this.constructor(this); }
+    toString() { return `${this.topLeft} ${this.size.x}x${this.size.y}`; }
+
+    #clearCache() {
+        this.#cache = Object.create(null);
+    }
+    #setTopLeft(topLeft) {
+        this.#topLeft = Object.freeze(Vector2.assert(topLeft, "topLeft").clone());
+    }
+    #setSize(size) {
+        this.#size = Object.freeze(Vector2.assert(size, "size").clone());
+    }
+}
+
+// TODO: refactor/complete (it isn't even done!) to use Vector2 and Cell
+class DpadLayout {
+    #cellLength;
+    #cellWidth;
+    #centerPadding;
+    constructor({cellLength, cellWidth, centerPadding, center}) {
+        center ??= {x: 0, y: 0};
+        this.#cellLength = cellLength;
+        this.#cellWidth = cellWidth;
+        this.#centerPadding = centerPadding;
+
+        const halfWidth = this.#cellWidth / 2;
+        const insideEdge = halfWidth + this.#centerPadding;
+        const outerEdge = insideEdge + this.#cellLength;
+
+        this.#cells = {
+            west: new Cell({
+                x: center.x - outerEdge,
+                y: center.y - halfWidth,
+                width: this.#cellLength,
+                height: this.#cellWidth,
+            }),
+            north: new Cell({
+                x: center.x - halfWidth,
+                y: center.y - outerEdge,
+                width: this.#cellWidth,
+                height: this.#cellLength,
+            }),
+            east: new Cell({
+                x: center.x + insideEdge,
+                y: center.y - halfWidth,
+                width: this.#cellLength,
+                height: this.#cellWidth,
+            }),
+            south: new Cell({
+                x: center.x - halfWidth,
+                y: center.y + insideEdge,
+                width: this.#cellWidth,
+                height: this.#cellLength,
+            })
+        }
+        // TODO: center cell?  circle radius?
+
+
+
+        
+
+        
+
+
+    }
+
+}
 
 function createUseElement(id, attributes) {
     const element = document.createElementNS(SVG_NS, "use");
@@ -131,7 +358,7 @@ class SvgContext {
             this.#defs = document.createElementNS(SVG_NS, "defs");
             this.#svg.insertBefore(this.#defs, this.#svg.firstChild);
         }
-        let prefix = "everything-rect";
+        let prefix = "everything";
         let everythingRect = getIdPrefixedChild({target: this.#defs, prefix});
         if (!everythingRect) {
             // NOTE: this needs to be large enough to cover anything in the
@@ -141,7 +368,7 @@ class SvgContext {
             const HALF_MAX = 100_000;
             const FULL_MAX = HALF_MAX*2;
             everythingRect = setAttributes(document.createElementNS(SVG_NS, "rect"), {
-                id: monotonicId("everything-rect"),
+                id: monotonicId("everything"),
                 ...this.constructor.#MASK_SIZE_ATTRIBUTES,
             });
             this.#defs.insertBefore(everythingRect, this.#defs.firstChild);
@@ -338,6 +565,16 @@ class Cross extends CompassLayout {
     }
 }
 
+
+
+const ShapeType = Object.freeze({
+    RECTANGLE: Symbol("RECTANGLE"),
+    ELLIPSE: Symbol("ELLIPSE"),
+    TRIANGLE_UP: Symbol("TRIANGLE_UP"),
+    TRIANGLE_DOWN: Symbol("TRIANGLE_DOWN"),
+    TRIANGLE_LEFT: Symbol("TRIANGLE_LEFT"),
+    TRIANGLE_RIGHT: Symbol("TRIANGLE_RIGHT"),
+});
 class Shape {
     #context;
     #definition;
