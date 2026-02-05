@@ -78,7 +78,10 @@ function unreachable(message = "Unreachable") {
 }
 
 class Vector2 {
-    static ZERO = Object.freeze(new this({x: 0, y: 0}));
+    // common numbers
+    static ZERO = Object.freeze(this.splat(0));
+    static ONE = Object.freeze(this.splat(1));
+    static TWO = Object.freeze(this.splat(2));
 
     static #ADD = 0;
     static #SUBTRACT = 1;
@@ -91,6 +94,9 @@ class Vector2 {
 
     static assert(value, name) {
         return assertInstanceOf(value, this, name);
+    }
+    static splat(value) {
+        return new this({x: value, y: value});
     }
 
     #x;
@@ -130,7 +136,6 @@ class Vector2 {
         this.#applyComponent(Vector2.#DIVIDE, false, y, 1);
         return this;
     }
-    half() { return this.divide({ x: 2, y: 2 }); }
 
     get x() { return this.#x; }
     get y() { return this.#y; }
@@ -167,11 +172,17 @@ class Vector2 {
 }
 
 class Cell {
+    static fromCenter({ center, size }) {
+        const topLeft = center.clone().subtract(size.clone().half());
+        return new this({topLeft, size});
+    }
     #topLeft;
     #size;
-    #cache;
+    #cache = Object.create(null);
     constructor({ topLeft, size }) {
-        this.set({topLeft, size});
+        // using these directly to prevent unnecessary cach clear from set()
+        this.#setTopLeft(topLeft);
+        this.#setSize(size);
     }
     set topLeft(value) {
         this.#setTopLeft(value);
@@ -249,58 +260,71 @@ class Cell {
     }
 }
 
-// TODO: refactor/complete (it isn't even done!) to use Vector2 and Cell
 class DpadLayout {
-    #cellLength;
-    #cellWidth;
-    #centerPadding;
-    constructor({cellLength, cellWidth, centerPadding, center}) {
-        center ??= {x: 0, y: 0};
-        this.#cellLength = cellLength;
-        this.#cellWidth = cellWidth;
-        this.#centerPadding = centerPadding;
-
-        const halfWidth = this.#cellWidth / 2;
-        const insideEdge = halfWidth + this.#centerPadding;
-        const outerEdge = insideEdge + this.#cellLength;
-
-        this.#cells = {
-            west: new Cell({
-                x: center.x - outerEdge,
-                y: center.y - halfWidth,
-                width: this.#cellLength,
-                height: this.#cellWidth,
-            }),
-            north: new Cell({
-                x: center.x - halfWidth,
-                y: center.y - outerEdge,
-                width: this.#cellWidth,
-                height: this.#cellLength,
-            }),
-            east: new Cell({
-                x: center.x + insideEdge,
-                y: center.y - halfWidth,
-                width: this.#cellLength,
-                height: this.#cellWidth,
-            }),
-            south: new Cell({
-                x: center.x - halfWidth,
-                y: center.y + insideEdge,
-                width: this.#cellWidth,
-                height: this.#cellLength,
-            })
-        }
-        // TODO: center cell?  circle radius?
-
-
-
-        
-
-        
-
-
+    // TODO: diagonal special buttons not handled; could return a cell
+    // but would need to know a padding offset (at LEAST to allocate
+    // for the cross borders + some spacing).  Centered most likely.
+    #buttonCentersCell;
+    #horizontalButtonSize;
+    #verticalButtonSize;
+    #originSize;
+    #cache = Object.create(null);
+    constructor({buttonLength, buttonWidth, center}) {
+        const halfButtonLength = buttonLength / 2;
+        const halfButtonWidth = buttonWidth / 2;
+        const diagonalCenterOffset = Object.freeze(
+            Vector2.splat(halfButtonWidth + halfButtonLength)
+        );
+        // all of the points on this cell will correlate to the centers of the
+        // inputs/buttons
+        this.#buttonCentersCell = new Cell({
+            topLeft: center.clone().subtract(diagonalCenterOffset),
+            size: diagonalCenterOffset.clone().multiply(Vector2.TWO),
+        });
+        this.#horizontalButtonSize = new Vector2({x: buttonLength, y: buttonWidth});
+        this.#verticalButtonSize = new Vector2({x: buttonWidth, y: buttonLength});
+        this.#originSize = Vector2.splat(buttonWidth);
     }
-
+    left() {
+        return this.#cache.left ??= Object.freeze(Cell.fromCenter({
+            center: this.#buttonCentersCell.centerLeft,
+            size: this.#horizontalButtonSize,
+        }));
+    }
+    right() {
+        return this.#cache.right ??= Object.freeze(Cell.fromCenter({
+            center: this.#buttonCentersCell.centerRight,
+            size: this.#horizontalButtonSize,
+        }));
+    }
+    up() {
+        return this.#cache.up ??= Object.freeze(Cell.fromCenter({
+            center: this.#buttonCentersCell.topCenter,
+            size: this.#verticalButtonSize,
+        }));
+    }
+    down() {
+        return this.#cache.down ??= Object.freeze(Cell.fromCenter({
+            center: this.#buttonCentersCell.bottomCenter,
+            size: this.#verticalButtonSize,
+        }));
+    }
+    crossPoints() {
+        return this.#cache.crossPoints ??= Object.freeze([
+            this.left.bottomRight,
+            this.left.bottomLeft,
+            this.left.topLeft,
+            this.up.bottomLeft,
+            this.up.topLeft,
+            this.up.topRight,
+            this.right.topLeft,
+            this.right.topRight,
+            this.right.bottomRight,
+            this.down.topRight,
+            this.down.bottomRight,
+            this.down.bottomLeft,
+        ]);
+    }
 }
 
 function createUseElement(id, attributes) {
