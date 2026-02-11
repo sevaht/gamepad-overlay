@@ -6,7 +6,7 @@ const nextMonotonicId = new Map();
 function monotonicId(prefix) {
     const n = nextMonotonicId.get(prefix) ?? 1;
     nextMonotonicId.set(prefix, n + 1);
-    return `${prefix}-${n}`;
+    return `${prefix}${n}`;
 }
 
 function getIdPrefixedChild({target, prefix}) {
@@ -25,7 +25,7 @@ function toDimensions(value) {
     return {x: value.x, y: value.y};
 }
 
-function setAttributes(element, attributes) {
+function setAttributes(element, attributes = {}) {
     for (const [name, value] of Object.entries(attributes)) {
         if (value == null) {
             element.removeAttribute(name);
@@ -34,6 +34,9 @@ function setAttributes(element, attributes) {
         }
     }
     return element;
+}
+function createSvgElement({name, attributes}) {
+    return setAttributes(document.createElementNS(SVG_NS, name), attributes);
 }
 ///////////////////////////////////////////////
 const OVERLAY_ASSERTION_ENABLE = true; // flip to false for production
@@ -171,7 +174,7 @@ class Vector2 {
     }
 }
 
-class Cell {
+class Rectangle {
     static fromCenter({ center, size }) {
         const topLeft = center.clone().subtract(size.clone().half());
         return new this({topLeft, size});
@@ -264,7 +267,7 @@ class DpadLayout {
     // TODO: diagonal special buttons not handled; could return a cell
     // but would need to know a padding offset (at LEAST to allocate
     // for the cross borders + some spacing).  Centered most likely.
-    #buttonCentersCell;
+    #buttonCentersRectangle;
     #horizontalButtonSize;
     #verticalButtonSize;
     #originSize;
@@ -277,7 +280,7 @@ class DpadLayout {
         );
         // all of the points on this cell will correlate to the centers of the
         // inputs/buttons
-        this.#buttonCentersCell = new Cell({
+        this.#buttonCentersRectangle = new Rectangle({
             topLeft: center.clone().subtract(diagonalCenterOffset),
             size: diagonalCenterOffset.clone().multiply(Vector2.TWO),
         });
@@ -286,30 +289,30 @@ class DpadLayout {
         this.#originSize = Vector2.splat(buttonWidth);
     }
     left() {
-        return this.#cache.left ??= Object.freeze(Cell.fromCenter({
-            center: this.#buttonCentersCell.centerLeft,
+        return this.#cache.left ??= Object.freeze(Rectangle.fromCenter({
+            center: this.#buttonCentersRectangle.centerLeft,
             size: this.#horizontalButtonSize,
         }));
     }
     right() {
-        return this.#cache.right ??= Object.freeze(Cell.fromCenter({
-            center: this.#buttonCentersCell.centerRight,
+        return this.#cache.right ??= Object.freeze(Rectangle.fromCenter({
+            center: this.#buttonCentersRectangle.centerRight,
             size: this.#horizontalButtonSize,
         }));
     }
     up() {
-        return this.#cache.up ??= Object.freeze(Cell.fromCenter({
-            center: this.#buttonCentersCell.topCenter,
+        return this.#cache.up ??= Object.freeze(Rectangle.fromCenter({
+            center: this.#buttonCentersRectangle.topCenter,
             size: this.#verticalButtonSize,
         }));
     }
     down() {
-        return this.#cache.down ??= Object.freeze(Cell.fromCenter({
-            center: this.#buttonCentersCell.bottomCenter,
+        return this.#cache.down ??= Object.freeze(Rectangle.fromCenter({
+            center: this.#buttonCentersRectangle.bottomCenter,
             size: this.#verticalButtonSize,
         }));
     }
-    crossPoints() {
+    crossPoints() {  // TODO: rename?
         return this.#cache.crossPoints ??= Object.freeze([
             this.left.bottomRight,
             this.left.bottomLeft,
@@ -354,13 +357,10 @@ class SvgEntity {
     get id() { return this.#id; }
 }
 
-// creates/uses defs and a mask of everything
-class SvgContext {
+class NewSvgContext {
     #svg;
     #defs;
-    #everythingRectId;
-    #maskSizeAttributes;
-
+    #everythingRect;
     static #MASK_SIZE_ATTRIBUTES = (() => {
         // NOTE: this needs to be large enough to cover anything in the
         // coordinate systems of rendered objects.  Just picking a large
@@ -375,29 +375,42 @@ class SvgContext {
             height: FULL,
         });
     })();
+
+    addChild({element, parent, prepend=false}) {
+        if (parent == null) {
+            parent = this.#svg;
+        } else if (!this.hasAncestor(parent)) {
+            throw new Error("Passed parent is not a child of the svg given in the constructor.");
+        }
+        if (prepend) {
+            parent.insertBefore(element, parent.firstChild);
+        } else {
+            parent.appendChild(element);
+        }
+        return element;
+    }
+
+    get everythingRectId() {
+        return this.#everythingRectId ??= (
+            this.resolvePrefixedChildId("everything-") ?? this.registerDefinition(
+                createSvgElement({
+                    name: "rect",
+                    attributes: {
+                        id: monotonicId("everything-"),
+                        ...this.constructor.#MASK_SIZE_ATTRIBUTES,
+                    }
+                }),
+                { prepend: true },
+            )
+        );
+    }
+
     constructor(svg) {
         this.#svg = svg;
-        this.#defs = this.#svg.querySelector("defs");
-        if (!this.#defs) {
-            this.#defs = document.createElementNS(SVG_NS, "defs");
-            this.#svg.insertBefore(this.#defs, this.#svg.firstChild);
-        }
-        let prefix = "everything";
-        let everythingRect = getIdPrefixedChild({target: this.#defs, prefix});
-        if (!everythingRect) {
-            // NOTE: this needs to be large enough to cover anything in the
-            // coordinate systems of rendered objects.  Just picking a large
-            // value, but in my testing 30_000_000 works, but 40_000_000
-            // fails due to rendering engine limits.  This should be safe.
-            const HALF_MAX = 100_000;
-            const FULL_MAX = HALF_MAX*2;
-            everythingRect = setAttributes(document.createElementNS(SVG_NS, "rect"), {
-                id: monotonicId("everything"),
-                ...this.constructor.#MASK_SIZE_ATTRIBUTES,
-            });
-            this.#defs.insertBefore(everythingRect, this.#defs.firstChild);
-        }
-        this.#everythingRectId = everythingRect.getAttribute("id");
+        this.#defs = this.#svg.querySelector("defs") ?? this.addChild({
+            element: createSvgElement({name: "defs"}),
+            prepend = true,
+        });
     }
     get svg() { return this.#svg; }
     get defs() { return this.#defs; }
@@ -405,6 +418,39 @@ class SvgContext {
     hasAncestor(element) {
         return this.#svg.contains(element);
     }
+
+    queryChild(idOrPrefix, { prefix = false } = {}) {
+        if (idOrPrefix == null) { return null; }
+        const escaped = CSS.escape(String(idOrPrefix));
+        return this.#svg.querySelector(prefix ? `[id^="${escaped}"]` : `#${escaped}`);
+    }
+
+    resolvePrefixedChildId(prefix) {
+        return this.queryChild(prefix, {prefix: true})?.id || null;
+    }
+
+    registerDefinition(element, {prepend = false} = {}) {
+        element.id ||= monotonicId(`${element.tagName}-`);
+        this.addChild({element, parent=this.#defs, prepend});
+        return element.id;
+    }
+    // TODO: masks? use refs?
+    // the general principle will be that a given mask maps to a specific
+    // def, and any updates need to be made on that definition.
+    // ... so masks will just be two uses; everything rect + target
+    // and each target will be moved, but as only a single mask can apply
+    // to something I may need a mechanism to combine masks/append to them.
+
+
+
+    // equivalent to appendEntity, or implement that some other way?
+}
+
+// creates/uses defs and a mask of everything
+class SvgContext {
+    #svg;
+    #defs;
+    #everythingRectId;
 
     ensureMask(id) {
         const maskId = `cutout-${id}`;
@@ -424,16 +470,6 @@ class SvgContext {
             this.#defs.appendChild(mask);
         }
         return maskId;
-    }
-
-    registerDefinition(element) {
-        let id = element.getAttribute("id");
-        if (!id) {
-            id = monotonicId(element.tagName);
-            element.setAttribute("id", id);
-        }
-        this.#defs.appendChild(element);
-        return id;
     }
 
     appendEntity({id, center, layers, target}) {
