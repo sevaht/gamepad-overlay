@@ -35,7 +35,7 @@ function setAttributes(element, attributes = {}) {
     }
     return element;
 }
-function createSvgElement({name, attributes}) {
+function createSvgElement(name, attributes = {}) {
     return setAttributes(document.createElementNS(SVG_NS, name), attributes);
 }
 ///////////////////////////////////////////////
@@ -145,6 +145,7 @@ class Vector2 {
 
     clone() { return new this.constructor(this); }
     toString() { return `${this.x},${this.y}`; }
+    toObject() { return {x: this.x, y: this.y}; }
 
     #applyComponent(operation, isX, operand, skipValue) {
         if (operand == null || operand === skipValue) { return; }
@@ -174,7 +175,7 @@ class Vector2 {
     }
 }
 
-class Rectangle {
+class Region {
     static fromCenter({ center, size }) {
         const topLeft = center.clone().subtract(size.clone().half());
         return new this({topLeft, size});
@@ -263,11 +264,71 @@ class Rectangle {
     }
 }
 
+const ShapeType = Object.freeze({
+    RECTANGLE: Symbol("RECTANGLE"),
+    ELLIPSE: Symbol("ELLIPSE"),
+    TRIANGLE_UP: Symbol("TRIANGLE_UP"),
+    TRIANGLE_DOWN: Symbol("TRIANGLE_DOWN"),
+    TRIANGLE_LEFT: Symbol("TRIANGLE_LEFT"),
+    TRIANGLE_RIGHT: Symbol("TRIANGLE_RIGHT"),
+});
+
+function createSvgShape({region, shapeType, cornerRadiusPercent = Vector2.ZERO}) {
+    switch (shapeType) {
+        case ShapeType.RECTANGLE:
+            return createSvgElement("rect", {
+                x: region.topLeft.x,
+                y: region.topLeft.y,
+                width: region.width,
+                height: region.height,
+                rx: region.halfSize.x * cornerRadiusPercent.x,
+                ry: region.halfSize.y * cornerRadiusPercent.y,
+            });
+        case ShapeType.ELLIPSE:
+            return createSvgElement("ellipse", {
+                cx: region.center.x,
+                cy: region.center.y,
+                rx: region.halfSize.x,
+                ry: region.halfSize.y,
+            });
+        case ShapeType.TRIANGLE_UP:
+            return createSvgElement("polygon", {
+                points: 
+                    `${region.topCenter} ` +
+                    `${region.bottomLeft} ` +
+                    `${region.bottomRight} `,
+            });
+        case ShapeType.TRIANGLE_DOWN:
+            return createSvgElement("polygon", {
+                points: 
+                    `${region.bottomCenter} ` +
+                    `${region.topLeft} ` +
+                    `${region.topRight} `,
+            });
+        case ShapeType.TRIANGLE_LEFT:
+            return createSvgElement("polygon", {
+                points: 
+                    `${region.centerLeft} ` +
+                    `${region.topRight} ` +
+                    `${region.bottomRight} `,
+            });
+        case ShapeType.TRIANGLE_RIGHT:
+            return createSvgElement("polygon", {
+                points: 
+                    `${region.centerRight} ` +
+                    `${region.topLeft} ` +
+                    `${region.bottomLeft} `,
+            });
+        default:
+            throw new Error(`Unknown shape type: ${String(shapeType)}`);
+    }
+}
+
 class DpadLayout {
     // TODO: diagonal special buttons not handled; could return a cell
     // but would need to know a padding offset (at LEAST to allocate
     // for the cross borders + some spacing).  Centered most likely.
-    #buttonCentersRectangle;
+    #buttonCentersRegion;
     #horizontalButtonSize;
     #verticalButtonSize;
     #originSize;
@@ -280,7 +341,7 @@ class DpadLayout {
         );
         // all of the points on this cell will correlate to the centers of the
         // inputs/buttons
-        this.#buttonCentersRectangle = new Rectangle({
+        this.#buttonCentersRegion = new Region({
             topLeft: center.clone().subtract(diagonalCenterOffset),
             size: diagonalCenterOffset.clone().multiply(Vector2.TWO),
         });
@@ -289,26 +350,26 @@ class DpadLayout {
         this.#originSize = Vector2.splat(buttonWidth);
     }
     left() {
-        return this.#cache.left ??= Object.freeze(Rectangle.fromCenter({
-            center: this.#buttonCentersRectangle.centerLeft,
+        return this.#cache.left ??= Object.freeze(Region.fromCenter({
+            center: this.#buttonCentersRegion.centerLeft,
             size: this.#horizontalButtonSize,
         }));
     }
     right() {
-        return this.#cache.right ??= Object.freeze(Rectangle.fromCenter({
-            center: this.#buttonCentersRectangle.centerRight,
+        return this.#cache.right ??= Object.freeze(Region.fromCenter({
+            center: this.#buttonCentersRegion.centerRight,
             size: this.#horizontalButtonSize,
         }));
     }
     up() {
-        return this.#cache.up ??= Object.freeze(Rectangle.fromCenter({
-            center: this.#buttonCentersRectangle.topCenter,
+        return this.#cache.up ??= Object.freeze(Region.fromCenter({
+            center: this.#buttonCentersRegion.topCenter,
             size: this.#verticalButtonSize,
         }));
     }
     down() {
-        return this.#cache.down ??= Object.freeze(Rectangle.fromCenter({
-            center: this.#buttonCentersRectangle.bottomCenter,
+        return this.#cache.down ??= Object.freeze(Region.fromCenter({
+            center: this.#buttonCentersRegion.bottomCenter,
             size: this.#verticalButtonSize,
         }));
     }
@@ -357,10 +418,10 @@ class SvgEntity {
     get id() { return this.#id; }
 }
 
-class NewSvgContext {
+class SvgContext {
     #svg;
     #defs;
-    #everythingRect;
+    #everythingRectId;
     static #MASK_SIZE_ATTRIBUTES = (() => {
         // NOTE: this needs to be large enough to cover anything in the
         // coordinate systems of rendered objects.  Just picking a large
@@ -376,7 +437,7 @@ class NewSvgContext {
         });
     })();
 
-    addChild({element, parent, prepend=false}) {
+    addChild(element, {parent, prepend=false} = {}) {
         if (parent == null) {
             parent = this.#svg;
         } else if (!this.hasAncestor(parent)) {
@@ -392,25 +453,22 @@ class NewSvgContext {
 
     get everythingRectId() {
         return this.#everythingRectId ??= (
-            this.resolvePrefixedChildId("everything-") ?? this.registerDefinition(
-                createSvgElement({
-                    name: "rect",
-                    attributes: {
-                        id: monotonicId("everything-"),
-                        ...this.constructor.#MASK_SIZE_ATTRIBUTES,
-                    }
+            this.resolvePrefixedChildId("everything-") ?? this.addDefinition(
+                createSvgElement("rect", {
+                    id: monotonicId("everything-"),
+                    ...this.constructor.#MASK_SIZE_ATTRIBUTES,
                 }),
                 { prepend: true },
-            )
+            ).id
         );
     }
 
     constructor(svg) {
         this.#svg = svg;
-        this.#defs = this.#svg.querySelector("defs") ?? this.addChild({
-            element: createSvgElement({name: "defs"}),
-            prepend = true,
-        });
+        this.#defs = this.#svg.querySelector("defs") ?? this.addChild(
+            createSvgElement("defs"),
+            {prepend: true}
+        );
     }
     get svg() { return this.#svg; }
     get defs() { return this.#defs; }
@@ -429,11 +487,31 @@ class NewSvgContext {
         return this.queryChild(prefix, {prefix: true})?.id || null;
     }
 
-    registerDefinition(element, {prepend = false} = {}) {
+    addDefinition(element, {prepend = false} = {}) {
         element.id ||= monotonicId(`${element.tagName}-`);
-        this.addChild({element, parent=this.#defs, prepend});
-        return element.id;
+        this.addChild(element, {parent: this.#defs, prepend});
+        return element;
     }
+
+    // NOTE: this DOES NOT add any removal ref!  doesn't change id with "cutout" prefix!
+    ensureMask(id) {
+        let mask = this.queryChild(id);
+        if (mask == null) {
+            mask = createSvgElement("mask", {
+                id,
+                maskUnits: "userSpaceOnUse",
+                maskContentUnits: "userSpaceOnUse",
+                ...this.constructor.#MASK_SIZE_ATTRIBUTES,
+            });
+            mask.appendChild(createSvgElement("use", {
+                href: `#${this.#everythingRectId}`,
+                fill: "white",
+            }));
+            this.addDefinition(mask);
+        }
+        return mask;
+    }
+
     // TODO: masks? use refs?
     // the general principle will be that a given mask maps to a specific
     // def, and any updates need to be made on that definition.
@@ -447,31 +525,7 @@ class NewSvgContext {
 }
 
 // creates/uses defs and a mask of everything
-class SvgContext {
-    #svg;
-    #defs;
-    #everythingRectId;
-
-    ensureMask(id) {
-        const maskId = `cutout-${id}`;
-        let mask = this.#defs.querySelector(`:scope > #${maskId}`);
-        if (mask == null) {
-            mask = setAttributes(document.createElementNS(SVG_NS, 'mask'), {
-                id: maskId,
-                maskUnits: "userSpaceOnUse",
-                maskContentUnits: "userSpaceOnUse",
-                ...this.constructor.#MASK_SIZE_ATTRIBUTES,
-            });
-            mask.appendChild(setAttributes(document.createElementNS(SVG_NS, 'use'), {
-                href: `#${this.#everythingRectId}`,
-                fill: "white",
-            }));
-            mask.appendChild(createUseElement(id, {fill: "black"}));
-            this.#defs.appendChild(mask);
-        }
-        return maskId;
-    }
-
+/*
     appendEntity({id, center, layers, target}) {
         layers ??= [{}];
         if (target == null) {
@@ -505,210 +559,6 @@ class SvgContext {
 
         return new SvgEntity({container, group, maskId, id}); // center?
     }
-};
+*/
 
-
-/**
- * Computes geometric positions for a grid cell.
- *
- * The cell is centered at ((column * 2 + 1) * extent + offset.x,
- *                          (row * 2 + 1) * extent + offset.y)
- * and has width and height of 2 * extent.
- *
- * @param {Object} params
- * @param {number} params.extent    Half-size of the cell
- * @param {number} params.column    Column index (0-based)
- * @param {number} params.row       Row index (0-based)
- * @param {Object=} params.offset   Optional offset applied to all coordinates
- * @param {number} params.offset.x  Horizontal offset
- * @param {number} params.offset.y  Vertical offset
- *
- * @returns {Object} Frozen object containing cell geometry and anchor points
- */
-function gridCell({extents, column, row, offset}) {
-    offset ??= {x: 0, y: 0};
-    const topLeft = new Point(
-        column * 2 * extents.x + offset.x,
-        row * 2 * extents.y + offset.y
-    );
-    const center = new Point(topLeft.x + extents.x, topLeft.y + extents.y);
-    const bottomRight = new Point(center.x + extents.x, center.y + extents.y);
-    return Object.freeze({
-        extents: Object.freeze({x: extents.x, y: extents.y}),
-        width: extents.x * 2,
-        height: extents.y * 2,
-
-        topLeft,
-        topCenter: new Point(center.x, topLeft.y),
-        topRight: new Point(bottomRight.x, topLeft.y),
-
-        centerLeft: new Point(topLeft.x, center.y),
-        center,
-        centerRight: new Point(bottomRight.x, center.y),
-
-        bottomLeft: new Point(topLeft.x, bottomRight.y),
-        bottomCenter: new Point(center.x, bottomRight.y),
-        bottomRight,
-    });
-}
-
-class CompassLayout {
-    #cellExtent;
-    #originOffset;
-    #cell;
-    #innerCells = Object.create(null);
-    constructor(cellExtent) {
-        this.#cellExtent = cellExtent;
-        const extent = this.#cellExtent * 3;
-        this.#originOffset = {x: -extent, y: -extent};
-        this.#cell = gridCell({
-            extents: toDimensions(extent),
-            column: 0,
-            row: 0,
-            offset: this.#originOffset,
-        });
-    }
-    #gridCell(column, row) {
-        return gridCell({
-            extents: toDimensions(this.#cellExtent),
-            column,
-            row,
-            offset: this.#originOffset,
-        });
-    }
-
-    get cell() { return this.#cell; }
-
-
-    get northwest() { return this.#innerCells.northwest ??= this.#gridCell(0, 0); }
-    get north() { return this.#innerCells.north ??= this.#gridCell(1, 0); }
-    get northeast() { return this.#innerCells.northeast ??= this.#gridCell(2, 0); }
-
-    get west() { return this.#innerCells.west ??= this.#gridCell(0, 1); }
-    get origin() { return this.#innerCells.origin ??= this.#gridCell(1, 1); }
-    get east() { return this.#innerCells.east ??= this.#gridCell(2, 1); }
-
-    get southwest() { return this.#innerCells.southwest ??= this.#gridCell(0, 2); }
-    get south() { return this.#innerCells.south ??= this.#gridCell(1, 2); }
-    get southeast() { return this.#innerCells.southeast ??= this.#gridCell(2, 2); }
-}
-
-
-class Cross extends CompassLayout {
-    #context;
-    #definition;
-    #id;
-    constructor({context, cellExtent}) {
-        super(cellExtent);
-        this.#context = context;
-        this.#definition = setAttributes(document.createElementNS(SVG_NS, 'polygon'), {
-            "points":
-                `${this.west.bottomRight} ` +
-                `${this.west.bottomLeft} ` +
-                `${this.west.topLeft} ` +
-                `${this.north.bottomLeft} ` +
-                `${this.north.topLeft} ` +
-                `${this.north.topRight} ` +
-                `${this.east.topLeft} ` +
-                `${this.east.topRight} ` +
-                `${this.east.bottomRight} ` +
-                `${this.south.topRight} ` +
-                `${this.south.bottomRight} ` +
-                `${this.south.bottomLeft}`,
-        });
-        this.#id = this.#context.registerDefinition(this.#definition);
-    }
-    get definition() { return this.#definition; }
-
-    appendEntity({center, layers, target}) {
-        return this.#context.appendEntity({id: this.#id, center, layers, target});
-    }
-}
-
-
-
-const ShapeType = Object.freeze({
-    RECTANGLE: Symbol("RECTANGLE"),
-    ELLIPSE: Symbol("ELLIPSE"),
-    TRIANGLE_UP: Symbol("TRIANGLE_UP"),
-    TRIANGLE_DOWN: Symbol("TRIANGLE_DOWN"),
-    TRIANGLE_LEFT: Symbol("TRIANGLE_LEFT"),
-    TRIANGLE_RIGHT: Symbol("TRIANGLE_RIGHT"),
-});
-class Shape {
-    #context;
-    #definition;
-    #id;
-    #cell;
-    constructor({context, extents, shapeType, corner_radius_percent}) {
-        corner_radius_percent = toDimensions(corner_radius_percent ?? { x: 0, y: 0 }); // ?
-        this.#context = context;
-        extents = toDimensions(extents); // freeze?
-        const originOffset = new Point(-extents.x, -extents.y);
-        this.#cell = gridCell({extents: extents, column: 0, row: 0, offset: originOffset});
-
-        switch (shapeType) {
-            case ShapeType.RECTANGLE:
-                this.#definition = setAttributes(document.createElementNS(SVG_NS, 'rect'), {
-                    width: this.#cell.width,
-                    height: this.#cell.height,
-                    rx: this.#cell.extents.x * corner_radius_percent.x,
-                    ry: this.#cell.extents.y * corner_radius_percent.y,
-                    x: this.#cell.topLeft.x,
-                    y: this.#cell.topLeft.y,
-                });
-                break;
-            case ShapeType.ELLIPSE:
-                this.#definition = setAttributes(document.createElementNS(SVG_NS, 'ellipse'), {
-                    rx: this.#cell.extents.x,
-                    ry: this.#cell.extents.y,
-                    cx: this.#cell.center.x,
-                    cy: this.#cell.center.y,
-                });
-                break;
-            case ShapeType.TRIANGLE_UP:
-                this.#definition = setAttributes(document.createElementNS(SVG_NS, 'polygon'), {
-                    points:
-                        `${this.#cell.topCenter} ` +
-                        `${this.#cell.bottomLeft} ` +
-                        `${this.#cell.bottomRight}`,
-                });
-                break;
-            case ShapeType.TRIANGLE_DOWN:
-                this.#definition = setAttributes(document.createElementNS(SVG_NS, 'polygon'), {
-                    points:
-                        `${this.#cell.bottomCenter} ` +
-                        `${this.#cell.topLeft} ` +
-                        `${this.#cell.topRight}`,
-                });
-                break;
-            case ShapeType.TRIANGLE_LEFT:
-                this.#definition = setAttributes(document.createElementNS(SVG_NS, 'polygon'), {
-                    points:
-                        `${this.#cell.centerLeft} ` +
-                        `${this.#cell.topRight} ` +
-                        `${this.#cell.bottomRight}`,
-                });
-                break;
-            case ShapeType.TRIANGLE_RIGHT:
-                this.#definition = setAttributes(document.createElementNS(SVG_NS, 'polygon'), {
-                    points:
-                        `${this.#cell.centerRight} ` +
-                        `${this.#cell.topLeft} ` +
-                        `${this.#cell.bottomLeft}`,
-                });
-                break;
-            default:
-                throw new Error(`Unknown shape type: ${String(shapeType)}`);
-        }
-        this.#id = this.#context.registerDefinition(this.#definition);
-    }
-    get definition() { return this.#definition; }
-
-    get cell() { return this.#cell; }
-
-    appendEntity({center, layers, target}) {
-        return this.#context.appendEntity({id: this.#id, center, layers, target});
-    }
-}
 
