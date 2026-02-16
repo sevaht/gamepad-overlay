@@ -53,6 +53,12 @@
             const context = new SvgContext(document.getElementById('overlayRoot'));
             const dpadLayout = new DpadLayout({buttonLength: radius*2, buttonWidth: radius*2, center: dpadCenter});
 
+            const outerBorder = context.addChild(createSvgPolygon(dpadLayout.crossPoints,{
+                "class": "outer-border",
+            }));
+            const innerBorder = context.addChild(createSvgPolygon(dpadLayout.crossPoints, {
+                "class": "inner-border",
+            }));
             const leftButton = context.addChild(createSvgShape(
                 {region: dpadLayout.left, shapeType: ShapeType.RECTANGLE},
                 {"class": "gamepad-button"}
@@ -73,6 +79,7 @@
                 {region: dpadLayout.origin, shapeType: ShapeType.RECTANGLE},
                 {"class": "gamepad-button"}
             ));
+
 
             const dpad = new Cross({context, cellExtent: radius});
             const dpadEntity = dpad.appendEntity({

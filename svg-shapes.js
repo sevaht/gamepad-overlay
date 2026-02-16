@@ -273,6 +273,12 @@ const ShapeType = Object.freeze({
     TRIANGLE_RIGHT: Symbol("TRIANGLE_RIGHT"),
 });
 
+function createSvgPolygon(points, attributes = {}) {
+    return createSvgElement("polygon", {
+        points: Array.isArray(points) ? points.map(String).join(" ") : String(points),
+        ...attributes,
+    });
+}
 function createSvgShape({region, shapeType, cornerRadiusPercent = Vector2.ZERO}, attributes = {}) {
     let element;
     switch (shapeType) {
@@ -412,24 +418,6 @@ function createUseElement(id, attributes) {
         setAttributes(element, attributes);
     }
     return element;
-}
-
-class SvgEntity {
-    #container;
-    #group;
-    //#center;
-    #maskId;
-    #id;
-    constructor({container, group, maskId, id}) {  // center?
-        this.#container = container;
-        this.#group = group;
-        this.#maskId = maskId;
-        this.#id = id;
-    }
-    get container() { return this.#container; }
-    get group() { return this.#group; }
-    get maskId() { return this.#maskId; }
-    get id() { return this.#id; }
 }
 
 class SvgContext {
