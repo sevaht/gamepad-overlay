@@ -48,9 +48,31 @@
             let halfExtents = {x: extents.x / 2, y: extents.y / 2};
             let analogRadius = radius * Math.SQRT2; // distance from center to corner of a cell
             let legendOffset = (analogRadius - radius) / 2;
-            let dpadCenter = {x:radius*3+2, y:radius*3+2};
+            let dpadCenter = new Vector2({x:radius*3+2, y:radius*3+2});
 
             const context = new SvgContext(document.getElementById('overlayRoot'));
+            const dpadLayout = new DpadLayout({buttonLength: radius*2, buttonWidth: radius*2, center: dpadCenter});
+
+            const leftButton = context.addChild(createSvgShape(
+                {region: dpadLayout.left, shapeType: ShapeType.RECTANGLE},
+                {"class": "gamepad-button"}
+            ));
+            const upButton = context.addChild(createSvgShape(
+                {region: dpadLayout.up, shapeType: ShapeType.RECTANGLE},
+                {"class": "gamepad-button"}
+            ));
+            const rightButton = context.addChild(createSvgShape(
+                {region: dpadLayout.right, shapeType: ShapeType.RECTANGLE},
+                {"class": "gamepad-button"}
+            ));
+            const downButton = context.addChild(createSvgShape(
+                {region: dpadLayout.down, shapeType: ShapeType.RECTANGLE},
+                {"class": "gamepad-button"}
+            ));
+            const originButton = context.addChild(createSvgShape(
+                {region: dpadLayout.origin, shapeType: ShapeType.RECTANGLE},
+                {"class": "gamepad-button"}
+            ));
 
             const dpad = new Cross({context, cellExtent: radius});
             const dpadEntity = dpad.appendEntity({

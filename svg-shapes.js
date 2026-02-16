@@ -177,7 +177,7 @@ class Vector2 {
 
 class Region {
     static fromCenter({ center, size }) {
-        const topLeft = center.clone().subtract(size.clone().half());
+        const topLeft = center.clone().subtract(size.clone().divide(Vector2.TWO));
         return new this({topLeft, size});
     }
     #topLeft;
@@ -215,7 +215,7 @@ class Region {
     get size() { return this.#size; }
     get halfSize() {
         return this.#cache.halfSize ??=
-            Object.freeze(this.#size.clone().half());
+            Object.freeze(this.#size.clone().divide(Vector2.TWO));
     }
     get topCenter() {
         return this.#cache.topCenter ??=
@@ -273,55 +273,63 @@ const ShapeType = Object.freeze({
     TRIANGLE_RIGHT: Symbol("TRIANGLE_RIGHT"),
 });
 
-function createSvgShape({region, shapeType, cornerRadiusPercent = Vector2.ZERO}) {
+function createSvgShape({region, shapeType, cornerRadiusPercent = Vector2.ZERO}, attributes = {}) {
+    let element;
     switch (shapeType) {
         case ShapeType.RECTANGLE:
-            return createSvgElement("rect", {
+            element = createSvgElement("rect", {
                 x: region.topLeft.x,
                 y: region.topLeft.y,
-                width: region.width,
-                height: region.height,
+                width: region.size.x,
+                height: region.size.y,
                 rx: region.halfSize.x * cornerRadiusPercent.x,
                 ry: region.halfSize.y * cornerRadiusPercent.y,
             });
+            break;
         case ShapeType.ELLIPSE:
-            return createSvgElement("ellipse", {
+            element = createSvgElement("ellipse", {
                 cx: region.center.x,
                 cy: region.center.y,
                 rx: region.halfSize.x,
                 ry: region.halfSize.y,
             });
+            break;
         case ShapeType.TRIANGLE_UP:
-            return createSvgElement("polygon", {
+            element = createSvgElement("polygon", {
                 points: 
                     `${region.topCenter} ` +
                     `${region.bottomLeft} ` +
                     `${region.bottomRight} `,
             });
+            break;
         case ShapeType.TRIANGLE_DOWN:
-            return createSvgElement("polygon", {
+            element = createSvgElement("polygon", {
                 points: 
                     `${region.bottomCenter} ` +
                     `${region.topLeft} ` +
                     `${region.topRight} `,
             });
+            break;
         case ShapeType.TRIANGLE_LEFT:
-            return createSvgElement("polygon", {
+            element = createSvgElement("polygon", {
                 points: 
                     `${region.centerLeft} ` +
                     `${region.topRight} ` +
                     `${region.bottomRight} `,
             });
+            break;
         case ShapeType.TRIANGLE_RIGHT:
-            return createSvgElement("polygon", {
+            element = createSvgElement("polygon", {
                 points: 
                     `${region.centerRight} ` +
                     `${region.topLeft} ` +
                     `${region.bottomLeft} `,
             });
+            break;
         default:
             throw new Error(`Unknown shape type: ${String(shapeType)}`);
     }
+    return setAttributes(element, attributes);
 }
 
 class DpadLayout {
@@ -349,31 +357,37 @@ class DpadLayout {
         this.#verticalButtonSize = new Vector2({x: buttonWidth, y: buttonLength});
         this.#originSize = Vector2.splat(buttonWidth);
     }
-    left() {
+    get origin() {
+        return this.#cache.origin ??= Object.freeze(Region.fromCenter({
+            center: this.#buttonCentersRegion.center,
+            size: this.#originSize,
+        }));
+    }
+    get left() {
         return this.#cache.left ??= Object.freeze(Region.fromCenter({
             center: this.#buttonCentersRegion.centerLeft,
             size: this.#horizontalButtonSize,
         }));
     }
-    right() {
+    get right() {
         return this.#cache.right ??= Object.freeze(Region.fromCenter({
             center: this.#buttonCentersRegion.centerRight,
             size: this.#horizontalButtonSize,
         }));
     }
-    up() {
+    get up() {
         return this.#cache.up ??= Object.freeze(Region.fromCenter({
             center: this.#buttonCentersRegion.topCenter,
             size: this.#verticalButtonSize,
         }));
     }
-    down() {
+    get down() {
         return this.#cache.down ??= Object.freeze(Region.fromCenter({
             center: this.#buttonCentersRegion.bottomCenter,
             size: this.#verticalButtonSize,
         }));
     }
-    crossPoints() {  // TODO: rename?
+    get crossPoints() {  // TODO: rename?
         return this.#cache.crossPoints ??= Object.freeze([
             this.left.bottomRight,
             this.left.bottomLeft,
@@ -523,6 +537,8 @@ class SvgContext {
 
     // equivalent to appendEntity, or implement that some other way?
 }
+
+
 
 // creates/uses defs and a mask of everything
 /*
