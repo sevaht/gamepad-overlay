@@ -1,7 +1,5 @@
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
-// TODO: allow users to give id prefixes instead of just using the tag name
-
 const nextMonotonicId = new Map();
 function monotonicId(prefix) {
     const n = nextMonotonicId.get(prefix) ?? 1;
@@ -11,18 +9,6 @@ function monotonicId(prefix) {
 
 function getIdPrefixedChild({target, prefix}) {
     return target.querySelector(`:scope > [id^="${prefix}-"]`);
-}
-
-function toClassList(classes) {
-    if (!classes) return [];
-    return Array.isArray(classes) ? classes : [classes];
-}
-
-function toDimensions(value) {
-    if (typeof value === "number") {
-        return {x: value, y: value};
-    }
-    return {x: value.x, y: value.y};
 }
 
 function setAttributes(element, attributes = {}) {
@@ -37,6 +23,12 @@ function setAttributes(element, attributes = {}) {
 }
 function createSvgElement(name, attributes = {}) {
     return setAttributes(document.createElementNS(SVG_NS, name), attributes);
+}
+function createSvgUse(id, attributes = {}) {
+    return createSvgElement("use", {
+        href: `#${id}`,
+        ...attributes
+    });
 }
 ///////////////////////////////////////////////
 const OVERLAY_ASSERTION_ENABLE = true; // flip to false for production
@@ -146,6 +138,11 @@ class Vector2 {
     clone() { return new this.constructor(this); }
     toString() { return `${this.x},${this.y}`; }
     toObject() { return {x: this.x, y: this.y}; }
+    equals(other) {
+        return other instanceof Vector2
+            && this.x == other.x
+            && this.y == other.y;
+    }
 
     #applyComponent(operation, isX, operand, skipValue) {
         if (operand == null || operand === skipValue) { return; }
@@ -339,30 +336,37 @@ function createSvgShape({region, shapeType, cornerRadiusPercent = Vector2.ZERO},
 }
 
 class DpadLayout {
+    static fromCenter({ buttonLength, buttonWidth, center }) {
+        return new this({
+            buttonLength,
+            buttonWidth,
+            topLeft: center.clone().subtract(
+                Vector2.splat(buttonLength + buttonWidth / 2)
+            ),
+        });
+    }
     // TODO: diagonal special buttons not handled; could return a cell
     // but would need to know a padding offset (at LEAST to allocate
     // for the cross borders + some spacing).  Centered most likely.
+    #size;
     #buttonCentersRegion;
     #horizontalButtonSize;
     #verticalButtonSize;
     #originSize;
     #cache = Object.create(null);
-    constructor({buttonLength, buttonWidth, center}) {
-        const halfButtonLength = buttonLength / 2;
-        const halfButtonWidth = buttonWidth / 2;
-        const diagonalCenterOffset = Object.freeze(
-            Vector2.splat(halfButtonWidth + halfButtonLength)
-        );
-        // all of the points on this cell will correlate to the centers of the
-        // inputs/buttons
+
+    constructor({buttonLength, buttonWidth, topLeft}) {
+        this.#size = Object.freeze(Vector2.splat(buttonLength * 2 + buttonWidth));
+        // all points on this region will be the centers of inputs/buttons
         this.#buttonCentersRegion = new Region({
-            topLeft: center.clone().subtract(diagonalCenterOffset),
-            size: diagonalCenterOffset.clone().multiply(Vector2.TWO),
+            topLeft: topLeft.clone().add(Vector2.splat(buttonLength / 2)),
+            size: Vector2.splat(buttonWidth + buttonLength),
         });
         this.#horizontalButtonSize = new Vector2({x: buttonLength, y: buttonWidth});
         this.#verticalButtonSize = new Vector2({x: buttonWidth, y: buttonLength});
         this.#originSize = Vector2.splat(buttonWidth);
     }
+    get size() { return this.#size; }
     get origin() {
         return this.#cache.origin ??= Object.freeze(Region.fromCenter({
             center: this.#buttonCentersRegion.center,
@@ -409,15 +413,6 @@ class DpadLayout {
             this.down.bottomLeft,
         ]);
     }
-}
-
-function createUseElement(id, attributes) {
-    const element = document.createElementNS(SVG_NS, "use");
-    element.setAttribute("href", `#${id}`);
-    if (attributes != null) {
-        setAttributes(element, attributes);
-    }
-    return element;
 }
 
 class SvgContext {
@@ -495,22 +490,17 @@ class SvgContext {
         return element;
     }
 
-    // NOTE: this DOES NOT add any removal ref!  doesn't change id with "cutout" prefix!
-    ensureMask(id) {
-        let mask = this.queryChild(id);
-        if (mask == null) {
-            mask = createSvgElement("mask", {
-                id,
-                maskUnits: "userSpaceOnUse",
-                maskContentUnits: "userSpaceOnUse",
-                ...this.constructor.#MASK_SIZE_ATTRIBUTES,
-            });
-            mask.appendChild(createSvgElement("use", {
-                href: `#${this.#everythingRectId}`,
-                fill: "white",
-            }));
-            this.addDefinition(mask);
-        }
+    addMask(id) {
+        const mask = createSvgElement("mask", {
+            id,
+            maskUnits: "userSpaceOnUse",
+            maskContentUnits: "userSpaceOnUse",
+            ...this.constructor.#MASK_SIZE_ATTRIBUTES,
+        });
+        mask.appendChild(createSvgUse(this.everythingRectId, {
+            fill: "white",
+        }));
+        this.addDefinition(mask);
         return mask;
     }
 
@@ -526,43 +516,54 @@ class SvgContext {
     // equivalent to appendEntity, or implement that some other way?
 }
 
+class GamepadEntity {
+    #context;
+    #element;
+    #mask;
 
+    constructor({context, element, parent, layers=[{}], offset=Vector2.ZERO}) {
+        // TODO: null validation?
+        this.#context = context;
+        this.#element = element;
+        this.setOffset(offset);
+        this.#context.addDefinition(this.#element);
 
-// creates/uses defs and a mask of everything
-/*
-    appendEntity({id, center, layers, target}) {
-        layers ??= [{}];
-        if (target == null) {
-            target = this.#svg;
-        } else if (!this.hasAncestor(target)) {
-            throw new Error("Passed target is not a child of the svg given in the constructor.");
-        }
-        const container = setAttributes(document.createElementNS(SVG_NS, "g"), {
-            "transform": `translate(${center.x} ${center.y})`
-        });
-        const group = document.createElementNS(SVG_NS, "g");
-        container.appendChild(group);
-
-        const baseUseElement = createUseElement(id);
-        let maskId;
         for (const layer of layers) {
-            const useElement = baseUseElement.cloneNode(false);
-            for (const className of toClassList(layer.classes)) {
+            const useElement = createSvgUse(this.id);
+            const classList = layer.classes == null ? [] : [].concat(layer.classes);
+            for (const className of classList) {
                 useElement.classList.add(className);
             }
             if (layer.id) {
                 useElement.setAttribute("id", layer.id);
             }
             if (layer.cutout) {
-                maskId = this.ensureMask(id);
-                useElement.setAttribute("mask", `url(#${maskId})`);
+                useElement.setAttribute("mask", `url(#${this.mask.id})`);
             }
-            group.appendChild(useElement);
+            this.#context.addChild(useElement, {parent});
         }
-        target.appendChild(container);
-
-        return new SvgEntity({container, group, maskId, id}); // center?
     }
-*/
-
-
+    setOffset(offset) {
+        if (Vector2.ZERO.equals(offset)) {
+            setAttributes(this.#element, { transform: null });
+        } else {
+            setAttributes(this.#element, { transform: `translate(${offset.x} ${offset.y})` });
+        }
+    }
+    get id() {  // cache?
+        return this.#element.id;
+    }
+    get cutoutId() {  // cache?
+        return `cutout-${this.id}`;
+    }
+    get mask() {
+        this.#mask ??= this.#context.queryChild(this.cutoutId);
+        if (this.#mask == null) {
+            this.#mask = this.#context.addMask(this.cutoutId);
+            this.#mask.appendChild(createSvgUse(this.id, {
+                fill: "black",
+            }));
+        }
+        return this.#mask;
+    }
+}
