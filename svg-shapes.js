@@ -603,10 +603,10 @@ class GamepadEntity {
 }
 
 
-function clampToUnitCircle(x, y) {
-    const len = Math.hypot(x, y);
-    if (len > 1) {
-        return { x: x / len, y: y / len };
-    }
-    return { x, y };
-}
+//function clampToUnitCircle(x, y) {
+//    const len = Math.hypot(x, y);
+//    if (len > 1) {
+//        return { x: x / len, y: y / len };
+//    }
+//    return { x, y };
+//}
