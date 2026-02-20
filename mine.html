@@ -43,98 +43,136 @@
         </svg>
         <script defer>
             // TODO: fix variable pollution
-            let radius = 30;
-            let extents = {x: radius, y: radius};
-            let analogRadius = radius * Math.SQRT2; // distance from center to corner of a cell
-            let legendOffset = (analogRadius - radius) / 2;
-            let dpadCenter = {x:radius*3+2, y:radius*3+2};
-
             const context = new SvgContext(document.getElementById('overlayRoot'));
+            const dpadLayout = new DpadLayout({buttonLength: 60, buttonWidth: 60, topLeft: new Vector2({x: 2, y: 2})});
 
-            const dpad = new Cross({context, cellExtent: radius});
-            const dpadEntity = dpad.appendEntity({
-                center: dpadCenter,
-                layers: [{classes:"outer-border", cutout:true}, {classes:"inner-border", cutout:true}]
-                
-            });
+            const backgroundGroup = context.addChild(createSvgElement("g", {id: "backgroundGroup"}));
+            const dpadGroup = context.addChild(
+                createSvgElement("g", {id: "dpadGroup"}),
+                {parent: backgroundGroup}
+            );
 
-            const dpadButton = new Shape({context, extents, shapeType: ShapeType.RECTANGLE});
-            dpadButton.appendEntity({  // up button
-                target: dpadEntity.group,
-                center: dpad.north.center,
-                layers: [{classes:"gamepad-button"}],
-            });
-            new Shape({  // up legend
+            // TODO: make these go into a group, so a mask can be applied to them all.
+            const dpadBorder = new GamepadEntity({
                 context,
-                extents: {x: extents.x / 2, y: extents.y / 2},
-                shapeType: ShapeType.TRIANGLE_UP
-            }).appendEntity({
-                target: dpadEntity.group,
-                center: {x: dpad.north.center.x, y: dpad.north.center.y - legendOffset},
+                element: createSvgPolygon(dpadLayout.crossPoints, {id: "dpadBorder"}),
                 layers: [{classes:"outer-border", cutout:true}, {classes:"inner-border", cutout:true}],
+                parent: dpadGroup,
             });
-
-            dpadButton.appendEntity({  // down button
-                target: dpadEntity.group,
-                center: dpad.south.center,
+            const leftButton = new GamepadEntity({
+                context,
+                element: createSvgShape(
+                    {region: dpadLayout.left, shapeType: ShapeType.RECTANGLE},
+                    {id: "leftButton"},
+                ),
                 layers: [{classes:"gamepad-button"}],
+                parent: dpadGroup,
             });
-            new Shape({  // down legend
+            const upButton = new GamepadEntity({
                 context,
-                extents: {x: extents.x / 2, y: extents.y / 2},
-                shapeType: ShapeType.TRIANGLE_DOWN
-            }).appendEntity({
-                target: dpadEntity.group,
-                center: {x: dpad.south.center.x, y: dpad.south.center.y + legendOffset},
-                layers: [{classes:"outer-border", cutout:true}, {classes:"inner-border", cutout:true}],
-            });
-
-            dpadButton.appendEntity({  // left button
-                target: dpadEntity.group,
-                center: dpad.west.center,
+                element: createSvgShape(
+                    {region: dpadLayout.up, shapeType: ShapeType.RECTANGLE},
+                    {id: "upButton"},
+                ),
                 layers: [{classes:"gamepad-button"}],
+                parent: dpadGroup,
             });
-            new Shape({  // left legend
+            const rightButton = new GamepadEntity({
                 context,
-                extents: {x: extents.x / 2, y: extents.y / 2},
-                shapeType: ShapeType.TRIANGLE_LEFT
-            }).appendEntity({
-                target: dpadEntity.group,
-                center: {x: dpad.west.center.x - legendOffset, y: dpad.west.center.y},
-                layers: [{classes:"outer-border", cutout:true}, {classes:"inner-border", cutout:true}],
-            });
-
-            const rightEntity = dpadButton.appendEntity({  // right button
-                target: dpadEntity.group,
-                center: dpad.east.center,
+                element: createSvgShape(
+                    {region: dpadLayout.right, shapeType: ShapeType.RECTANGLE},
+                    {id: "rightButton"},
+                ),
                 layers: [{classes:"gamepad-button"}],
+                parent: dpadGroup,
             });
-            const rightGroup = rightEntity.container;
-            const rightLegend = new Shape({  // right legend
+            const downButton = new GamepadEntity({
                 context,
-                extents: {x: extents.x / 2, y: extents.y / 2},
-                shapeType: ShapeType.TRIANGLE_RIGHT
-            })
-            rightLegend.appendEntity({
-                target: dpadEntity.group,
-                center: {x: dpad.east.center.x + legendOffset, y: dpad.east.center.y},
-                layers: [{classes:"outer-border", cutout:true}, {classes:"inner-border", cutout:true}],
+                element: createSvgShape(
+                    {region: dpadLayout.down, shapeType: ShapeType.RECTANGLE},
+                    {id: "downButton"},
+                ),
+                layers: [{classes:"gamepad-button"}],
+                parent: dpadGroup,
+            });
+            const originButton = new GamepadEntity({
+                context,
+                element: createSvgShape(
+                    {region: dpadLayout.origin, shapeType: ShapeType.RECTANGLE},
+                    {id: "originButton"}
+                ),
+                layers: [{classes:"gamepad-button"}],
+                parent: dpadGroup,
             });
 
-            const centerButton = new Shape({
+            const analogAreaGroup = context.addChild(
+                createSvgElement("g", {id: "analogAreaGroup"}),
+                {parent: backgroundGroup}
+            );
+            const analogArea = new GamepadEntity({
                 context,
-                extents: {x: analogRadius, y: analogRadius},
-                shapeType: ShapeType.ELLIPSE
+                element: createSvgShape(
+                    {region: dpadLayout.analogRegion, shapeType: ShapeType.ELLIPSE},
+                    {id: "analogArea"}
+                ),
+                layers: [
+                    {classes:"outer-border", cutout:true},
+                    {classes:"inner-border", cutout:true},
+                    {classes:"gamepad-button"}
+                ],
+                parent: analogAreaGroup,
             });
-            const centerEntity = centerButton.appendEntity({
-                target: dpadEntity.container,
-                center: dpad.origin.center,
-                layers: [{classes:"outer-border", cutout:true}, {classes:"inner-border", cutout:true}, {classes:"gamepad-button"}],
-            });
+            // make the analog area overwrite instead of overlay
+            setMask(dpadGroup, analogArea.mask.id);
 
-            // only works this way because the shape itself and its position on the dpad are both centered
-            // if not, a different mask would need to be created
-            dpadEntity.group.setAttribute("mask", `url(#${centerEntity.maskId})`);
+            const analogStickGroup = context.addChild(createSvgElement("g", {id: "analogStickGroup"}));
+            //const analogStickSize = dpadLayout.analogRegion.halfSize;
+            const analogStickSize = dpadLayout.analogRegion.size.clone().multiply(Vector2.splat(0.6));
+            const analogStick = new GamepadEntity({
+                context,
+                element: createSvgShape(
+                    {
+                        region: Region.fromCenter({
+                            center: dpadLayout.analogRegion.center,
+                            size: analogStickSize,
+                        }),
+                        shapeType: ShapeType.ELLIPSE
+                    },
+                    {id: "analogStick"}
+                ),
+                layers: [
+                    {classes:"outer-border", cutout:true},
+                    {classes:"inner-border", cutout:true},
+                    {classes:"gamepad-button"}
+                ],
+                parent: analogStickGroup,
+            });
+            const analogStickRingSize = analogStickSize.clone().multiply(Vector2.splat(0.75));
+            const analogStickRing = new GamepadEntity({
+                context,
+                element: createSvgShape(
+                    {
+                        region: Region.fromCenter({
+                            center: dpadLayout.analogRegion.center,
+                            size: analogStickRingSize,
+                        }),
+                        shapeType: ShapeType.ELLIPSE
+                    },
+                    {id: "analogStickRing"}
+                ),
+                layers: [
+                    {classes:"outer-border", cutout:true},
+                    {classes:"inner-border", cutout:true},
+                ],
+                parent: analogStickGroup,
+            });
+            // make the ring move along with the analog stick.
+            analogStick.connect(analogStickRing.element);
+            setMask(backgroundGroup, analogStick.mask.id);
+
+            // TODO: TESTING, set analog to the left.
+            //analogStick.setTranslation(new Vector2({x: -dpadLayout.origin.halfSize.x, y: 0}));
+            //analogStick.setTranslation(new Vector2({x: -(dpadLayout.analogRegion.halfSize.x - analogStickSize.x/2), y: 0}));
         </script>
     </body>
 </html>
