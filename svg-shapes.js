@@ -574,13 +574,17 @@ class GamepadEntity {
     get cutoutId() {  // cache?
         return `cutout-${this.id}`;
     }
+    createMaskRect() {
+        return createSvgUse(this.id, {
+            fill: "black",
+        });
+    }
+
     get mask() {
         this.#mask ??= this.#context.queryChild(this.cutoutId);
         if (this.#mask == null) {
             this.#mask = this.#context.addMask(this.cutoutId);
-            this.#mask.appendChild(createSvgUse(this.id, {
-                fill: "black",
-            }));
+            this.#mask.appendChild(this.createMaskRect());
         }
         return this.#mask;
     }

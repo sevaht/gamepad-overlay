@@ -52,7 +52,11 @@
             const context = new SvgContext(document.getElementById('overlayRoot'));
             const dpadLayout = new DpadLayout({buttonLength: radius*2, buttonWidth: radius*2, topLeft: new Vector2({x: 2, y: 2})});
 
-            const dpadGroup = context.addChild(createSvgElement("g", {id: "dpadGroup"}));
+            const backgroundGroup = context.addChild(createSvgElement("g", {id: "backgroundGroup"}));
+            const dpadGroup = context.addChild(
+                createSvgElement("g", {id: "dpadGroup"}),
+                {parent: backgroundGroup}
+            );
 
             // TODO: make these go into a group, so a mask can be applied to them all.
             const dpadBorder = new GamepadEntity({
@@ -107,7 +111,10 @@
                 parent: dpadGroup,
             });
 
-            const analogAreaGroup = context.addChild(createSvgElement("g", {id: "analogAreaGroup"}));
+            const analogAreaGroup = context.addChild(
+                createSvgElement("g", {id: "analogAreaGroup"}),
+                {parent: backgroundGroup}
+            );
             const analogArea = new GamepadEntity({
                 context,
                 element: createSvgShape(
@@ -165,8 +172,7 @@
                 ],
                 parent: analogStickGroup,
             });
-            // TODO: this is in the wrong place
-            setMask(analogAreaGroup, analogStick.mask.id);
+            setMask(backgroundGroup, analogStick.mask.id);
 
 
             /////////////////////////////
