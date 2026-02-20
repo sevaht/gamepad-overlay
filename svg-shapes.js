@@ -30,6 +30,21 @@ function createSvgUse(id, attributes = {}) {
         ...attributes
     });
 }
+
+function setMask(element, id) {
+    return setAttributes(element, {
+        mask: id == null ? null : `url(#${id})`,
+    });
+}
+
+function setTranslation(element, offset) {
+    return setAttributes(element, {
+        transform: (offset == null || Vector2.ZERO.equals(offset))
+            ? null
+            : `translate(${offset.x} ${offset.y})`,
+    });
+}
+
 ///////////////////////////////////////////////
 const OVERLAY_ASSERTION_ENABLE = true; // flip to false for production
 
@@ -413,6 +428,12 @@ class DpadLayout {
             this.down.bottomLeft,
         ]);
     }
+    get analogRegion() {
+        return this.#cache.analogRegion ??= Object.freeze(Region.fromCenter({
+            center: this.origin.center,
+            size: Vector2.splat(Math.hypot(this.origin.size.x, this.origin.size.y)),
+        }));
+    }
 }
 
 class SvgContext {
@@ -525,7 +546,7 @@ class GamepadEntity {
         // TODO: null validation?
         this.#context = context;
         this.#element = element;
-        this.setOffset(offset);
+        this.setTranslation(offset);
         this.#context.addDefinition(this.#element);
 
         for (const layer of layers) {
@@ -538,17 +559,14 @@ class GamepadEntity {
                 useElement.setAttribute("id", layer.id);
             }
             if (layer.cutout) {
-                useElement.setAttribute("mask", `url(#${this.mask.id})`);
+                setMask(useElement, this.mask.id);
             }
             this.#context.addChild(useElement, {parent});
         }
     }
-    setOffset(offset) {
-        if (Vector2.ZERO.equals(offset)) {
-            setAttributes(this.#element, { transform: null });
-        } else {
-            setAttributes(this.#element, { transform: `translate(${offset.x} ${offset.y})` });
-        }
+    setTranslation(offset) {
+        setTranslation(this.#element, offset);
+        return this;
     }
     get id() {  // cache?
         return this.#element.id;

@@ -52,11 +52,14 @@
             const context = new SvgContext(document.getElementById('overlayRoot'));
             const dpadLayout = new DpadLayout({buttonLength: radius*2, buttonWidth: radius*2, topLeft: new Vector2({x: 2, y: 2})});
 
+            const dpadGroup = context.addChild(createSvgElement("g", {id: "dpadGroup"}));
+
             // TODO: make these go into a group, so a mask can be applied to them all.
             const dpadBorder = new GamepadEntity({
                 context,
                 element: createSvgPolygon(dpadLayout.crossPoints, {id: "dpadBorder"}),
-                layers: [{classes:"outer-border", cutout:true}, {classes:"inner-border", cutout:true}]
+                layers: [{classes:"outer-border", cutout:true}, {classes:"inner-border", cutout:true}],
+                parent: dpadGroup,
             });
             const leftButton = new GamepadEntity({
                 context,
@@ -65,6 +68,7 @@
                     {id: "leftButton"},
                 ),
                 layers: [{classes:"gamepad-button"}],
+                parent: dpadGroup,
             });
             const upButton = new GamepadEntity({
                 context,
@@ -73,6 +77,7 @@
                     {id: "upButton"},
                 ),
                 layers: [{classes:"gamepad-button"}],
+                parent: dpadGroup,
             });
             const rightButton = new GamepadEntity({
                 context,
@@ -81,6 +86,7 @@
                     {id: "rightButton"},
                 ),
                 layers: [{classes:"gamepad-button"}],
+                parent: dpadGroup,
             });
             const downButton = new GamepadEntity({
                 context,
@@ -89,6 +95,7 @@
                     {id: "downButton"},
                 ),
                 layers: [{classes:"gamepad-button"}],
+                parent: dpadGroup,
             });
             const originButton = new GamepadEntity({
                 context,
@@ -97,7 +104,70 @@
                     {id: "originButton"}
                 ),
                 layers: [{classes:"gamepad-button"}],
+                parent: dpadGroup,
             });
+
+            const analogAreaGroup = context.addChild(createSvgElement("g", {id: "analogAreaGroup"}));
+            const analogArea = new GamepadEntity({
+                context,
+                element: createSvgShape(
+                    {region: dpadLayout.analogRegion, shapeType: ShapeType.ELLIPSE},
+                    {id: "analogArea"}
+                ),
+                layers: [
+                    {classes:"outer-border", cutout:true},
+                    {classes:"inner-border", cutout:true},
+                    {classes:"gamepad-button"}
+                ],
+                parent: analogAreaGroup,
+            });
+            // make the analog area overwrite instead of overlay
+            setMask(dpadGroup, analogArea.mask.id);
+
+            const analogStickGroup = context.addChild(createSvgElement("g", {id: "analogStickGroup"}));
+            const analogStick = new GamepadEntity({
+                context,
+                element: createSvgShape(
+                    {
+                        region: Region.fromCenter({
+                            center: dpadLayout.analogRegion.center,
+                            size: dpadLayout.analogRegion.size.clone().divide(Vector2.TWO),
+                        }),
+                        shapeType: ShapeType.ELLIPSE
+                    },
+                    {id: "analogStick"}
+                ),
+                layers: [
+                    {classes:"outer-border", cutout:true},
+                    {classes:"inner-border", cutout:true},
+                    {classes:"gamepad-button"}
+                ],
+                parent: analogStickGroup,
+            });
+            // TODO: this doesn't move along with the analog stick itself.
+            // can we get it to group these?
+            const analogStickRing = new GamepadEntity({
+                context,
+                element: createSvgShape(
+                    {
+                        region: Region.fromCenter({
+                            center: dpadLayout.analogRegion.center,
+                            // TODO: derive this from the other value
+                            size: dpadLayout.analogRegion.size.clone().divide(Vector2.TWO).multiply(Vector2.splat(0.7)),
+                        }),
+                        shapeType: ShapeType.ELLIPSE
+                    },
+                    {id: "analogStickRing"}
+                ),
+                layers: [
+                    {classes:"outer-border", cutout:true},
+                    {classes:"inner-border", cutout:true},
+                ],
+                parent: analogStickGroup,
+            });
+            // TODO: this is in the wrong place
+            setMask(analogAreaGroup, analogStick.mask.id);
+
 
             /////////////////////////////
             const dpad = new Cross({context, cellExtent: radius});
