@@ -132,13 +132,15 @@
             setMask(dpadGroup, analogArea.mask.id);
 
             const analogStickGroup = context.addChild(createSvgElement("g", {id: "analogStickGroup"}));
+            //const analogStickSize = dpadLayout.analogRegion.halfSize;
+            const analogStickSize = dpadLayout.analogRegion.size.clone().multiply(Vector2.splat(0.6));
             const analogStick = new GamepadEntity({
                 context,
                 element: createSvgShape(
                     {
                         region: Region.fromCenter({
                             center: dpadLayout.analogRegion.center,
-                            size: dpadLayout.analogRegion.size.clone().divide(Vector2.TWO),
+                            size: analogStickSize,
                         }),
                         shapeType: ShapeType.ELLIPSE
                     },
@@ -151,16 +153,13 @@
                 ],
                 parent: analogStickGroup,
             });
-            // TODO: this doesn't move along with the analog stick itself.
-            // can we get it to group these?
             const analogStickRing = new GamepadEntity({
                 context,
                 element: createSvgShape(
                     {
                         region: Region.fromCenter({
                             center: dpadLayout.analogRegion.center,
-                            // TODO: derive this from the other value
-                            size: dpadLayout.analogRegion.size.clone().divide(Vector2.TWO).multiply(Vector2.splat(0.7)),
+                            size: analogStickSize.clone().multiply(Vector2.splat(0.75)),
                         }),
                         shapeType: ShapeType.ELLIPSE
                     },
@@ -172,8 +171,12 @@
                 ],
                 parent: analogStickGroup,
             });
+            // make the ring move along with the analog stick.
+            analogStick.connect(analogStickRing.element);
             setMask(backgroundGroup, analogStick.mask.id);
 
+            // TODO: TESTING, set analog to the left.
+            //analogStick.setTranslation(new Vector2({x: -dpadLayout.origin.halfSize.x, y: 0}));
 
             /////////////////////////////
             const dpad = new Cross({context, cellExtent: radius});

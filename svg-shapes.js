@@ -540,17 +540,19 @@ class SvgContext {
 class GamepadEntity {
     #context;
     #element;
+    #connectedElements;
     #mask;
 
     constructor({context, element, parent, layers=[{}], offset=Vector2.ZERO}) {
         // TODO: null validation?
         this.#context = context;
         this.#element = element;
+        this.#connectedElements = [this.#element];
         this.setTranslation(offset);
         this.#context.addDefinition(this.#element);
 
         for (const layer of layers) {
-            const useElement = createSvgUse(this.id);
+            const useElement = createSvgUse(this.element.id);
             const classList = layer.classes == null ? [] : [].concat(layer.classes);
             for (const className of classList) {
                 useElement.classList.add(className);
@@ -564,18 +566,28 @@ class GamepadEntity {
             this.#context.addChild(useElement, {parent});
         }
     }
-    setTranslation(offset) {
-        setTranslation(this.#element, offset);
+    connect(element) {
+        this.#connectedElements.push(element);
         return this;
     }
-    get id() {  // cache?
-        return this.#element.id;
+    setTranslation(offset) {
+        // update all transforms in one paint (no visible desync)
+        requestAnimationFrame(() => {
+            const transform = `translate(${offset.x} ${offset.y})`;
+            for (const element of this.#connectedElements) {
+                element.setAttribute("transform", transform);
+            }
+        });
+        return this;
+    }
+    get element() {
+        return this.#element;
     }
     get cutoutId() {  // cache?
-        return `cutout-${this.id}`;
+        return `cutout-${this.element.id}`;
     }
     createMaskRect() {
-        return createSvgUse(this.id, {
+        return createSvgUse(this.element.id, {
             fill: "black",
         });
     }
@@ -588,4 +600,13 @@ class GamepadEntity {
         }
         return this.#mask;
     }
+}
+
+
+function clampToUnitCircle(x, y) {
+    const len = Math.hypot(x, y);
+    if (len > 1) {
+        return { x: x / len, y: y / len };
+    }
+    return { x, y };
 }
