@@ -223,6 +223,12 @@ class Region {
         }
         return this;
     }
+    scale(factor) {
+        return this.update(Region.fromCenter({
+            center: this.center,
+            size: new Vector2({x: this.size.x * factor.x, y: this.size.y * factor.y}),
+        }));
+    }
     get topLeft() { return this.#topLeft; }
     get size() { return this.#size; }
     get halfSize() {
@@ -367,6 +373,7 @@ class DpadLayout {
     #buttonCentersRegion;
     #horizontalButtonSize;
     #verticalButtonSize;
+    #cornerButtonSize;
     #originSize;
     #cache = Object.create(null);
 
@@ -379,6 +386,7 @@ class DpadLayout {
         });
         this.#horizontalButtonSize = new Vector2({x: buttonLength, y: buttonWidth});
         this.#verticalButtonSize = new Vector2({x: buttonWidth, y: buttonLength});
+        this.#cornerButtonSize = Vector2.splat(buttonLength);
         this.#originSize = Vector2.splat(buttonWidth);
     }
     get size() { return this.#size; }
@@ -412,6 +420,31 @@ class DpadLayout {
             size: this.#verticalButtonSize,
         }));
     }
+    get topLeft() {
+        return this.#cache.topLeft ??= Object.freeze(Region.fromCenter({
+            center: this.#buttonCentersRegion.topLeft,
+            size: this.#cornerButtonSize,
+        }));
+    }
+    get bottomLeft() {
+        return this.#cache.bottomLeft ??= Object.freeze(Region.fromCenter({
+            center: this.#buttonCentersRegion.bottomLeft,
+            size: this.#cornerButtonSize,
+        }));
+    }
+    get topRight() {
+        return this.#cache.topRight ??= Object.freeze(Region.fromCenter({
+            center: this.#buttonCentersRegion.topRight,
+            size: this.#cornerButtonSize,
+        }));
+    }
+    get bottomRight() {
+        return this.#cache.bottomRight ??= Object.freeze(Region.fromCenter({
+            center: this.#buttonCentersRegion.bottomRight,
+            size: this.#cornerButtonSize,
+        }));
+    }
+
     get crossPoints() {  // TODO: rename?
         return this.#cache.crossPoints ??= Object.freeze([
             this.left.bottomRight,

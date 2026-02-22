@@ -105,6 +105,75 @@
                 parent: dpadGroup,
             });
 
+            const leftBumper = new GamepadEntity({
+                context,
+                element: createSvgShape(
+                    {
+                        region: dpadLayout.topLeft.clone().scale(new Vector2({x: 0.8, y: 0.5})),
+                        shapeType: ShapeType.RECTANGLE,
+                        cornerRadiusPercent: Vector2.splat(0.35)
+                    },
+                    {id: "leftBumperButton"}
+                ),
+                layers: [
+                    {classes:"outer-border", cutout:true},
+                    {classes:"inner-border", cutout:true},
+                    {classes:"gamepad-button"}
+                ],
+                parent: dpadGroup,
+            });
+            const leftTrigger = new GamepadEntity({
+                context,
+                element: createSvgShape(
+                    {
+                        region: dpadLayout.bottomLeft.clone().scale(new Vector2({x: 0.8, y: 0.8})),
+                        shapeType: ShapeType.TRIANGLE_DOWN,
+                        cornerRadiusPercent: Vector2.splat(0.35)
+                    },
+                    {id: "leftTriggerButton"}
+                ),
+                layers: [
+                    {classes:"outer-border", cutout:true},
+                    {classes:"inner-border", cutout:true},
+                    {classes:"gamepad-button"}
+                ],
+                parent: dpadGroup,
+            });
+            const rightBumper = new GamepadEntity({
+                context,
+                element: createSvgShape(
+                    {
+                        region: dpadLayout.topRight.clone().scale(new Vector2({x: 0.8, y: 0.5})),
+                        shapeType: ShapeType.ELLIPSE,
+                        cornerRadiusPercent: Vector2.splat(0.8)
+                    },
+                    {id: "rightBumperButton"}
+                ),
+                layers: [
+                    {classes:"outer-border", cutout:true},
+                    {classes:"inner-border", cutout:true},
+                    {classes:"gamepad-button"}
+                ],
+                parent: dpadGroup,
+            });
+            const rightTrigger = new GamepadEntity({
+                context,
+                element: createSvgShape(
+                    {
+                        region: dpadLayout.bottomRight.clone().scale(new Vector2({x: 0.8, y: 0.8})),
+                        shapeType: ShapeType.TRIANGLE_DOWN,
+                        cornerRadiusPercent: Vector2.splat(1)
+                    },
+                    {id: "rightTriggerButton"}
+                ),
+                layers: [
+                    {classes:"outer-border", cutout:true},
+                    {classes:"inner-border", cutout:true},
+                    {classes:"gamepad-button"}
+                ],
+                parent: dpadGroup,
+            });
+
             const analogAreaGroup = context.addChild(
                 createSvgElement("g", {id: "analogAreaGroup"}),
                 {parent: backgroundGroup}
