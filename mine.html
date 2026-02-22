@@ -44,7 +44,7 @@
         <script defer>
             // TODO: fix variable pollution
             const context = new SvgContext(document.getElementById('overlayRoot'));
-            const dpadLayout = new DpadLayout({buttonLength: 60, buttonWidth: 60, topLeft: new Vector2({x: 2, y: 2})});
+            const dpadLayout = new DpadLayout({buttonLength: 50, buttonWidth: 50, topLeft: new Vector2({x: 2, y: 2})});
 
             const backgroundGroup = context.addChild(createSvgElement("g", {id: "backgroundGroup"}));
             const dpadGroup = context.addChild(
@@ -128,7 +128,6 @@
                     {
                         region: dpadLayout.bottomLeft.clone().scale(new Vector2({x: 0.8, y: 0.8})),
                         shapeType: ShapeType.TRIANGLE_DOWN,
-                        cornerRadiusPercent: Vector2.splat(0.35)
                     },
                     {id: "leftTriggerButton"}
                 ),
@@ -143,9 +142,8 @@
                 context,
                 element: createSvgShape(
                     {
-                        region: dpadLayout.topRight.clone().scale(new Vector2({x: 0.8, y: 0.5})),
+                        region: dpadLayout.topRight.clone().scale(new Vector2({x: 0.8, y: 0.4})),
                         shapeType: ShapeType.ELLIPSE,
-                        cornerRadiusPercent: Vector2.splat(0.8)
                     },
                     {id: "rightBumperButton"}
                 ),
@@ -162,7 +160,6 @@
                     {
                         region: dpadLayout.bottomRight.clone().scale(new Vector2({x: 0.8, y: 0.8})),
                         shapeType: ShapeType.TRIANGLE_DOWN,
-                        cornerRadiusPercent: Vector2.splat(1)
                     },
                     {id: "rightTriggerButton"}
                 ),
@@ -181,12 +178,13 @@
             const analogArea = new GamepadEntity({
                 context,
                 element: createSvgShape(
-                    {region: dpadLayout.analogRegion, shapeType: ShapeType.ELLIPSE},
-                    {id: "analogArea"}
+                    //{region: dpadLayout.analogRegion, shapeType: ShapeType.ELLIPSE},
+                    {region: Region.fromCenter({center: dpadLayout.analogRegion.center, size: dpadLayout.analogRegion.size.clone().add(Vector2.TWO)}), shapeType: ShapeType.ELLIPSE},
+                    {id: "analogArea", style: "fill: black;"}
                 ),
                 layers: [
-                    {classes:"outer-border", cutout:true},
-                    {classes:"inner-border", cutout:true},
+                    //{classes:"outer-border", cutout:true},
+                    //{classes:"inner-border", cutout:true},
                     {classes:"gamepad-button"}
                 ],
                 parent: analogAreaGroup,
@@ -230,7 +228,7 @@
                     {id: "analogStickRing"}
                 ),
                 layers: [
-                    {classes:"outer-border", cutout:true},
+                    //{classes:"outer-border", cutout:true},
                     {classes:"inner-border", cutout:true},
                 ],
                 parent: analogStickGroup,
