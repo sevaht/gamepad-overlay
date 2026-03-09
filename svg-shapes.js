@@ -92,6 +92,7 @@ class Vector2 {
     static ZERO = Object.freeze(this.splat(0));
     static ONE = Object.freeze(this.splat(1));
     static TWO = Object.freeze(this.splat(2));
+    static THREE = Object.freeze(this.splat(3));
 
     static #ADD = 0;
     static #SUBTRACT = 1;
@@ -375,6 +376,7 @@ class DpadLayout {
     #verticalButtonSize;
     #cornerButtonSize;
     #originSize;
+    #topLeft;
     #cache = Object.create(null);
 
     constructor({buttonLength, buttonWidth, topLeft}) {
@@ -643,3 +645,34 @@ class GamepadEntity {
 //    }
 //    return { x, y };
 //}
+//
+
+
+class GamepadOverlay {
+    #context;
+    #leftLayout;
+    #rightLayout;
+
+    constructor({context, buttonLength, buttonWidth, topLeft, borderWidth, gap, hasAnalogStick=true}) {
+        this.#context = context;
+        const leftLayoutPosition = topLeft.clone()
+            .add(Vector2.splat(borderWidth));
+        this.#leftLayout = new DpadLayout({buttonLength, buttonWidth, topLeft: leftLayoutPosition});
+        this.#rightLayout = new DpadLayout({
+            buttonLength,
+            buttonWidth,
+            topLeft: leftLayoutPosition.clone()
+                .add(new Vector2({x: this.#leftLayout.size.x + borderWidth*2 + gap, y:0}))
+        });
+
+        // TODO: replicate logic from html here.  Add classes.
+
+        // left: draw cross, don't put outer border on analog area, no border on cardinals
+        // right: don't draw cross, do put outer border on analog area, both borders on cardinals
+
+
+        
+
+    }
+
+}

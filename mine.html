@@ -111,7 +111,7 @@
                     {
                         region: dpadLayout.topLeft.clone().scale(new Vector2({x: 0.8, y: 0.5})),
                         shapeType: ShapeType.RECTANGLE,
-                        cornerRadiusPercent: Vector2.splat(0.35)
+                        cornerRadiusPercent: Vector2.splat(0.25)
                     },
                     {id: "leftBumperButton"}
                 ),
@@ -158,8 +158,9 @@
                 context,
                 element: createSvgShape(
                     {
-                        region: dpadLayout.bottomRight.clone().scale(new Vector2({x: 0.8, y: 0.8})),
-                        shapeType: ShapeType.TRIANGLE_DOWN,
+                        region: dpadLayout.bottomRight.clone().scale(new Vector2({x: 0.5, y: 0.8})),
+                        shapeType: ShapeType.RECTANGLE,
+                        cornerRadiusPercent: Vector2.splat(0.25),
                     },
                     {id: "rightTriggerButton"}
                 ),
@@ -194,7 +195,7 @@
 
             const analogStickGroup = context.addChild(createSvgElement("g", {id: "analogStickGroup"}));
             //const analogStickSize = dpadLayout.analogRegion.halfSize;
-            const analogStickSize = dpadLayout.analogRegion.size.clone().multiply(Vector2.splat(0.6));
+            const analogStickSize = dpadLayout.analogRegion.size.clone().multiply(Vector2.splat(0.65));
             const analogStick = new GamepadEntity({
                 context,
                 element: createSvgShape(
@@ -203,7 +204,7 @@
                             center: dpadLayout.analogRegion.center,
                             size: analogStickSize,
                         }),
-                        shapeType: ShapeType.ELLIPSE
+                        shapeType: ShapeType.ELLIPSE,
                     },
                     {id: "analogStick"}
                 ),
@@ -228,7 +229,7 @@
                     {id: "analogStickRing"}
                 ),
                 layers: [
-                    //{classes:"outer-border", cutout:true},
+                    {classes:"outer-border", cutout:true},
                     {classes:"inner-border", cutout:true},
                 ],
                 parent: analogStickGroup,
@@ -238,7 +239,7 @@
             setMask(backgroundGroup, analogStick.mask.id);
 
             // TODO: TESTING, set analog to the left.
-            //analogStick.setTranslation(new Vector2({x: -dpadLayout.origin.halfSize.x, y: 0}));
+            analogStick.setTranslation(new Vector2({x: -dpadLayout.origin.halfSize.x, y: 0}));
             //analogStick.setTranslation(new Vector2({x: -(dpadLayout.analogRegion.halfSize.x - analogStickSize.x/2), y: 0}));
         </script>
     </body>
