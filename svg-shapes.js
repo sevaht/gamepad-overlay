@@ -292,6 +292,14 @@ const ShapeType = Object.freeze({
     TRIANGLE_RIGHT: Symbol("TRIANGLE_RIGHT"),
 });
 
+const PressFillDirection = Object.freeze({
+    DOWN: Symbol("DOWN"),
+    UP: Symbol("UP"),
+    RIGHT: Symbol("RIGHT"),
+    LEFT: Symbol("LEFT"),
+    OUTWARD: Symbol("OUTWARD"),
+});
+
 function createSvgPolygon(points, attributes = {}) {
     return createSvgElement("polygon", {
         points: Array.isArray(points) ? points.map(String).join(" ") : String(points),
@@ -576,13 +584,23 @@ class GamepadEntity {
     #context;
     #element;
     #connectedElements;
+    #connectionTransforms;
+    #translation;
     #mask;
+    #layerParent;
+    #pressVisual;
+    #pressFillDirection;
 
     constructor({context, element, parent, layers=[{}], offset=Vector2.ZERO}) {
         // TODO: null validation?
         this.#context = context;
         this.#element = element;
         this.#connectedElements = [this.#element];
+        this.#connectionTransforms = new WeakMap();
+        this.#translation = Vector2.ZERO;
+        this.#layerParent = parent;
+        this.#pressVisual = null;
+        this.#pressFillDirection = PressFillDirection.OUTWARD;
         this.setTranslation(offset);
         this.#context.addDefinition(this.#element);
 
@@ -601,18 +619,112 @@ class GamepadEntity {
             this.#context.addChild(useElement, {parent});
         }
     }
-    connect(element) {
+    enablePressVisual({
+        className = "gamepad-button-pressed-fill",
+        fillDirection = this.#pressFillDirection,
+    } = {}) {
+        if (this.#pressVisual != null) {
+            return this;
+        }
+        this.#resolvePressFillAttributes(0.5, fillDirection);
+        this.#pressFillDirection = fillDirection;
+
+        const useElement = createSvgUse(this.element.id);
+        useElement.classList.add(className);
+        this.#context.addChild(useElement, {parent: this.#layerParent});
+
+        if (fillDirection === PressFillDirection.OUTWARD) {
+            this.connect(useElement, {
+                extraTransform: () => this.#resolveOutwardTransform(this.#pressVisual?.amount ?? 0),
+                includeTranslation: false,
+            });
+            this.#pressVisual = {
+                mode: "outward",
+                amount: 0,
+            };
+        } else {
+            const clipPath = createSvgElement("clipPath", {
+                id: monotonicId(`press-clip-${this.element.id}-`),
+                clipPathUnits: "objectBoundingBox",
+            });
+            const clipRect = createSvgElement("rect", {
+                x: 0,
+                y: 0,
+                width: 1,
+                height: 0,
+            });
+            clipPath.appendChild(clipRect);
+            this.#context.addDefinition(clipPath);
+            setAttributes(useElement, {
+                "clip-path": `url(#${clipPath.id})`,
+            });
+            this.#pressVisual = {
+                mode: "directional",
+                clipRect,
+                amount: 0,
+                fillDirection,
+            };
+        }
+
+        this.#applyTransforms();
+        return this;
+    }
+    setPressAmount(amount) {
+        this.enablePressVisual();
+        amount = Math.max(0, Math.min(1, assertFiniteNumber(amount, "amount")));
+        if (amount === this.#pressVisual.amount) {
+            return this;
+        }
+        this.#pressVisual.amount = amount;
+        if (this.#pressVisual.mode === "outward") {
+            this.#applyTransforms();
+        } else {
+            const attributes = this.#resolvePressFillAttributes(amount, this.#pressVisual.fillDirection);
+            setAttributes(this.#pressVisual.clipRect, attributes);
+        }
+        return this;
+    }
+    setPressFillDirection(fillDirection) {
+        if (this.#pressVisual != null) {
+            throw new Error("setPressFillDirection must be called before setPressAmount/enablePressVisual");
+        }
+        this.#resolvePressFillAttributes(0.5, fillDirection);
+        this.#pressFillDirection = fillDirection;
+        return this;
+    }
+
+    #resolvePressFillAttributes(amount, fillDirection) {
+        switch (fillDirection) {
+            case PressFillDirection.DOWN:
+                return {x: 0, y: 0, width: 1, height: amount};
+            case PressFillDirection.UP:
+                return {x: 0, y: 1 - amount, width: 1, height: amount};
+            case PressFillDirection.RIGHT:
+                return {x: 0, y: 0, width: amount, height: 1};
+            case PressFillDirection.LEFT:
+                return {x: 1 - amount, y: 0, width: amount, height: 1};
+            case PressFillDirection.OUTWARD: {
+                const half = amount / 2;
+                return {
+                    x: 0.5 - half,
+                    y: 0.5 - half,
+                    width: amount,
+                    height: amount,
+                };
+            }
+            default:
+                throw new Error(`Unknown fillDirection: ${String(fillDirection.description ?? fillDirection)}`);
+        }
+    }
+    connect(element, {extraTransform = null, includeTranslation = true} = {}) {
         this.#connectedElements.push(element);
+        this.#connectionTransforms.set(element, {extraTransform, includeTranslation});
+        this.#applyTransforms();
         return this;
     }
     setTranslation(offset) {
-        // update all transforms in one paint (no visible desync)
-        requestAnimationFrame(() => {
-            const transform = `translate(${offset.x} ${offset.y})`;
-            for (const element of this.#connectedElements) {
-                element.setAttribute("transform", transform);
-            }
-        });
+        this.#translation = offset;
+        this.#applyTransforms();
         return this;
     }
     get element() {
@@ -634,6 +746,36 @@ class GamepadEntity {
             this.#mask.appendChild(this.createMaskRect());
         }
         return this.#mask;
+    }
+
+    #resolveOutwardTransform(amount) {
+        const bbox = this.#element.getBBox();
+        const cx = bbox.x + bbox.width / 2;
+        const cy = bbox.y + bbox.height / 2;
+        return `translate(${cx} ${cy}) scale(${amount}) translate(${-cx} ${-cy})`;
+    }
+
+    #applyTransforms() {
+        requestAnimationFrame(() => {
+            const translate = this.#translation == null || Vector2.ZERO.equals(this.#translation)
+                ? null
+                : `translate(${this.#translation.x} ${this.#translation.y})`;
+
+            for (const element of this.#connectedElements) {
+                const config = this.#connectionTransforms.get(element) ?? {extraTransform: null, includeTranslation: true};
+                const extraTransform = typeof config.extraTransform === "function"
+                    ? config.extraTransform()
+                    : config.extraTransform;
+                const elementTranslate = config.includeTranslation ? translate : null;
+
+                const transform = [elementTranslate, extraTransform]
+                    .filter((value) => value != null && value !== "")
+                    .join(" ");
+                setAttributes(element, {
+                    transform: transform || null,
+                });
+            }
+        });
     }
 }
 

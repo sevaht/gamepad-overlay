@@ -32,8 +32,9 @@
                 stroke-width: 0;
             }
 
-            .gamepad-button.pressed {
+            .gamepad-button-pressed-fill {
                 fill: #c00;
+                stroke: none;
             }
         </style>
         <script src="svg-shapes.js"></script>
@@ -51,11 +52,33 @@
                 borderWidth: 2,
                 gap: 1,
                 hasAnalogStick: true,
+                rightSide: {
+                    cornerButtons: {
+                        rightTrigger: {
+                            regionName: "bottomRight",
+                            scale: {x: 0.5, y: 0.8},
+                            shapeType: ShapeType.RECTANGLE,
+                            includeBorder: true,
+                        },
+                    },
+                },
             });
 
             overlay.entities.left.entities.analogStick.setTranslation(
                 new Vector2({x: -overlay.leftLayout.origin.halfSize.x, y: 0}),
             );
+
+            const rightTrigger = overlay.entities.right.entities.rightTrigger;
+            rightTrigger.setPressFillDirection(PressFillDirection.DOWN);
+
+            function animatePress() {
+                const cycleSeconds = 2;
+                const phase = (performance.now() / 1000) / cycleSeconds;
+                const amount = (Math.sin(phase * Math.PI * 2) + 1) / 2;
+                rightTrigger.setPressAmount(amount);
+                requestAnimationFrame(animatePress);
+            }
+            requestAnimationFrame(animatePress);
         </script>
     </body>
 </html>
