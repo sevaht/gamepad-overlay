@@ -816,6 +816,7 @@ class GamepadOverlay {
     #entities;
     #cornerCompensation;
     #borderWidth;
+    #region;
 
     static #DEFAULT_SIDE_OPTIONS = Object.freeze({
         left: Object.freeze({
@@ -903,6 +904,14 @@ class GamepadOverlay {
             topLeft: leftLayoutPosition.clone()
                 .add(new Vector2({x: this.#leftLayout.size.x + borderWidth*2 + gap + betweenHalvesGap, y:0}))
         });
+        const size = new Vector2({
+            x: this.#rightLayout.topRight.bottomRight.x - topLeft.x + borderWidth,
+            y: this.#leftLayout.bottomLeft.bottomRight.y - topLeft.y + borderWidth,
+        });
+        this.#region = new Region({
+            topLeft: topLeft.clone(),
+            size,
+        });
         this.#entities = this.#build({hasAnalogStick, leftSide, rightSide});
     }
 
@@ -914,6 +923,18 @@ class GamepadOverlay {
     }
     get rightLayout() {
         return this.#rightLayout;
+    }
+    get region() {
+        return this.#region;
+    }
+    get size() {
+        return this.#region.size;
+    }
+    get width() {
+        return this.#region.size.x;
+    }
+    get height() {
+        return this.#region.size.y;
     }
 
     #createButton({

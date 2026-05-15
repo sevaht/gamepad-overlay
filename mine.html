@@ -81,7 +81,7 @@
         <script src="svg-shapes.js"></script>
     </head>
     <body>
-        <svg viewBox="0 0 800 400" id="overlayRoot" class="theme-xbox">
+        <svg id="overlayRoot" class="theme-xbox">
         </svg>
         <script defer>
             const context = new SvgContext(document.getElementById('overlayRoot'));
@@ -112,6 +112,13 @@
                     },
                 },*/
             });
+            const overlayRegion = overlay.region;
+            context.svg.setAttribute(
+                "viewBox",
+                `${overlayRegion.topLeft.x} ${overlayRegion.topLeft.y} ${overlay.width} ${overlay.height}`,
+            );
+            context.svg.setAttribute("width", String(overlay.width));
+            context.svg.setAttribute("height", String(overlay.height));
 
             overlay.entities.left.entities.analogStick.setTranslation(
                 new Vector2({x: -overlay.leftLayout.origin.halfSize.x, y: 0}),
