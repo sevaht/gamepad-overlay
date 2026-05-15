@@ -11,8 +11,8 @@
                 /* border: 1px solid red; */
                 --btn-idle: rgba(44, 47, 51, 0.7);
                 --btn-pressed: #3f8cff;
-                --overlay-border-inner-size: 2;
-                --overlay-border-outer-size: 2;
+                --overlay-border-inner-size: 4;
+                --overlay-border-outer-size: 4;
             }
 
             .outer-border {
@@ -89,26 +89,8 @@
                 buttonWidth: 132,
                 topLeft: new Vector2({x: 0, y: 0}),
                 gap: 1,
-                betweenHalvesGap: 1,
+                betweenHalvesGap: 0,
                 hasAnalogStick: true,
-                /*leftSide: {
-                    cornerButtons: {
-                        leftTrigger: {
-                            regionName: "bottomLeft",
-                            scale: {x: 1.0, y: 1.0},
-                            shapeType: ShapeType.TRIANGLE_DOWN,
-                        },
-                    },
-                },
-                rightSide: {
-                    cornerButtons: {
-                        rightTrigger: {
-                            regionName: "bottomRight",
-                            scale: {x: 1.0, y: 1.0},
-                            shapeType: ShapeType.TRIANGLE_DOWN,
-                        },
-                    },
-                },*/
             });
             const overlayRegion = overlay.region;
             context.svg.setAttribute(
@@ -123,7 +105,6 @@
             );
 
             const rightTrigger = overlay.entities.right.entities.rightTrigger;
-            //rightTrigger.setPressFillDirection(PressFillDirection.DOWN);
             const rightButtons = {
                 up: overlay.entities.right.entities.upButton,
                 left: overlay.entities.right.entities.leftButton,

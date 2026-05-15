@@ -824,20 +824,19 @@ class GamepadOverlay {
             cornerButtons: Object.freeze({
                 leftBumper: Object.freeze({
                     regionName: "topLeft",
-                    scale: Object.freeze({x: 0.8, y: 0.6}),
+                    scale: Object.freeze({x: 0.9, y: 0.6}),
                     shapeType: ShapeType.RECTANGLE,
                     cornerRadiusPercent: Object.freeze({x: 0.25, y: 0.25}),
                 }),
                 leftTrigger: Object.freeze({
                     regionName: "bottomLeft",
-                    scale: Object.freeze({x: 0.6, y: 0.8}),
-                    shapeType: ShapeType.RECTANGLE,
-                    cornerRadiusPercent: Object.freeze({x: 0.25, y: 0.25}),
+                    scale: Object.freeze({x: 1.0, y: 1.0}),
+                    shapeType: ShapeType.TRIANGLE_DOWN,
                     pressFillDirection: PressFillDirection.DOWN,
                 }),
                 select: Object.freeze({
                     regionName: "topRight",
-                    scale: Object.freeze({x: 0.6, y: 0.6}),
+                    scale: Object.freeze({x: 0.7, y: 0.7}),
                     shapeType: ShapeType.ELLIPSE,
                 }),
                 leftSpecial: false,
@@ -848,21 +847,20 @@ class GamepadOverlay {
             cornerButtons: Object.freeze({
                 start: Object.freeze({
                     regionName: "topLeft",
-                    scale: Object.freeze({x: 0.6, y: 0.6}),
+                    scale: Object.freeze({x: 0.7, y: 0.7}),
                     shapeType: ShapeType.ELLIPSE,
                 }),
                 rightBumper: Object.freeze({
                     regionName: "topRight",
-                    scale: Object.freeze({x: 0.8, y: 0.6}),
+                    scale: Object.freeze({x: 0.9, y: 0.6}),
                     shapeType: ShapeType.RECTANGLE,
                     cornerRadiusPercent: Object.freeze({x: 0.25, y: 0.25}),
                 }),
                 rightSpecial: false,
                 rightTrigger: Object.freeze({
                     regionName: "bottomRight",
-                    scale: Object.freeze({x: 0.6, y: 0.8}),
-                    shapeType: ShapeType.RECTANGLE,
-                    cornerRadiusPercent: Object.freeze({x: 0.25, y: 0.25}),
+                    scale: Object.freeze({x: 1.0, y: 1.0}),
+                    shapeType: ShapeType.TRIANGLE_DOWN,
                     pressFillDirection: PressFillDirection.DOWN,
                 }),
             }),
