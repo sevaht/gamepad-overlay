@@ -8,13 +8,11 @@
             }
 
             #overlayRoot {
-                border: 1px solid red;  /* temporary for development */ 
-                width: 800px;
-                height: auto;
+                /* border: 1px solid red; */
                 --btn-idle: rgba(44, 47, 51, 0.7);
                 --btn-pressed: #3f8cff;
-                --overlay-border-inner-size: 1;
-                --overlay-border-outer-size: 1;
+                --overlay-border-inner-size: 2;
+                --overlay-border-outer-size: 2;
             }
 
             .outer-border {
@@ -87,11 +85,11 @@
             const context = new SvgContext(document.getElementById('overlayRoot'));
             const overlay = new GamepadOverlay({
                 context,
-                buttonLength: 50,
-                buttonWidth: 50,
+                buttonLength: 132,
+                buttonWidth: 132,
                 topLeft: new Vector2({x: 0, y: 0}),
-                gap: 2,
-                betweenHalvesGap: 2,
+                gap: 1,
+                betweenHalvesGap: 1,
                 hasAnalogStick: true,
                 /*leftSide: {
                     cornerButtons: {
@@ -125,7 +123,7 @@
             );
 
             const rightTrigger = overlay.entities.right.entities.rightTrigger;
-            rightTrigger.setPressFillDirection(PressFillDirection.DOWN);
+            //rightTrigger.setPressFillDirection(PressFillDirection.DOWN);
             const rightButtons = {
                 up: overlay.entities.right.entities.upButton,
                 left: overlay.entities.right.entities.leftButton,

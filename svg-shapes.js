@@ -833,6 +833,7 @@ class GamepadOverlay {
                     scale: Object.freeze({x: 0.6, y: 0.8}),
                     shapeType: ShapeType.RECTANGLE,
                     cornerRadiusPercent: Object.freeze({x: 0.25, y: 0.25}),
+                    pressFillDirection: PressFillDirection.DOWN,
                 }),
                 select: Object.freeze({
                     regionName: "topRight",
@@ -862,6 +863,7 @@ class GamepadOverlay {
                     scale: Object.freeze({x: 0.6, y: 0.8}),
                     shapeType: ShapeType.RECTANGLE,
                     cornerRadiusPercent: Object.freeze({x: 0.25, y: 0.25}),
+                    pressFillDirection: PressFillDirection.DOWN,
                 }),
             }),
         }),
@@ -893,8 +895,10 @@ class GamepadOverlay {
     }) {
         this.#context = context;
         borderWidth ??= this.constructor.#resolveBorderWidthFromCss(context);
+        const gapPixels = gap * borderWidth;
+        const betweenHalvesGapPixels = betweenHalvesGap * borderWidth;
         this.#borderWidth = borderWidth;
-        this.#cornerCompensation = gap + borderWidth * 2;
+        this.#cornerCompensation = gapPixels + borderWidth * 2;
         const leftLayoutPosition = topLeft.clone()
             .add(Vector2.splat(borderWidth));
         this.#leftLayout = new DpadLayout({buttonLength, buttonWidth, topLeft: leftLayoutPosition});
@@ -902,7 +906,7 @@ class GamepadOverlay {
             buttonLength,
             buttonWidth,
             topLeft: leftLayoutPosition.clone()
-                .add(new Vector2({x: this.#leftLayout.size.x + borderWidth*2 + gap + betweenHalvesGap, y:0}))
+                .add(new Vector2({x: this.#leftLayout.size.x + borderWidth*2 + gapPixels + betweenHalvesGapPixels, y:0}))
         });
         const size = new Vector2({
             x: this.#rightLayout.topRight.bottomRight.x - topLeft.x + borderWidth,
@@ -991,6 +995,7 @@ class GamepadOverlay {
             shapeType = ShapeType.RECTANGLE,
             cornerRadiusPercent,
             compensateOuterEdges = true,
+            pressFillDirection,
         } = spec;
         const region = layout[regionName];
         if (!(region instanceof Region)) {
@@ -1008,7 +1013,7 @@ class GamepadOverlay {
             {compensateOuterEdges},
         );
 
-        return this.#createButton({
+        const button = this.#createButton({
             group,
             id: `${sidePrefix}${idSuffix}`,
             region: compensatedRegion.scale(scaleVector),
@@ -1018,6 +1023,10 @@ class GamepadOverlay {
             semanticClasses: [`side-${sideName}`, `role-${roleName}`],
             semanticAttributes: {"data-side": sideName, "data-role": roleName},
         });
+        if (pressFillDirection != null) {
+            button.setPressFillDirection(pressFillDirection);
+        }
+        return button;
     }
 
     #resolveCornerCompensationVector(value) {
