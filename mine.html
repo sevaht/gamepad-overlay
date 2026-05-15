@@ -90,9 +90,10 @@
                 buttonLength: 50,
                 buttonWidth: 50,
                 topLeft: new Vector2({x: 0, y: 0}),
-                gap: 1,
+                gap: 2,
+                betweenHalvesGap: 2,
                 hasAnalogStick: true,
-                leftSide: {
+                /*leftSide: {
                     cornerButtons: {
                         leftTrigger: {
                             regionName: "bottomLeft",
@@ -109,7 +110,7 @@
                             shapeType: ShapeType.TRIANGLE_DOWN,
                         },
                     },
-                },
+                },*/
             });
 
             overlay.entities.left.entities.analogStick.setTranslation(

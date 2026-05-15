@@ -823,18 +823,19 @@ class GamepadOverlay {
             cornerButtons: Object.freeze({
                 leftBumper: Object.freeze({
                     regionName: "topLeft",
-                    scale: Object.freeze({x: 0.7, y: 0.5}),
+                    scale: Object.freeze({x: 0.8, y: 0.6}),
                     shapeType: ShapeType.RECTANGLE,
                     cornerRadiusPercent: Object.freeze({x: 0.25, y: 0.25}),
                 }),
                 leftTrigger: Object.freeze({
                     regionName: "bottomLeft",
-                    scale: Object.freeze({x: 0.7, y: 0.7}),
-                    shapeType: ShapeType.TRIANGLE_DOWN,
+                    scale: Object.freeze({x: 0.6, y: 0.8}),
+                    shapeType: ShapeType.RECTANGLE,
+                    cornerRadiusPercent: Object.freeze({x: 0.25, y: 0.25}),
                 }),
                 select: Object.freeze({
                     regionName: "topRight",
-                    scale: Object.freeze({x: 0.7, y: 0.4}),
+                    scale: Object.freeze({x: 0.6, y: 0.6}),
                     shapeType: ShapeType.ELLIPSE,
                 }),
                 leftSpecial: false,
@@ -845,19 +846,19 @@ class GamepadOverlay {
             cornerButtons: Object.freeze({
                 start: Object.freeze({
                     regionName: "topLeft",
-                    scale: Object.freeze({x: 0.7, y: 0.4}),
+                    scale: Object.freeze({x: 0.6, y: 0.6}),
                     shapeType: ShapeType.ELLIPSE,
                 }),
                 rightBumper: Object.freeze({
                     regionName: "topRight",
-                    scale: Object.freeze({x: 0.7, y: 0.5}),
+                    scale: Object.freeze({x: 0.8, y: 0.6}),
                     shapeType: ShapeType.RECTANGLE,
                     cornerRadiusPercent: Object.freeze({x: 0.25, y: 0.25}),
                 }),
                 rightSpecial: false,
                 rightTrigger: Object.freeze({
                     regionName: "bottomRight",
-                    scale: Object.freeze({x: 0.5, y: 0.7}),
+                    scale: Object.freeze({x: 0.6, y: 0.8}),
                     shapeType: ShapeType.RECTANGLE,
                     cornerRadiusPercent: Object.freeze({x: 0.25, y: 0.25}),
                 }),
@@ -884,6 +885,7 @@ class GamepadOverlay {
         topLeft,
         borderWidth = null,
         gap,
+        betweenHalvesGap = 0,
         hasAnalogStick = true,
         leftSide = {},
         rightSide = {},
@@ -899,7 +901,7 @@ class GamepadOverlay {
             buttonLength,
             buttonWidth,
             topLeft: leftLayoutPosition.clone()
-                .add(new Vector2({x: this.#leftLayout.size.x + borderWidth*2 + gap, y:0}))
+                .add(new Vector2({x: this.#leftLayout.size.x + borderWidth*2 + gap + betweenHalvesGap, y:0}))
         });
         this.#entities = this.#build({hasAnalogStick, leftSide, rightSide});
     }
