@@ -13,18 +13,24 @@
                 height: auto;
                 --btn-idle: rgba(44, 47, 51, 0.7);
                 --btn-pressed: #3f8cff;
+                --overlay-border-inner-size: 1;
+                --overlay-border-outer-size: 1;
             }
 
             .outer-border {
                 fill: none;
                 stroke: white;
-                stroke-width: 4; /* 2 outward total */
+                stroke-width: calc((var(--overlay-border-inner-size) + var(--overlay-border-outer-size)) * 2px);
+                stroke-linejoin: round;
+                stroke-linecap: round;
             }
 
             .inner-border {
                 fill: none;
                 stroke: black;
-                stroke-width: 2; /* 1 outward */
+                stroke-width: calc(var(--overlay-border-inner-size) * 2px);
+                stroke-linejoin: round;
+                stroke-linecap: round;
             }
 
             .gamepad-button {
@@ -84,16 +90,23 @@
                 buttonLength: 50,
                 buttonWidth: 50,
                 topLeft: new Vector2({x: 0, y: 0}),
-                borderWidth: 2,
                 gap: 1,
                 hasAnalogStick: true,
+                leftSide: {
+                    cornerButtons: {
+                        leftTrigger: {
+                            regionName: "bottomLeft",
+                            scale: {x: 1.0, y: 1.0},
+                            shapeType: ShapeType.TRIANGLE_DOWN,
+                        },
+                    },
+                },
                 rightSide: {
                     cornerButtons: {
                         rightTrigger: {
                             regionName: "bottomRight",
-                            scale: {x: 0.5, y: 0.6},
-                            shapeType: ShapeType.RECTANGLE,
-                            includeBorder: true,
+                            scale: {x: 1.0, y: 1.0},
+                            shapeType: ShapeType.TRIANGLE_DOWN,
                         },
                     },
                 },

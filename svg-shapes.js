@@ -814,6 +814,8 @@ class GamepadOverlay {
     #leftLayout;
     #rightLayout;
     #entities;
+    #cornerCompensation;
+    #borderWidth;
 
     static #DEFAULT_SIDE_OPTIONS = Object.freeze({
         left: Object.freeze({
@@ -824,19 +826,16 @@ class GamepadOverlay {
                     scale: Object.freeze({x: 0.7, y: 0.5}),
                     shapeType: ShapeType.RECTANGLE,
                     cornerRadiusPercent: Object.freeze({x: 0.25, y: 0.25}),
-                    includeBorder: true,
                 }),
                 leftTrigger: Object.freeze({
                     regionName: "bottomLeft",
                     scale: Object.freeze({x: 0.7, y: 0.7}),
                     shapeType: ShapeType.TRIANGLE_DOWN,
-                    includeBorder: true,
                 }),
                 select: Object.freeze({
                     regionName: "topRight",
                     scale: Object.freeze({x: 0.7, y: 0.4}),
                     shapeType: ShapeType.ELLIPSE,
-                    includeBorder: true,
                 }),
                 leftSpecial: false,
             }),
@@ -848,14 +847,12 @@ class GamepadOverlay {
                     regionName: "topLeft",
                     scale: Object.freeze({x: 0.7, y: 0.4}),
                     shapeType: ShapeType.ELLIPSE,
-                    includeBorder: true,
                 }),
                 rightBumper: Object.freeze({
                     regionName: "topRight",
                     scale: Object.freeze({x: 0.7, y: 0.5}),
                     shapeType: ShapeType.RECTANGLE,
                     cornerRadiusPercent: Object.freeze({x: 0.25, y: 0.25}),
-                    includeBorder: true,
                 }),
                 rightSpecial: false,
                 rightTrigger: Object.freeze({
@@ -863,24 +860,38 @@ class GamepadOverlay {
                     scale: Object.freeze({x: 0.5, y: 0.7}),
                     shapeType: ShapeType.RECTANGLE,
                     cornerRadiusPercent: Object.freeze({x: 0.25, y: 0.25}),
-                    includeBorder: true,
                 }),
             }),
         }),
     });
+
+    static #parseCssNumber(value, fallback = 0) {
+        const parsed = Number.parseFloat(String(value ?? "").trim());
+        return Number.isFinite(parsed) ? parsed : fallback;
+    }
+
+    static #resolveBorderWidthFromCss(context) {
+        const styles = getComputedStyle(context.svg);
+        const inner = this.#parseCssNumber(styles.getPropertyValue("--overlay-border-inner-size"));
+        const outer = this.#parseCssNumber(styles.getPropertyValue("--overlay-border-outer-size"));
+        return inner + outer;
+    }
 
     constructor({
         context,
         buttonLength,
         buttonWidth,
         topLeft,
-        borderWidth,
+        borderWidth = null,
         gap,
         hasAnalogStick = true,
         leftSide = {},
         rightSide = {},
     }) {
         this.#context = context;
+        borderWidth ??= this.constructor.#resolveBorderWidthFromCss(context);
+        this.#borderWidth = borderWidth;
+        this.#cornerCompensation = gap + borderWidth * 2;
         const leftLayoutPosition = topLeft.clone()
             .add(Vector2.splat(borderWidth));
         this.#leftLayout = new DpadLayout({buttonLength, buttonWidth, topLeft: leftLayoutPosition});
@@ -956,27 +967,95 @@ class GamepadOverlay {
             scale = {x: 1, y: 1},
             shapeType = ShapeType.RECTANGLE,
             cornerRadiusPercent,
-            includeBorder = true,
+            compensateOuterEdges = true,
         } = spec;
         const region = layout[regionName];
         if (!(region instanceof Region)) {
             throw new Error(`Invalid corner region '${String(regionName)}' for ${sidePrefix}${idSuffix}`);
         }
+        const compensation = this.#resolveCornerCompensationVector(spec.cornerCompensation);
         const scaleVector = new Vector2(scale);
         const cornerRadiusPercentVector = cornerRadiusPercent == null
             ? undefined
             : new Vector2(cornerRadiusPercent);
+        const compensatedRegion = this.#applyCornerCompensation(
+            region,
+            regionName,
+            compensation,
+            {compensateOuterEdges},
+        );
 
         return this.#createButton({
             group,
             id: `${sidePrefix}${idSuffix}`,
-            region: region.clone().scale(scaleVector),
+            region: compensatedRegion.scale(scaleVector),
             shapeType,
             cornerRadiusPercent: cornerRadiusPercentVector,
-            includeBorder,
+            includeBorder: true,
             semanticClasses: [`side-${sideName}`, `role-${roleName}`],
             semanticAttributes: {"data-side": sideName, "data-role": roleName},
         });
+    }
+
+    #resolveCornerCompensationVector(value) {
+        if (value == null) {
+            return Vector2.splat(this.#cornerCompensation);
+        }
+        if (typeof value === "number") {
+            return Vector2.splat(assertFiniteNumber(value, "cornerCompensation"));
+        }
+        return new Vector2(value);
+    }
+
+    #applyCornerCompensation(region, regionName, compensation, {compensateOuterEdges = false} = {}) {
+        const x = Math.max(0, compensation.x);
+        const y = Math.max(0, compensation.y);
+        const insets = {top: 0, right: 0, bottom: 0, left: 0};
+
+        switch (regionName) {
+            case "topLeft":
+                insets.right += x;
+                insets.bottom += y;
+                if (compensateOuterEdges) {
+                    insets.left += x;
+                    insets.top += y;
+                }
+                break;
+            case "topRight":
+                insets.left += x;
+                insets.bottom += y;
+                if (compensateOuterEdges) {
+                    insets.right += x;
+                    insets.top += y;
+                }
+                break;
+            case "bottomLeft":
+                insets.right += x;
+                insets.top += y;
+                if (compensateOuterEdges) {
+                    insets.left += x;
+                    insets.bottom += y;
+                }
+                break;
+            case "bottomRight":
+                insets.left += x;
+                insets.top += y;
+                if (compensateOuterEdges) {
+                    insets.right += x;
+                    insets.bottom += y;
+                }
+                break;
+            default:
+                throw new Error(`Unsupported corner region for compensation: ${String(regionName)}`);
+        }
+
+        const size = new Vector2({
+            x: Math.max(0, region.size.x - insets.left - insets.right),
+            y: Math.max(0, region.size.y - insets.top - insets.bottom),
+        });
+        const topLeft = region.topLeft.clone().add({x: insets.left, y: insets.top});
+
+        return new Region({topLeft, size});
     }
 
     #resolveSideOptions(sideName, sideOptions = {}) {
