@@ -4,13 +4,15 @@
         <title>Gamepad Overlay</title>
         <style>
             body {
-                background: lightblue;
+                background: black;
             }
 
             #overlayRoot {
                 border: 1px solid red;  /* temporary for development */ 
                 width: 800px;
                 height: auto;
+                --btn-idle: rgba(44, 47, 51, 0.7);
+                --btn-pressed: #3f8cff;
             }
 
             .outer-border {
@@ -26,21 +28,54 @@
             }
 
             .gamepad-button {
-                #fill: #ccc;  /* rgba(0,0,0,0.5); */
-                fill: rgba(0,0,0,0.2);
+                fill: var(--btn-idle, rgba(0,0,0,0.2));
                 stroke: black;
                 stroke-width: 0;
             }
 
             .gamepad-button-pressed-fill {
-                fill: #c00;
+                fill: var(--btn-pressed, #c00);
                 stroke: none;
+            }
+
+            #overlayRoot.theme-xbox [data-side="right"][data-role="up"] {
+                --btn-idle: #5f5f1f;
+                --btn-pressed: #ffff33;
+            }
+            #overlayRoot.theme-xbox [data-side="right"][data-role="right"] {
+                --btn-idle: #5f1f1f;
+                --btn-pressed: #ff3333;
+            }
+            #overlayRoot.theme-xbox [data-side="right"][data-role="left"] {
+                --btn-idle: #1f1f5f;
+                --btn-pressed: #3377ff;
+            }
+            #overlayRoot.theme-xbox [data-side="right"][data-role="down"] {
+                --btn-idle: #1f4f20;
+                --btn-pressed: #3fcf3f;
+            }
+
+            #overlayRoot.theme-snes [data-side="right"][data-role="up"] {
+                --btn-idle: #20204f;
+                --btn-pressed: #5555ff;
+            }
+            #overlayRoot.theme-snes [data-side="right"][data-role="right"] {
+                --btn-idle: #4f2020;
+                --btn-pressed: #ff5555;
+            }
+            #overlayRoot.theme-snes [data-side="right"][data-role="down"] {
+                --btn-idle: #4f4f20;
+                --btn-pressed: #ffff55;
+            }
+            #overlayRoot.theme-snes [data-side="right"][data-role="left"] {
+                --btn-idle: #204f20;
+                --btn-pressed: #55ff55;
             }
         </style>
         <script src="svg-shapes.js"></script>
     </head>
     <body>
-        <svg viewBox="0 0 800 400" id="overlayRoot">
+        <svg viewBox="0 0 800 400" id="overlayRoot" class="theme-xbox">
         </svg>
         <script defer>
             const context = new SvgContext(document.getElementById('overlayRoot'));
@@ -70,12 +105,35 @@
 
             const rightTrigger = overlay.entities.right.entities.rightTrigger;
             rightTrigger.setPressFillDirection(PressFillDirection.DOWN);
+            const rightButtons = {
+                up: overlay.entities.right.entities.upButton,
+                left: overlay.entities.right.entities.leftButton,
+                down: overlay.entities.right.entities.downButton,
+                right: overlay.entities.right.entities.rightButton,
+            };
+            const buttonHoldFrames = {up: 0, left: 0, down: 0, right: 0};
 
             function animatePress() {
                 const cycleSeconds = 2;
                 const phase = (performance.now() / 1000) / cycleSeconds;
                 const amount = (Math.sin(phase * Math.PI * 2) + 1) / 2;
                 rightTrigger.setPressAmount(amount);
+
+                for (const role of Object.keys(rightButtons)) {
+                    if (buttonHoldFrames[role] > 0) {
+                        buttonHoldFrames[role] -= 1;
+                        rightButtons[role].setPressAmount(1);
+                        continue;
+                    }
+
+                    if (Math.random() > 0.985) {
+                        buttonHoldFrames[role] = 12 + Math.floor(Math.random() * 16);
+                        rightButtons[role].setPressAmount(1);
+                    } else {
+                        rightButtons[role].setPressAmount(0);
+                    }
+                }
+
                 requestAnimationFrame(animatePress);
             }
             requestAnimationFrame(animatePress);
