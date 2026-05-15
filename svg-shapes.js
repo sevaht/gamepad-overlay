@@ -652,8 +652,73 @@ class GamepadOverlay {
     #context;
     #leftLayout;
     #rightLayout;
+    #entities;
 
-    constructor({context, buttonLength, buttonWidth, topLeft, borderWidth, gap, hasAnalogStick=true}) {
+    static #DEFAULT_SIDE_OPTIONS = Object.freeze({
+        left: Object.freeze({
+            cardinalShapeType: ShapeType.RECTANGLE,
+            cornerButtons: Object.freeze({
+                leftBumper: Object.freeze({
+                    regionName: "topLeft",
+                    scale: Object.freeze({x: 0.8, y: 0.5}),
+                    shapeType: ShapeType.RECTANGLE,
+                    cornerRadiusPercent: Object.freeze({x: 0.25, y: 0.25}),
+                    includeBorder: true,
+                }),
+                leftTrigger: Object.freeze({
+                    regionName: "bottomLeft",
+                    scale: Object.freeze({x: 0.8, y: 0.8}),
+                    shapeType: ShapeType.TRIANGLE_DOWN,
+                    includeBorder: true,
+                }),
+                select: Object.freeze({
+                    regionName: "topRight",
+                    scale: Object.freeze({x: 0.8, y: 0.4}),
+                    shapeType: ShapeType.ELLIPSE,
+                    includeBorder: true,
+                }),
+                leftSpecial: false,
+            }),
+        }),
+        right: Object.freeze({
+            cardinalShapeType: ShapeType.ELLIPSE,
+            cornerButtons: Object.freeze({
+                start: Object.freeze({
+                    regionName: "topLeft",
+                    scale: Object.freeze({x: 0.8, y: 0.4}),
+                    shapeType: ShapeType.ELLIPSE,
+                    includeBorder: true,
+                }),
+                rightBumper: Object.freeze({
+                    regionName: "topRight",
+                    scale: Object.freeze({x: 0.8, y: 0.5}),
+                    shapeType: ShapeType.RECTANGLE,
+                    cornerRadiusPercent: Object.freeze({x: 0.25, y: 0.25}),
+                    includeBorder: true,
+                }),
+                rightSpecial: false,
+                rightTrigger: Object.freeze({
+                    regionName: "bottomRight",
+                    scale: Object.freeze({x: 0.5, y: 0.8}),
+                    shapeType: ShapeType.RECTANGLE,
+                    cornerRadiusPercent: Object.freeze({x: 0.25, y: 0.25}),
+                    includeBorder: true,
+                }),
+            }),
+        }),
+    });
+
+    constructor({
+        context,
+        buttonLength,
+        buttonWidth,
+        topLeft,
+        borderWidth,
+        gap,
+        hasAnalogStick = true,
+        leftSide = {},
+        rightSide = {},
+    }) {
         this.#context = context;
         const leftLayoutPosition = topLeft.clone()
             .add(Vector2.splat(borderWidth));
@@ -664,15 +729,354 @@ class GamepadOverlay {
             topLeft: leftLayoutPosition.clone()
                 .add(new Vector2({x: this.#leftLayout.size.x + borderWidth*2 + gap, y:0}))
         });
+        this.#entities = this.#build({hasAnalogStick, leftSide, rightSide});
+    }
 
-        // TODO: replicate logic from html here.  Add classes.
+    get entities() {
+        return this.#entities;
+    }
+    get leftLayout() {
+        return this.#leftLayout;
+    }
+    get rightLayout() {
+        return this.#rightLayout;
+    }
 
-        // left: draw cross, don't put outer border on analog area, no border on cardinals
-        // right: don't draw cross, do put outer border on analog area, both borders on cardinals
+    #createButton({
+        group,
+        id,
+        region,
+        shapeType,
+        cornerRadiusPercent,
+        includeBorder = false,
+        buttonClasses = "gamepad-button",
+    }) {
+        const layers = [];
+        if (includeBorder) {
+            layers.push({classes: "outer-border", cutout: true});
+            layers.push({classes: "inner-border", cutout: true});
+        }
+        layers.push({classes: buttonClasses});
+        return new GamepadEntity({
+            context: this.#context,
+            element: createSvgShape(
+                {region, shapeType, cornerRadiusPercent},
+                {id},
+            ),
+            layers,
+            parent: group,
+        });
+    }
 
+    #createCrossBorder({group, id, layout}) {
+        return new GamepadEntity({
+            context: this.#context,
+            element: createSvgPolygon(layout.crossPoints, {id}),
+            layers: [
+                {classes: "outer-border", cutout: true},
+                {classes: "inner-border", cutout: true},
+            ],
+            parent: group,
+        });
+    }
 
-        
+    #createCornerButton({group, sidePrefix, layout, idSuffix, spec}) {
+        if (!spec) {
+            return null;
+        }
+        const {
+            regionName,
+            scale = {x: 1, y: 1},
+            shapeType = ShapeType.RECTANGLE,
+            cornerRadiusPercent,
+            includeBorder = true,
+        } = spec;
+        const region = layout[regionName];
+        if (!(region instanceof Region)) {
+            throw new Error(`Invalid corner region '${String(regionName)}' for ${sidePrefix}${idSuffix}`);
+        }
+        const scaleVector = new Vector2(scale);
+        const cornerRadiusPercentVector = cornerRadiusPercent == null
+            ? undefined
+            : new Vector2(cornerRadiusPercent);
 
+        return this.#createButton({
+            group,
+            id: `${sidePrefix}${idSuffix}`,
+            region: region.clone().scale(scaleVector),
+            shapeType,
+            cornerRadiusPercent: cornerRadiusPercentVector,
+            includeBorder,
+        });
+    }
+
+    #resolveSideOptions(sideName, sideOptions = {}) {
+        const defaults = this.constructor.#DEFAULT_SIDE_OPTIONS[sideName];
+        sideOptions.cornerButtons ??= {};
+        const defaultCorners = defaults.cornerButtons;
+        const cornerButtons = {
+            ...defaultCorners,
+            ...sideOptions.cornerButtons,
+        };
+        for (const [key, value] of Object.entries(defaultCorners)) {
+            if (cornerButtons[key] === undefined) {
+                cornerButtons[key] = value;
+            }
+        }
+        return {
+            cardinalShapeType: sideOptions.cardinalShapeType ?? defaults.cardinalShapeType,
+            cornerButtons,
+        };
+    }
+
+    #buildSide({
+        sidePrefix,
+        layout,
+        topGroup,
+        hasAnalogStick,
+        drawCrossBorder,
+        analogAreaHasOuterBorder,
+        cardinalHasBorder,
+        cardinalShapeType = ShapeType.RECTANGLE,
+        cornerButtons,
+    }) {
+        const backgroundGroup = this.#context.addChild(
+            createSvgElement("g", {id: `${sidePrefix}BackgroundGroup`} ),
+            {parent: topGroup},
+        );
+        const dpadGroup = this.#context.addChild(
+            createSvgElement("g", {id: `${sidePrefix}DpadGroup`} ),
+            {parent: backgroundGroup},
+        );
+
+        let dpadBorder = null;
+        if (drawCrossBorder) {
+            dpadBorder = this.#createCrossBorder({
+                group: dpadGroup,
+                id: `${sidePrefix}DpadBorder`,
+                layout,
+            });
+        }
+
+        const leftButton = this.#createButton({
+            group: dpadGroup,
+            id: `${sidePrefix}LeftButton`,
+            region: layout.left,
+            shapeType: cardinalShapeType,
+            includeBorder: cardinalHasBorder,
+        });
+        const upButton = this.#createButton({
+            group: dpadGroup,
+            id: `${sidePrefix}UpButton`,
+            region: layout.up,
+            shapeType: cardinalShapeType,
+            includeBorder: cardinalHasBorder,
+        });
+        const rightButton = this.#createButton({
+            group: dpadGroup,
+            id: `${sidePrefix}RightButton`,
+            region: layout.right,
+            shapeType: cardinalShapeType,
+            includeBorder: cardinalHasBorder,
+        });
+        const downButton = this.#createButton({
+            group: dpadGroup,
+            id: `${sidePrefix}DownButton`,
+            region: layout.down,
+            shapeType: cardinalShapeType,
+            includeBorder: cardinalHasBorder,
+        });
+        const originButton = drawCrossBorder
+            ? this.#createButton({
+                group: dpadGroup,
+                id: `${sidePrefix}OriginButton`,
+                region: layout.origin,
+                shapeType: ShapeType.RECTANGLE,
+                includeBorder: false,
+            })
+            : null;
+
+        const leftBumper = this.#createCornerButton({
+            group: dpadGroup,
+            sidePrefix,
+            layout,
+            idSuffix: "LeftBumperButton",
+            spec: cornerButtons.leftBumper,
+        });
+        const select = this.#createCornerButton({
+            group: dpadGroup,
+            sidePrefix,
+            layout,
+            idSuffix: "SelectButton",
+            spec: cornerButtons.select,
+        });
+        const leftTrigger = this.#createCornerButton({
+            group: dpadGroup,
+            sidePrefix,
+            layout,
+            idSuffix: "LeftTriggerButton",
+            spec: cornerButtons.leftTrigger,
+        });
+        const leftSpecial = this.#createCornerButton({
+            group: dpadGroup,
+            sidePrefix,
+            layout,
+            idSuffix: "LeftSpecialButton",
+            spec: cornerButtons.leftSpecial,
+        });
+        const start = this.#createCornerButton({
+            group: dpadGroup,
+            sidePrefix,
+            layout,
+            idSuffix: "StartButton",
+            spec: cornerButtons.start,
+        });
+        const rightBumper = this.#createCornerButton({
+            group: dpadGroup,
+            sidePrefix,
+            layout,
+            idSuffix: "RightBumperButton",
+            spec: cornerButtons.rightBumper,
+        });
+        const rightSpecial = this.#createCornerButton({
+            group: dpadGroup,
+            sidePrefix,
+            layout,
+            idSuffix: "RightSpecialButton",
+            spec: cornerButtons.rightSpecial,
+        });
+        const rightTrigger = this.#createCornerButton({
+            group: dpadGroup,
+            sidePrefix,
+            layout,
+            idSuffix: "RightTriggerButton",
+            spec: cornerButtons.rightTrigger,
+        });
+
+        let analogAreaGroup = null;
+        let analogArea = null;
+        let analogStickGroup = null;
+        let analogStick = null;
+        let analogStickRing = null;
+
+        if (hasAnalogStick) {
+            analogAreaGroup = this.#context.addChild(
+                createSvgElement("g", {id: `${sidePrefix}AnalogAreaGroup`} ),
+                {parent: backgroundGroup},
+            );
+            const analogAreaRegion = Region.fromCenter({
+                center: layout.analogRegion.center,
+                size: layout.analogRegion.size.clone().add(Vector2.TWO),
+            });
+            const analogAreaLayers = [];
+            if (analogAreaHasOuterBorder) {
+                analogAreaLayers.push({classes: "outer-border", cutout: true});
+                analogAreaLayers.push({classes: "inner-border", cutout: true});
+            }
+            analogAreaLayers.push({classes: "gamepad-button"});
+            analogArea = new GamepadEntity({
+                context: this.#context,
+                element: createSvgShape(
+                    {region: analogAreaRegion, shapeType: ShapeType.ELLIPSE},
+                    {id: `${sidePrefix}AnalogArea`, style: "fill: black;"},
+                ),
+                layers: analogAreaLayers,
+                parent: analogAreaGroup,
+            });
+
+            setMask(dpadGroup, analogArea.mask.id);
+
+            analogStickGroup = this.#context.addChild(
+                createSvgElement("g", {id: `${sidePrefix}AnalogStickGroup`} ),
+                {parent: topGroup},
+            );
+            const analogStickSize = layout.analogRegion.size.clone().multiply(Vector2.splat(0.65));
+            analogStick = this.#createButton({
+                group: analogStickGroup,
+                id: `${sidePrefix}AnalogStick`,
+                region: Region.fromCenter({
+                    center: layout.analogRegion.center,
+                    size: analogStickSize,
+                }),
+                shapeType: ShapeType.ELLIPSE,
+                includeBorder: true,
+            });
+            analogStickRing = new GamepadEntity({
+                context: this.#context,
+                element: createSvgShape(
+                    {
+                        region: Region.fromCenter({
+                            center: layout.analogRegion.center,
+                            size: analogStickSize.clone().multiply(Vector2.splat(0.75)),
+                        }),
+                        shapeType: ShapeType.ELLIPSE,
+                    },
+                    {id: `${sidePrefix}AnalogStickRing`},
+                ),
+                layers: [
+                    {classes: "outer-border", cutout: true},
+                    {classes: "inner-border", cutout: true},
+                ],
+                parent: analogStickGroup,
+            });
+            analogStick.connect(analogStickRing.element);
+            setMask(backgroundGroup, analogStick.mask.id);
+        }
+
+        return {
+            groups: {backgroundGroup, dpadGroup, analogAreaGroup, analogStickGroup},
+            entities: {
+                dpadBorder,
+                leftButton,
+                upButton,
+                rightButton,
+                downButton,
+                originButton,
+                leftBumper,
+                select,
+                leftTrigger,
+                leftSpecial,
+                start,
+                rightBumper,
+                rightSpecial,
+                rightTrigger,
+                analogArea,
+                analogStick,
+                analogStickRing,
+            },
+        };
+    }
+
+    #build({hasAnalogStick, leftSide, rightSide}) {
+        const rootGroup = this.#context.addChild(createSvgElement("g", {id: "gamepadOverlayGroup"}));
+        const leftOptions = this.#resolveSideOptions("left", leftSide);
+        const rightOptions = this.#resolveSideOptions("right", rightSide);
+
+        const left = this.#buildSide({
+            sidePrefix: "left",
+            layout: this.#leftLayout,
+            topGroup: rootGroup,
+            hasAnalogStick,
+            drawCrossBorder: true,
+            analogAreaHasOuterBorder: false,
+            cardinalHasBorder: false,
+            cardinalShapeType: leftOptions.cardinalShapeType,
+            cornerButtons: leftOptions.cornerButtons,
+        });
+
+        const right = this.#buildSide({
+            sidePrefix: "right",
+            layout: this.#rightLayout,
+            topGroup: rootGroup,
+            hasAnalogStick,
+            drawCrossBorder: false,
+            analogAreaHasOuterBorder: true,
+            cardinalHasBorder: true,
+            cardinalShapeType: rightOptions.cardinalShapeType,
+            cornerButtons: rightOptions.cornerButtons,
+        });
+
+        return {rootGroup, left, right};
     }
 
 }
