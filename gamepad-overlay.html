@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Gamepad Overlay</title>
+        <style>
+            body {
+                background: none;
+            }
+
+            #overlayRoot {
+                --btn-idle-rgb: 44, 47, 51;
+                --btn-idle-alpha: 0.7;
+                --btn-pressed: #3f8cff;
+                --overlay-border-inner-size: 4;
+                --overlay-border-outer-size: 4;
+            }
+
+            .outer-border {
+                fill: none;
+                stroke: white;
+                stroke-width: calc((var(--overlay-border-inner-size) + var(--overlay-border-outer-size)) * 2px);
+                stroke-linejoin: round;
+                stroke-linecap: round;
+            }
+
+            .inner-border {
+                fill: none;
+                stroke: black;
+                stroke-width: calc(var(--overlay-border-inner-size) * 2px);
+                stroke-linejoin: round;
+                stroke-linecap: round;
+            }
+
+            .gamepad-button {
+                fill: rgba(var(--btn-idle-rgb, 44, 47, 51), var(--btn-idle-alpha, 0.7));
+                stroke: black;
+                stroke-width: 0;
+            }
+
+            .gamepad-button-pressed-fill {
+                fill: var(--btn-pressed, #c00);
+                stroke: none;
+            }
+
+            #overlayRoot [data-role="analog-area"] {
+                --btn-idle-rgb: 0, 0, 0;
+                --btn-idle-alpha: 1;
+            }
+
+            #overlayRoot.theme-xbox [data-side="right"][data-role="up"] {
+                --btn-idle-rgb: 95, 95, 31;
+                --btn-pressed: #ffff33;
+            }
+            #overlayRoot.theme-xbox [data-side="right"][data-role="right"] {
+                --btn-idle-rgb: 95, 31, 31;
+                --btn-pressed: #ff3333;
+            }
+            #overlayRoot.theme-xbox [data-side="right"][data-role="left"] {
+                --btn-idle-rgb: 31, 31, 95;
+                --btn-pressed: #3377ff;
+            }
+            #overlayRoot.theme-xbox [data-side="right"][data-role="down"] {
+                --btn-idle-rgb: 31, 79, 32;
+                --btn-pressed: #3fcf3f;
+            }
+
+            #overlayRoot.theme-snes [data-side="right"][data-role="up"] {
+                --btn-idle-rgb: 32, 32, 79;
+                --btn-pressed: #5555ff;
+            }
+            #overlayRoot.theme-snes [data-side="right"][data-role="right"] {
+                --btn-idle-rgb: 79, 32, 32;
+                --btn-pressed: #ff5555;
+            }
+            #overlayRoot.theme-snes [data-side="right"][data-role="down"] {
+                --btn-idle-rgb: 79, 79, 32;
+                --btn-pressed: #ffff55;
+            }
+            #overlayRoot.theme-snes [data-side="right"][data-role="left"] {
+                --btn-idle-rgb: 32, 79, 32;
+                --btn-pressed: #55ff55;
+            }
+        </style>
+        <script src="svg-shapes.js"></script>
+        <script src="gamepad-input-sources.js"></script>
+    </head>
+    <body>
+        <svg id="overlayRoot" class="theme-xbox"></svg>
+        <script defer>
+            const QUERY = new URLSearchParams(window.location.search);
+            const INPUT_SOURCE = (() => {
+                const source = (QUERY.get("source") || "browser").toLowerCase();
+                if (source === "ws") {
+                    return "websocket";
+                }
+                return ["browser", "websocket", "demo"].includes(source) ? source : "browser";
+            })();
+
+            const context = new SvgContext(document.getElementById("overlayRoot"));
+            const overlay = new GamepadOverlay({
+                context,
+                buttonLength: 132,
+                buttonWidth: 132,
+                topLeft: new Vector2({x: 0, y: 0}),
+                gap: 1,
+                betweenHalvesGap: 0,
+                digitalThreshold: 0.55,
+                hasAnalogStick: true,
+                /*leftSide: {cornerButtons: {leftTrigger: {pressMode: "digital"}}},
+                rightSide: {cornerButtons: {rightTrigger: {pressMode: "digital"}}},*/
+            });
+
+            const overlayRegion = overlay.region;
+            context.svg.setAttribute("viewBox", `${overlayRegion.topLeft.x} ${overlayRegion.topLeft.y} ${overlay.width} ${overlay.height}`);
+            context.svg.setAttribute("width", String(overlay.width));
+            context.svg.setAttribute("height", String(overlay.height));
+
+            const sourceStatus = {
+                source: INPUT_SOURCE.toUpperCase(),
+                pad: "WAIT",
+                connected: false,
+                lastUpdateMs: 0,
+                selectedPadLabel: "none",
+                listedPadsText: "",
+            };
+
+            const renderer = new GamepadOverlayRenderer({
+                overlay,
+                sourceStatus,
+                deadzoneMode: "none",
+                fixedDeadzone: 0.0,
+            });
+
+            const source = createGamepadSource({
+                mode: INPUT_SOURCE,
+                wsUrl: `ws://${QUERY.get("wsHost") || "localhost"}:8765/gamepad-overlay`,
+                pollMs: Math.max(1, Math.round(1000 / Math.max(1, Number.parseInt(QUERY.get("poll") || "240", 10)))),
+                padIndex: QUERY.get("padIndex") == null ? null : Math.max(0, Number.parseInt(QUERY.get("padIndex"), 10) || 0),
+                padIdContains: (QUERY.get("padIdContains") || "").trim(),
+                padRequireStandard: QUERY.get("padRequireStandard") === "1",
+                listPads: QUERY.get("pads") === "1" || QUERY.get("listPads") === "1",
+                onState: (state) => renderer.applyState(state),
+                onStatus: (patch) => Object.assign(sourceStatus, patch),
+            });
+            source.start();
+        </script>
+    </body>
+</html>
