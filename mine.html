@@ -130,10 +130,33 @@
             leftStickRing.bringLayersToFront();
             rightStickRing.bringLayersToFront();
 
-            const INPUT_SOURCE = "browser"; // "browser" | "websocket" | "demo"
+            const QUERY = new URLSearchParams(window.location.search);
+            const INPUT_SOURCE = (() => {
+                const source = (QUERY.get("source") || "browser").toLowerCase();
+                if (source === "ws") {
+                    return "websocket";
+                }
+                return ["browser", "websocket", "demo"].includes(source)
+                    ? source
+                    : "browser";
+            })(); // ?source=browser|websocket|demo (or ws)
             const WS_URL = "ws://localhost:8765/gamepad-overlay";
             const DEADZONE_MODE = "none"; // "none" | "fixed"
             const FIXED_DEADZONE = 0.0;
+            const BROWSER_POLL_HZ = Math.max(1, Number.parseInt(QUERY.get("poll") || "240", 10));
+            const BROWSER_POLL_MS = Math.max(1, Math.round(1000 / BROWSER_POLL_HZ));
+            const SHOW_STATUS = QUERY.get("status") === "1" || QUERY.get("debug") === "1";
+            const STATUS_VERBOSE = QUERY.get("statusVerbose") === "1" || QUERY.get("debug") === "1";
+
+            const sourceStatus = {
+                source: INPUT_SOURCE.toUpperCase(),
+                pad: "WAIT",
+                connected: false,
+                lastUpdateMs: 0,
+            };
+            let lastAppliedState = null;
+            let queuedState = null;
+            let renderScheduled = false;
 
             const EMPTY_STATE = Object.freeze({
                 A: 0, B: 0, X: 0, Y: 0,
@@ -205,8 +228,23 @@
                 return state;
             }
 
-            function applyState(incomingState) {
-                const state = normalizeState(incomingState);
+            function hasMeaningfulStateChange(nextState, prevState) {
+                if (prevState == null) {
+                    return true;
+                }
+                const EPSILON = 0.0005;
+                for (const [key, value] of Object.entries(nextState)) {
+                    const previousValue = prevState[key];
+                    if (Math.abs(value - previousValue) > EPSILON) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            function applyNormalizedState(state) {
+                lastAppliedState = state;
+                sourceStatus.lastUpdateMs = performance.now();
 
                 leftStick.setTranslation(clampNormalizedOffsetToEllipse({
                     offset: {x: state.LX, y: state.LY},
@@ -234,6 +272,185 @@
                 digitalInputMap.DX_POS?.setInputAmount(state.DX > 0 ? 1 : 0);
                 digitalInputMap.DY_NEG?.setInputAmount(state.DY < 0 ? 1 : 0);
                 digitalInputMap.DY_POS?.setInputAmount(state.DY > 0 ? 1 : 0);
+            }
+
+            function scheduleApplyState(state) {
+                queuedState = state;
+                if (renderScheduled) {
+                    return;
+                }
+                renderScheduled = true;
+                requestAnimationFrame(() => {
+                    renderScheduled = false;
+                    if (queuedState == null) {
+                        return;
+                    }
+                    applyNormalizedState(queuedState);
+                    queuedState = null;
+                });
+            }
+
+            function applyState(incomingState) {
+                const state = normalizeState(incomingState);
+                if (!hasMeaningfulStateChange(state, lastAppliedState)) {
+                    return false;
+                }
+                scheduleApplyState(state);
+                return true;
+            }
+
+            function createStatusOverlay() {
+                if (!SHOW_STATUS) {
+                    return null;
+                }
+                const leftSpecialRegion = overlay.leftLayout.bottomRight;
+                const rightSpecialRegion = overlay.rightLayout.bottomLeft;
+                const innerBorder = Number.parseFloat(getComputedStyle(context.svg).getPropertyValue("--overlay-border-inner-size")) || 1;
+                const outerBorder = Number.parseFloat(getComputedStyle(context.svg).getPropertyValue("--overlay-border-outer-size")) || 1;
+                const edgeInset = (innerBorder + outerBorder) * 2 + 2;
+
+                const bayLeft = leftSpecialRegion.topLeft.x + edgeInset;
+                const bayTop = Math.min(leftSpecialRegion.topLeft.y, rightSpecialRegion.topLeft.y) + edgeInset;
+                const bayRight = rightSpecialRegion.bottomRight.x - edgeInset;
+                const bayBottom = Math.max(leftSpecialRegion.bottomRight.y, rightSpecialRegion.bottomRight.y) - edgeInset;
+                const bayWidth = Math.max(24, bayRight - bayLeft);
+                const bayHeight = Math.max(16, bayBottom - bayTop);
+                const x = bayLeft;
+                const y = bayTop;
+
+                const group = context.addChild(createSvgElement("g", {id: "statusOverlayGroup"}));
+                const background = context.addChild(createSvgElement("rect", {
+                    x,
+                    y,
+                    width: 1,
+                    height: 1,
+                    rx: 8,
+                    ry: 8,
+                    fill: "rgba(0, 0, 0, 0.55)",
+                    stroke: "rgba(255,255,255,0.55)",
+                    "stroke-width": 1,
+                }), {parent: group});
+
+                const line1 = context.addChild(createSvgElement("text", {
+                    x: 0,
+                    y: 0,
+                    fill: "#d8dde2",
+                    "font-size": STATUS_VERBOSE ? 10 : 11,
+                    "font-family": "monospace",
+                    "dominant-baseline": "hanging",
+                }), {parent: group});
+                const line2 = STATUS_VERBOSE
+                    ? context.addChild(createSvgElement("text", {
+                        x: 0,
+                        y: 0,
+                        fill: "#d8dde2",
+                        "font-size": 9,
+                        "font-family": "monospace",
+                        "dominant-baseline": "hanging",
+                    }), {parent: group})
+                    : null;
+
+                // Measure real text bounds to size box without magic widths.
+                line1.textContent = "SRC WEBSOCKET | PAD WAIT";
+                if (line2) {
+                    line2.textContent = "LINK DOWN";
+                }
+                const measure1 = line1.getBBox();
+                const measure2 = line2 ? line2.getBBox() : null;
+                const measuredWidth = Math.max(
+                    measure1.width,
+                    measure2?.width ?? 0,
+                );
+                const paddingX = 8;
+                const paddingTop = STATUS_VERBOSE ? 4 : 3;
+                const paddingBottom = STATUS_VERBOSE ? 4 : 3;
+                const lineGap = STATUS_VERBOSE ? 3 : 0;
+                const linesHeight = measure1.height + (measure2 ? lineGap + measure2.height : 0);
+
+                const width = Math.min(bayWidth, Math.max(24, measuredWidth + paddingX * 2));
+                const height = Math.min(bayHeight, Math.max(16, linesHeight + paddingTop + paddingBottom));
+                const centeredX = bayLeft + (bayWidth - width) / 2;
+                const centeredY = bayTop + (bayHeight - height) / 2;
+                const textLeft = centeredX + paddingX;
+                const extraVerticalSpace = Math.max(0, height - (paddingTop + linesHeight + paddingBottom));
+                const line1Y = centeredY + paddingTop + extraVerticalSpace / 2;
+
+                setAttributes(background, {
+                    x: centeredX,
+                    y: centeredY,
+                    width,
+                    height,
+                });
+                setAttributes(line1, {
+                    x: textLeft,
+                    y: line1Y,
+                });
+                if (line2) {
+                    setAttributes(line2, {
+                        x: textLeft,
+                        y: line1Y + measure1.height + lineGap,
+                    });
+                }
+
+                return {
+                    line1,
+                    line2,
+                    background,
+                    bay: {left: bayLeft, top: bayTop, width: bayWidth, height: bayHeight},
+                    padding: {x: paddingX, top: paddingTop, bottom: paddingBottom, lineGap},
+                };
+            }
+
+            const statusOverlay = createStatusOverlay();
+
+            function updateStatusOverlay() {
+                if (statusOverlay == null) {
+                    return;
+                }
+                statusOverlay.line1.textContent = `SRC ${sourceStatus.source} | PAD ${sourceStatus.pad}`;
+                if (statusOverlay.line2) {
+                    statusOverlay.line2.textContent = `LINK ${sourceStatus.connected ? "UP" : "DOWN"}`;
+                }
+
+                const measure1 = statusOverlay.line1.getBBox();
+                const measure2 = statusOverlay.line2 ? statusOverlay.line2.getBBox() : null;
+                const measuredWidth = Math.max(measure1.width, measure2?.width ?? 0);
+                const linesHeight = measure1.height + (measure2 ? statusOverlay.padding.lineGap + measure2.height : 0);
+                const width = Math.min(
+                    statusOverlay.bay.width,
+                    Math.max(24, measuredWidth + statusOverlay.padding.x * 2),
+                );
+                const height = Math.min(
+                    statusOverlay.bay.height,
+                    Math.max(16, linesHeight + statusOverlay.padding.top + statusOverlay.padding.bottom),
+                );
+                const x = statusOverlay.bay.left + (statusOverlay.bay.width - width) / 2;
+                const y = statusOverlay.bay.top + (statusOverlay.bay.height - height) / 2;
+                const extraVerticalSpace = Math.max(0, height - (
+                    statusOverlay.padding.top + linesHeight + statusOverlay.padding.bottom
+                ));
+                const line1Y = y + statusOverlay.padding.top + extraVerticalSpace / 2;
+                const textX = x + statusOverlay.padding.x;
+
+                setAttributes(statusOverlay.background, {x, y, width, height});
+                setAttributes(statusOverlay.line1, {x: textX, y: line1Y});
+                if (statusOverlay.line2) {
+                    setAttributes(statusOverlay.line2, {
+                        x: textX,
+                        y: line1Y + measure1.height + statusOverlay.padding.lineGap,
+                    });
+                }
+            }
+
+            function startStatusOverlayUpdates() {
+                if (statusOverlay == null) {
+                    return;
+                }
+                function tick() {
+                    updateStatusOverlay();
+                    setTimeout(tick, 250);
+                }
+                setTimeout(tick, 250);
             }
 
             function mapBrowserGamepadToState(gamepad) {
@@ -271,12 +488,61 @@
             }
 
             function startBrowserSource() {
+                sourceStatus.connected = true;
+                let lastTimestamp = null;
+                let pollTimer = null;
+
+                function stopPolling() {
+                    if (pollTimer != null) {
+                        clearTimeout(pollTimer);
+                        pollTimer = null;
+                    }
+                }
+
+                function scheduleNextTick() {
+                    pollTimer = setTimeout(tick, BROWSER_POLL_MS);
+                }
+
                 function tick() {
                     const gamepads = navigator.getGamepads?.() ?? [];
-                    applyState(mapBrowserGamepadToState(gamepads[0] ?? null));
-                    requestAnimationFrame(tick);
+                    const gamepad = gamepads[0] ?? null;
+                    sourceStatus.pad = gamepad ? "OK" : "WAIT";
+                    if (!gamepad) {
+                        applyState(EMPTY_STATE);
+                        scheduleNextTick();
+                        return;
+                    }
+
+                    if (typeof gamepad.timestamp === "number" && Number.isFinite(gamepad.timestamp)) {
+                        if (lastTimestamp !== null && gamepad.timestamp === lastTimestamp) {
+                            scheduleNextTick();
+                            return;
+                        }
+                        lastTimestamp = gamepad.timestamp;
+                    }
+
+                    applyState(mapBrowserGamepadToState(gamepad));
+                    scheduleNextTick();
                 }
-                requestAnimationFrame(tick);
+
+                window.addEventListener("gamepadconnected", () => {
+                    sourceStatus.connected = true;
+                    sourceStatus.pad = "OK";
+                    if (pollTimer == null) {
+                        scheduleNextTick();
+                    }
+                });
+                window.addEventListener("gamepaddisconnected", () => {
+                    sourceStatus.pad = "DISC";
+                    const gamepads = navigator.getGamepads?.() ?? [];
+                    if (!gamepads[0]) {
+                        sourceStatus.connected = false;
+                        applyState(EMPTY_STATE);
+                    }
+                });
+
+                stopPolling();
+                scheduleNextTick();
             }
 
             function startWebSocketSource() {
@@ -288,6 +554,8 @@
                     let firstMessage = true;
 
                     ws.onopen = () => {
+                        sourceStatus.connected = true;
+                        sourceStatus.pad = "WAIT";
                         retryDelay = 1000;
                     };
 
@@ -298,12 +566,16 @@
                         }
                         try {
                             applyState(JSON.parse(event.data));
+                            sourceStatus.pad = "OK";
                         } catch {
                             applyState(EMPTY_STATE);
+                            sourceStatus.pad = "ERR";
                         }
                     };
 
                     ws.onclose = () => {
+                        sourceStatus.connected = false;
+                        sourceStatus.pad = "DISC";
                         applyState(EMPTY_STATE);
                         setTimeout(connect, retryDelay);
                         retryDelay = Math.min(retryDelay * 2, maxDelay);
@@ -318,6 +590,8 @@
             }
 
             function startRandomizedInputDemo() {
+                sourceStatus.connected = true;
+                sourceStatus.pad = "OK";
                 const leftButtonHoldFrames = {up: 0, left: 0, down: 0, right: 0};
                 const rightButtonHoldFrames = {up: 0, left: 0, down: 0, right: 0};
                 const cornerButtonHoldFrames = {LB: 0, RB: 0, SELECT: 0, START: 0};
@@ -390,6 +664,10 @@
             } else {
                 startRandomizedInputDemo(); // comment out by switching INPUT_SOURCE
             }
+            // Force an explicit zero-state render immediately to avoid any
+            // first-frame visual flashes before the source loop starts.
+            applyNormalizedState(normalizeState(EMPTY_STATE));
+            startStatusOverlayUpdates();
         </script>
     </body>
 </html>
