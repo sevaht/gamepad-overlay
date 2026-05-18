@@ -42,6 +42,10 @@
                 stroke: none;
             }
 
+            #overlayRoot [data-role="analog-area"] {
+                --btn-idle: black;
+            }
+
             #overlayRoot.theme-xbox [data-side="right"][data-role="up"] {
                 --btn-idle: #5f5f1f;
                 --btn-pressed: #ffff33;
@@ -90,7 +94,22 @@
                 topLeft: new Vector2({x: 0, y: 0}),
                 gap: 1,
                 betweenHalvesGap: 0,
+                digitalThreshold: 0.55,
                 hasAnalogStick: true,
+                /*leftSide: {
+                    cornerButtons: {
+                        leftTrigger: {
+                            pressMode: "digital",
+                        },
+                    },
+                },
+                rightSide: {
+                    cornerButtons: {
+                        rightTrigger: {
+                            pressMode: "digital",
+                        },
+                    },
+                },*/
             });
             const overlayRegion = overlay.region;
             context.svg.setAttribute(
@@ -100,43 +119,128 @@
             context.svg.setAttribute("width", String(overlay.width));
             context.svg.setAttribute("height", String(overlay.height));
 
-            overlay.entities.left.entities.analogStick.setTranslation(
-                new Vector2({x: -overlay.leftLayout.origin.halfSize.x, y: 0}),
-            );
-
+            const leftStick = overlay.entities.left.entities.analogStick;
+            const rightStick = overlay.entities.right.entities.analogStick;
+            const leftStickRing = overlay.entities.left.entities.analogStickRing;
+            const rightStickRing = overlay.entities.right.entities.analogStickRing;
             const rightTrigger = overlay.entities.right.entities.rightTrigger;
+            const leftTrigger = overlay.entities.left.entities.leftTrigger;
+            const leftButtons = {
+                up: overlay.entities.left.entities.upButton,
+                left: overlay.entities.left.entities.leftButton,
+                down: overlay.entities.left.entities.downButton,
+                right: overlay.entities.left.entities.rightButton,
+            };
+            leftStick.setPressFillDirection(PressFillDirection.OUTWARD).enablePressVisual();
+            rightStick.setPressFillDirection(PressFillDirection.OUTWARD).enablePressVisual();
+            leftStickRing.bringLayersToFront();
+            rightStickRing.bringLayersToFront();
+
             const rightButtons = {
                 up: overlay.entities.right.entities.upButton,
                 left: overlay.entities.right.entities.leftButton,
                 down: overlay.entities.right.entities.downButton,
                 right: overlay.entities.right.entities.rightButton,
             };
-            const buttonHoldFrames = {up: 0, left: 0, down: 0, right: 0};
 
-            function animatePress() {
-                const cycleSeconds = 2;
-                const phase = (performance.now() / 1000) / cycleSeconds;
-                const amount = (Math.sin(phase * Math.PI * 2) + 1) / 2;
-                rightTrigger.setPressAmount(amount);
+            const cornerButtons = Object.fromEntries(
+                Object.entries({
+                    leftBumper: overlay.entities.left.entities.leftBumper,
+                    select: overlay.entities.left.entities.select,
+                    start: overlay.entities.right.entities.start,
+                    rightBumper: overlay.entities.right.entities.rightBumper,
+                }).filter(([, entity]) => entity != null),
+            );
 
-                for (const role of Object.keys(rightButtons)) {
-                    if (buttonHoldFrames[role] > 0) {
-                        buttonHoldFrames[role] -= 1;
-                        rightButtons[role].setPressAmount(1);
-                        continue;
-                    }
+            function startRandomizedInputDemo() {
+                const leftButtonHoldFrames = {up: 0, left: 0, down: 0, right: 0};
+                const rightButtonHoldFrames = {up: 0, left: 0, down: 0, right: 0};
+                const cornerButtonHoldFrames = Object.fromEntries(
+                    Object.keys(cornerButtons).map((key) => [key, 0]),
+                );
+                const leftStickState = {x: 0, y: 0, targetX: 0, targetY: 0};
+                const rightStickState = {x: 0, y: 0, targetX: 0, targetY: 0};
+                const triggerState = {
+                    left: {value: 0, target: 0},
+                    right: {value: 0, target: 0},
+                };
 
-                    if (Math.random() > 0.985) {
-                        buttonHoldFrames[role] = 12 + Math.floor(Math.random() * 16);
-                        rightButtons[role].setPressAmount(1);
-                    } else {
-                        rightButtons[role].setPressAmount(0);
+                function maybeRetargetStick(stickState) {
+                    if (Math.random() > 0.96) {
+                        stickState.targetX = Math.random() * 2 - 1;
+                        stickState.targetY = Math.random() * 2 - 1;
                     }
                 }
 
-                requestAnimationFrame(animatePress);
+                function stepTowardTarget(state, rate) {
+                    state.x += (state.targetX - state.x) * rate;
+                    state.y += (state.targetY - state.y) * rate;
+                }
+
+                function maybeRetargetTrigger(trigger) {
+                    if (Math.random() > 0.965) {
+                        trigger.target = Math.random();
+                    }
+                }
+
+                function stepTrigger(trigger, rate) {
+                    trigger.value += (trigger.target - trigger.value) * rate;
+                }
+
+                function updateDigitalPresses(buttonMap, holdMap, triggerChance) {
+                    for (const role of Object.keys(buttonMap)) {
+                        if (holdMap[role] > 0) {
+                            holdMap[role] -= 1;
+                            buttonMap[role].setInputAmount(1);
+                            continue;
+                        }
+                        if (Math.random() > triggerChance) {
+                            holdMap[role] = 12 + Math.floor(Math.random() * 16);
+                            buttonMap[role].setInputAmount(1);
+                        } else {
+                            buttonMap[role].setInputAmount(0);
+                        }
+                    }
+                }
+
+                function animateRandomizedInputDemo() {
+                    maybeRetargetStick(leftStickState);
+                    maybeRetargetStick(rightStickState);
+                    stepTowardTarget(leftStickState, 0.09);
+                    stepTowardTarget(rightStickState, 0.09);
+
+                    leftStick.setTranslation(clampNormalizedOffsetToEllipse({
+                        offset: {x: leftStickState.x, y: leftStickState.y},
+                        halfSize: overlay.leftAnalogClampHalfSize,
+                    }));
+                    rightStick.setTranslation(clampNormalizedOffsetToEllipse({
+                        offset: {x: rightStickState.x, y: rightStickState.y},
+                        halfSize: overlay.rightAnalogClampHalfSize,
+                    }));
+
+                    maybeRetargetTrigger(triggerState.left);
+                    maybeRetargetTrigger(triggerState.right);
+                    stepTrigger(triggerState.left, 0.14);
+                    stepTrigger(triggerState.right, 0.14);
+                    leftTrigger.setInputAmount(triggerState.left.value);
+                    rightTrigger.setInputAmount(triggerState.right.value);
+
+                    const leftStickPress = Math.min(1, Math.hypot(leftStickState.x, leftStickState.y));
+                    const rightStickPress = Math.min(1, Math.hypot(rightStickState.x, rightStickState.y));
+                    leftStick.setInputAmount(leftStickPress);
+                    rightStick.setInputAmount(rightStickPress);
+
+                    updateDigitalPresses(leftButtons, leftButtonHoldFrames, 0.985);
+                    updateDigitalPresses(rightButtons, rightButtonHoldFrames, 0.985);
+                    updateDigitalPresses(cornerButtons, cornerButtonHoldFrames, 0.992);
+
+                    requestAnimationFrame(animateRandomizedInputDemo);
+                }
+
+                requestAnimationFrame(animateRandomizedInputDemo);
             }
-            requestAnimationFrame(animatePress);
+
+            startRandomizedInputDemo(); // comment out to disable demo
         </script>
     </body>
 </html>
