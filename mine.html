@@ -4,12 +4,13 @@
         <title>Gamepad Overlay</title>
         <style>
             body {
-                background: black;
+                background: none;
             }
 
             #overlayRoot {
                 /* border: 1px solid red; */
-                --btn-idle: rgba(44, 47, 51, 0.7);
+                --btn-idle-rgb: 44, 47, 51;
+                --btn-idle-alpha: 0.7;
                 --btn-pressed: #3f8cff;
                 --overlay-border-inner-size: 4;
                 --overlay-border-outer-size: 4;
@@ -32,7 +33,7 @@
             }
 
             .gamepad-button {
-                fill: var(--btn-idle, rgba(0,0,0,0.2));
+                fill: rgba(var(--btn-idle-rgb, 44, 47, 51), var(--btn-idle-alpha, 0.7));
                 stroke: black;
                 stroke-width: 0;
             }
@@ -43,40 +44,40 @@
             }
 
             #overlayRoot [data-role="analog-area"] {
-                --btn-idle: black;
+                --btn-idle-rgb: 0, 0, 0;
             }
 
             #overlayRoot.theme-xbox [data-side="right"][data-role="up"] {
-                --btn-idle: #5f5f1f;
+                --btn-idle-rgb: 95, 95, 31;
                 --btn-pressed: #ffff33;
             }
             #overlayRoot.theme-xbox [data-side="right"][data-role="right"] {
-                --btn-idle: #5f1f1f;
+                --btn-idle-rgb: 95, 31, 31;
                 --btn-pressed: #ff3333;
             }
             #overlayRoot.theme-xbox [data-side="right"][data-role="left"] {
-                --btn-idle: #1f1f5f;
+                --btn-idle-rgb: 31, 31, 95;
                 --btn-pressed: #3377ff;
             }
             #overlayRoot.theme-xbox [data-side="right"][data-role="down"] {
-                --btn-idle: #1f4f20;
+                --btn-idle-rgb: 31, 79, 32;
                 --btn-pressed: #3fcf3f;
             }
 
             #overlayRoot.theme-snes [data-side="right"][data-role="up"] {
-                --btn-idle: #20204f;
+                --btn-idle-rgb: 32, 32, 79;
                 --btn-pressed: #5555ff;
             }
             #overlayRoot.theme-snes [data-side="right"][data-role="right"] {
-                --btn-idle: #4f2020;
+                --btn-idle-rgb: 79, 32, 32;
                 --btn-pressed: #ff5555;
             }
             #overlayRoot.theme-snes [data-side="right"][data-role="down"] {
-                --btn-idle: #4f4f20;
+                --btn-idle-rgb: 79, 79, 32;
                 --btn-pressed: #ffff55;
             }
             #overlayRoot.theme-snes [data-side="right"][data-role="left"] {
-                --btn-idle: #204f20;
+                --btn-idle-rgb: 32, 79, 32;
                 --btn-pressed: #55ff55;
             }
         </style>
