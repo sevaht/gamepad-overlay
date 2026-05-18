@@ -1,0 +1,14 @@
+services:
+  app:
+    build:
+      context: .
+      pull: true
+    tty: true
+    stdin_open: true
+  test:
+    build:
+      context: .
+      pull: true
+      target: test
+    tty: true
+    stdin_open: true

@@ -1,0 +1,67 @@
+[build-system]
+requires = ["hatchling (>=1.29.0,<2.0.0)", "hatch-vcs (>=0.5.0,<1.0.0)"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gamepad-websocket-server"
+version = "0.1.0"
+description = "Obtains, normalizes, and transmits gamepad state via a WebSocket."
+authors = [
+    {name = "Jacob McIntosh",email = "nacitar.sevaht@gmail.com"}
+]
+readme = "README.md"
+license = "Unlicense"
+requires-python = ">=3.11"
+dependencies = [
+    "pysdl2>=0.9.17",
+    "sevaht-utility",
+    "websockets>=16.0",
+]
+
+[project.scripts]
+gamepad-websocket-server = "gamepad_websocket_server.__main__:main"
+
+[dependency-groups]
+dev = [
+    "black (>=26.3.1,<27.0.0)",
+    "build (>=1.4.2,<2.0.0)",
+    "mypy (>=1.20.0,<2.0.0)",
+    "pytest (>=9.0.2,<10.0.0)",
+    "ruff (>=0.15.8,<0.16.0)",
+    "twine (>=6.2.0,<7.0.0)",
+]
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/gamepad_websocket_server"]
+
+[tool.black]
+line-length = 79
+skip-magic-trailing-comma = true
+
+[tool.mypy]
+strict = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 79
+
+[tool.ruff.lint]
+extend-ignore = ["COM812", "COM819", "E203", "E501", "TD003"]
+select = [
+    "A", "ANN", "ARG", "ASYNC", "B", "BLE", "C4", "C90", "COM",
+    "DTZ", "E", "EM", "ERA", "F", "FA", "FLY", "FURB", "I",
+    "ISC", "LOG", "N", "PERF", "PGH", "PIE", "PLR", "PLW", "PTH",
+    "Q", "RET", "RSE", "RUF", "S", "SIM", "TC", "TCH", "TD",
+    "TID", "TRY", "UP"
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*" = ["PLR2004", "S101"]
+
+[tool.uv.sources]
+sevaht-utility = { git = "https://github.com/nacitar/sevaht-utility.git", rev = "main" }

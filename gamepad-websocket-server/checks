@@ -1,0 +1,49 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+from subprocess import CalledProcessError, run
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Executes linters and tests.")
+    parser.add_argument(
+        "--junitxml",
+        help="Create junit-xml style test results report file at given path.",
+    )
+    args = parser.parse_args()
+    this_script = Path(__file__).resolve()
+    project_root_dir = this_script.parent
+    scripts = [this_script.name]
+    commands = [
+        (
+            ["black", "--target-version", "py314", ".", *scripts],
+            "formatting code",
+        ),
+        (
+            ["ruff", "check", "--fix", "--select", "I", ".", *scripts],
+            "sorting imports",
+        ),
+        (["mypy", "--scripts-are-modules", *scripts], "typechecking scripts"),
+        (["mypy", "."], "typechecking package"),
+        (["ruff", "check", ".", *scripts], "linting"),
+        (
+            ["pytest"]
+            + ([f"--junitxml={args.junitxml}"] if args.junitxml else []),
+            "executing tests",
+        ),
+    ]
+    for command, description in commands:
+        print(f"Running {command[0]}... ({description})")
+        try:
+            run(command, check=True, cwd=project_root_dir)  # noqa: S603
+        except CalledProcessError as e:
+            return e.returncode
+        print()
+    print("All checks completed successfully!")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

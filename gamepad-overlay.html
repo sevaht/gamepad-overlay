@@ -89,7 +89,7 @@
         <script defer>
             const QUERY = new URLSearchParams(window.location.search);
             const INPUT_SOURCE = (() => {
-                const source = (QUERY.get("source") || "browser").toLowerCase();
+                const source = (QUERY.get("source") || "websocket").toLowerCase();
                 if (source === "ws") {
                     return "websocket";
                 }
