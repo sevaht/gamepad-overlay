@@ -125,16 +125,24 @@
             const rightStickRing = overlay.entities.right.entities.analogStickRing;
             const rightTrigger = overlay.entities.right.entities.rightTrigger;
             const leftTrigger = overlay.entities.left.entities.leftTrigger;
-            const leftButtons = {
-                up: overlay.entities.left.entities.upButton,
-                left: overlay.entities.left.entities.leftButton,
-                down: overlay.entities.left.entities.downButton,
-                right: overlay.entities.left.entities.rightButton,
-            };
             leftStick.setPressFillDirection(PressFillDirection.OUTWARD).enablePressVisual();
             rightStick.setPressFillDirection(PressFillDirection.OUTWARD).enablePressVisual();
             leftStickRing.bringLayersToFront();
             rightStickRing.bringLayersToFront();
+
+            const INPUT_SOURCE = "browser"; // "browser" | "websocket" | "demo"
+            const WS_URL = "ws://localhost:8765/gamepad-overlay";
+            const DEADZONE_MODE = "none"; // "none" | "fixed"
+            const FIXED_DEADZONE = 0.0;
+
+            const EMPTY_STATE = Object.freeze({
+                A: 0, B: 0, X: 0, Y: 0,
+                SELECT: 0, START: 0, GUIDE: 0,
+                LB: 0, RB: 0, LS: 0, RS: 0,
+                LX: 0, LY: 0, RX: 0, RY: 0,
+                LT: 0, RT: 0,
+                DX: 0, DY: 0,
+            });
 
             const rightButtons = {
                 up: overlay.entities.right.entities.upButton,
@@ -143,104 +151,245 @@
                 right: overlay.entities.right.entities.rightButton,
             };
 
-            const cornerButtons = Object.fromEntries(
-                Object.entries({
-                    leftBumper: overlay.entities.left.entities.leftBumper,
-                    select: overlay.entities.left.entities.select,
-                    start: overlay.entities.right.entities.start,
-                    rightBumper: overlay.entities.right.entities.rightBumper,
-                }).filter(([, entity]) => entity != null),
-            );
+            const digitalInputMap = {
+                A: rightButtons.down,
+                B: rightButtons.right,
+                X: rightButtons.left,
+                Y: rightButtons.up,
+                SELECT: overlay.entities.left.entities.select,
+                START: overlay.entities.right.entities.start,
+                LB: overlay.entities.left.entities.leftBumper,
+                RB: overlay.entities.right.entities.rightBumper,
+                LS: leftStick,
+                RS: rightStick,
+                DX_NEG: overlay.entities.left.entities.leftButton,
+                DX_POS: overlay.entities.left.entities.rightButton,
+                DY_NEG: overlay.entities.left.entities.upButton,
+                DY_POS: overlay.entities.left.entities.downButton,
+            };
+
+            function clamp01(value) {
+                return Math.max(0, Math.min(1, Number(value) || 0));
+            }
+            function clamp11(value) {
+                return Math.max(-1, Math.min(1, Number(value) || 0));
+            }
+            function applyDeadzone(value) {
+                value = clamp11(value);
+                if (DEADZONE_MODE === "none") {
+                    return value;
+                }
+                return Math.abs(value) < FIXED_DEADZONE ? 0 : value;
+            }
+            function normalizeState(partial) {
+                const state = {...EMPTY_STATE, ...partial};
+                state.A = clamp01(state.A);
+                state.B = clamp01(state.B);
+                state.X = clamp01(state.X);
+                state.Y = clamp01(state.Y);
+                state.SELECT = clamp01(state.SELECT);
+                state.START = clamp01(state.START);
+                state.GUIDE = clamp01(state.GUIDE);
+                state.LB = clamp01(state.LB);
+                state.RB = clamp01(state.RB);
+                state.LS = clamp01(state.LS);
+                state.RS = clamp01(state.RS);
+                state.LT = clamp01(state.LT);
+                state.RT = clamp01(state.RT);
+                state.LX = applyDeadzone(state.LX);
+                state.LY = applyDeadzone(state.LY);
+                state.RX = applyDeadzone(state.RX);
+                state.RY = applyDeadzone(state.RY);
+                state.DX = Math.sign(clamp11(state.DX));
+                state.DY = Math.sign(clamp11(state.DY));
+                return state;
+            }
+
+            function applyState(incomingState) {
+                const state = normalizeState(incomingState);
+
+                leftStick.setTranslation(clampNormalizedOffsetToEllipse({
+                    offset: {x: state.LX, y: state.LY},
+                    halfSize: overlay.leftAnalogClampHalfSize,
+                }));
+                rightStick.setTranslation(clampNormalizedOffsetToEllipse({
+                    offset: {x: state.RX, y: state.RY},
+                    halfSize: overlay.rightAnalogClampHalfSize,
+                }));
+
+                leftTrigger.setInputAmount(state.LT);
+                rightTrigger.setInputAmount(state.RT);
+                leftStick.setInputAmount(state.LS);
+                rightStick.setInputAmount(state.RS);
+
+                digitalInputMap.A?.setInputAmount(state.A);
+                digitalInputMap.B?.setInputAmount(state.B);
+                digitalInputMap.X?.setInputAmount(state.X);
+                digitalInputMap.Y?.setInputAmount(state.Y);
+                digitalInputMap.SELECT?.setInputAmount(state.SELECT);
+                digitalInputMap.START?.setInputAmount(state.START);
+                digitalInputMap.LB?.setInputAmount(state.LB);
+                digitalInputMap.RB?.setInputAmount(state.RB);
+                digitalInputMap.DX_NEG?.setInputAmount(state.DX < 0 ? 1 : 0);
+                digitalInputMap.DX_POS?.setInputAmount(state.DX > 0 ? 1 : 0);
+                digitalInputMap.DY_NEG?.setInputAmount(state.DY < 0 ? 1 : 0);
+                digitalInputMap.DY_POS?.setInputAmount(state.DY > 0 ? 1 : 0);
+            }
+
+            function mapBrowserGamepadToState(gamepad) {
+                if (!gamepad) {
+                    return EMPTY_STATE;
+                }
+                const b = gamepad.buttons;
+                const a = gamepad.axes;
+                const up = clamp01(b[12]?.value ?? 0);
+                const down = clamp01(b[13]?.value ?? 0);
+                const left = clamp01(b[14]?.value ?? 0);
+                const right = clamp01(b[15]?.value ?? 0);
+
+                return {
+                    A: clamp01(b[0]?.value ?? 0),
+                    B: clamp01(b[1]?.value ?? 0),
+                    X: clamp01(b[2]?.value ?? 0),
+                    Y: clamp01(b[3]?.value ?? 0),
+                    LB: clamp01(b[4]?.value ?? 0),
+                    RB: clamp01(b[5]?.value ?? 0),
+                    LT: clamp01(b[6]?.value ?? 0),
+                    RT: clamp01(b[7]?.value ?? 0),
+                    SELECT: clamp01(b[8]?.value ?? 0),
+                    START: clamp01(b[9]?.value ?? 0),
+                    LS: clamp01(b[10]?.value ?? 0),
+                    RS: clamp01(b[11]?.value ?? 0),
+                    GUIDE: clamp01((b[16]?.value ?? b[17]?.value) ?? 0),
+                    LX: clamp11(a[0] ?? 0),
+                    LY: clamp11(a[1] ?? 0),
+                    RX: clamp11(a[2] ?? 0),
+                    RY: clamp11(a[3] ?? 0),
+                    DX: right - left,
+                    DY: down - up,
+                };
+            }
+
+            function startBrowserSource() {
+                function tick() {
+                    const gamepads = navigator.getGamepads?.() ?? [];
+                    applyState(mapBrowserGamepadToState(gamepads[0] ?? null));
+                    requestAnimationFrame(tick);
+                }
+                requestAnimationFrame(tick);
+            }
+
+            function startWebSocketSource() {
+                let retryDelay = 1000;
+                const maxDelay = 10000;
+
+                function connect() {
+                    const ws = new WebSocket(WS_URL);
+                    let firstMessage = true;
+
+                    ws.onopen = () => {
+                        retryDelay = 1000;
+                    };
+
+                    ws.onmessage = (event) => {
+                        if (firstMessage) {
+                            firstMessage = false;
+                            return;
+                        }
+                        try {
+                            applyState(JSON.parse(event.data));
+                        } catch {
+                            applyState(EMPTY_STATE);
+                        }
+                    };
+
+                    ws.onclose = () => {
+                        applyState(EMPTY_STATE);
+                        setTimeout(connect, retryDelay);
+                        retryDelay = Math.min(retryDelay * 2, maxDelay);
+                    };
+
+                    ws.onerror = () => {
+                        ws.close();
+                    };
+                }
+
+                connect();
+            }
 
             function startRandomizedInputDemo() {
                 const leftButtonHoldFrames = {up: 0, left: 0, down: 0, right: 0};
                 const rightButtonHoldFrames = {up: 0, left: 0, down: 0, right: 0};
-                const cornerButtonHoldFrames = Object.fromEntries(
-                    Object.keys(cornerButtons).map((key) => [key, 0]),
-                );
+                const cornerButtonHoldFrames = {LB: 0, RB: 0, SELECT: 0, START: 0};
                 const leftStickState = {x: 0, y: 0, targetX: 0, targetY: 0};
                 const rightStickState = {x: 0, y: 0, targetX: 0, targetY: 0};
-                const triggerState = {
-                    left: {value: 0, target: 0},
-                    right: {value: 0, target: 0},
-                };
+                const triggerState = {left: {value: 0, target: 0}, right: {value: 0, target: 0}};
 
-                function maybeRetargetStick(stickState) {
+                function holdPulse(holdMap, key, chance = 0.985) {
+                    if (holdMap[key] > 0) {
+                        holdMap[key] -= 1;
+                        return 1;
+                    }
+                    if (Math.random() > chance) {
+                        holdMap[key] = 12 + Math.floor(Math.random() * 16);
+                        return 1;
+                    }
+                    return 0;
+                }
+
+                function animate() {
                     if (Math.random() > 0.96) {
-                        stickState.targetX = Math.random() * 2 - 1;
-                        stickState.targetY = Math.random() * 2 - 1;
+                        leftStickState.targetX = Math.random() * 2 - 1;
+                        leftStickState.targetY = Math.random() * 2 - 1;
+                        rightStickState.targetX = Math.random() * 2 - 1;
+                        rightStickState.targetY = Math.random() * 2 - 1;
                     }
-                }
+                    leftStickState.x += (leftStickState.targetX - leftStickState.x) * 0.09;
+                    leftStickState.y += (leftStickState.targetY - leftStickState.y) * 0.09;
+                    rightStickState.x += (rightStickState.targetX - rightStickState.x) * 0.09;
+                    rightStickState.y += (rightStickState.targetY - rightStickState.y) * 0.09;
 
-                function stepTowardTarget(state, rate) {
-                    state.x += (state.targetX - state.x) * rate;
-                    state.y += (state.targetY - state.y) * rate;
-                }
-
-                function maybeRetargetTrigger(trigger) {
                     if (Math.random() > 0.965) {
-                        trigger.target = Math.random();
+                        triggerState.left.target = Math.random();
+                        triggerState.right.target = Math.random();
                     }
+                    triggerState.left.value += (triggerState.left.target - triggerState.left.value) * 0.14;
+                    triggerState.right.value += (triggerState.right.target - triggerState.right.value) * 0.14;
+
+                    applyState({
+                        LX: leftStickState.x,
+                        LY: leftStickState.y,
+                        RX: rightStickState.x,
+                        RY: rightStickState.y,
+                        LT: triggerState.left.value,
+                        RT: triggerState.right.value,
+                        LS: Math.min(1, Math.hypot(leftStickState.x, leftStickState.y)),
+                        RS: Math.min(1, Math.hypot(rightStickState.x, rightStickState.y)),
+                        A: holdPulse(rightButtonHoldFrames, "down"),
+                        B: holdPulse(rightButtonHoldFrames, "right"),
+                        X: holdPulse(rightButtonHoldFrames, "left"),
+                        Y: holdPulse(rightButtonHoldFrames, "up"),
+                        SELECT: holdPulse(cornerButtonHoldFrames, "SELECT", 0.992),
+                        START: holdPulse(cornerButtonHoldFrames, "START", 0.992),
+                        LB: holdPulse(cornerButtonHoldFrames, "LB", 0.992),
+                        RB: holdPulse(cornerButtonHoldFrames, "RB", 0.992),
+                        DX: holdPulse(leftButtonHoldFrames, "right") - holdPulse(leftButtonHoldFrames, "left"),
+                        DY: holdPulse(leftButtonHoldFrames, "down") - holdPulse(leftButtonHoldFrames, "up"),
+                    });
+
+                    requestAnimationFrame(animate);
                 }
 
-                function stepTrigger(trigger, rate) {
-                    trigger.value += (trigger.target - trigger.value) * rate;
-                }
-
-                function updateDigitalPresses(buttonMap, holdMap, triggerChance) {
-                    for (const role of Object.keys(buttonMap)) {
-                        if (holdMap[role] > 0) {
-                            holdMap[role] -= 1;
-                            buttonMap[role].setInputAmount(1);
-                            continue;
-                        }
-                        if (Math.random() > triggerChance) {
-                            holdMap[role] = 12 + Math.floor(Math.random() * 16);
-                            buttonMap[role].setInputAmount(1);
-                        } else {
-                            buttonMap[role].setInputAmount(0);
-                        }
-                    }
-                }
-
-                function animateRandomizedInputDemo() {
-                    maybeRetargetStick(leftStickState);
-                    maybeRetargetStick(rightStickState);
-                    stepTowardTarget(leftStickState, 0.09);
-                    stepTowardTarget(rightStickState, 0.09);
-
-                    leftStick.setTranslation(clampNormalizedOffsetToEllipse({
-                        offset: {x: leftStickState.x, y: leftStickState.y},
-                        halfSize: overlay.leftAnalogClampHalfSize,
-                    }));
-                    rightStick.setTranslation(clampNormalizedOffsetToEllipse({
-                        offset: {x: rightStickState.x, y: rightStickState.y},
-                        halfSize: overlay.rightAnalogClampHalfSize,
-                    }));
-
-                    maybeRetargetTrigger(triggerState.left);
-                    maybeRetargetTrigger(triggerState.right);
-                    stepTrigger(triggerState.left, 0.14);
-                    stepTrigger(triggerState.right, 0.14);
-                    leftTrigger.setInputAmount(triggerState.left.value);
-                    rightTrigger.setInputAmount(triggerState.right.value);
-
-                    const leftStickPress = Math.min(1, Math.hypot(leftStickState.x, leftStickState.y));
-                    const rightStickPress = Math.min(1, Math.hypot(rightStickState.x, rightStickState.y));
-                    leftStick.setInputAmount(leftStickPress);
-                    rightStick.setInputAmount(rightStickPress);
-
-                    updateDigitalPresses(leftButtons, leftButtonHoldFrames, 0.985);
-                    updateDigitalPresses(rightButtons, rightButtonHoldFrames, 0.985);
-                    updateDigitalPresses(cornerButtons, cornerButtonHoldFrames, 0.992);
-
-                    requestAnimationFrame(animateRandomizedInputDemo);
-                }
-
-                requestAnimationFrame(animateRandomizedInputDemo);
+                requestAnimationFrame(animate);
             }
 
-            startRandomizedInputDemo(); // comment out to disable demo
+            if (INPUT_SOURCE === "websocket") {
+                startWebSocketSource();
+            } else if (INPUT_SOURCE === "browser") {
+                startBrowserSource();
+            } else {
+                startRandomizedInputDemo(); // comment out by switching INPUT_SOURCE
+            }
         </script>
     </body>
 </html>
