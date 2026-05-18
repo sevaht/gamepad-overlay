@@ -145,6 +145,11 @@
             const FIXED_DEADZONE = 0.0;
             const BROWSER_POLL_HZ = Math.max(1, Number.parseInt(QUERY.get("poll") || "240", 10));
             const BROWSER_POLL_MS = Math.max(1, Math.round(1000 / BROWSER_POLL_HZ));
+            const PAD_INDEX_QUERY = QUERY.get("padIndex");
+            const PAD_INDEX = PAD_INDEX_QUERY == null ? null : Math.max(0, Number.parseInt(PAD_INDEX_QUERY, 10) || 0);
+            const PAD_ID_CONTAINS = (QUERY.get("padIdContains") || "").trim().toLowerCase();
+            const PAD_REQUIRE_STANDARD = QUERY.get("padRequireStandard") === "1";
+            const LIST_PADS = QUERY.get("pads") === "1" || QUERY.get("listPads") === "1";
             const SHOW_STATUS = QUERY.get("status") === "1" || QUERY.get("debug") === "1";
             const STATUS_VERBOSE = QUERY.get("statusVerbose") === "1" || QUERY.get("debug") === "1";
 
@@ -153,6 +158,8 @@
                 pad: "WAIT",
                 connected: false,
                 lastUpdateMs: 0,
+                selectedPadLabel: "none",
+                listedPadsText: "",
             };
             let lastAppliedState = null;
             let queuedState = null;
@@ -409,7 +416,15 @@
                 }
                 statusOverlay.line1.textContent = `SRC ${sourceStatus.source} | PAD ${sourceStatus.pad}`;
                 if (statusOverlay.line2) {
-                    statusOverlay.line2.textContent = `LINK ${sourceStatus.connected ? "UP" : "DOWN"}`;
+                    if (INPUT_SOURCE === "browser") {
+                        const selectedPart = `SEL ${sourceStatus.selectedPadLabel}`;
+                        const listPart = LIST_PADS && sourceStatus.listedPadsText
+                            ? ` | ${sourceStatus.listedPadsText}`
+                            : "";
+                        statusOverlay.line2.textContent = `${selectedPart}${listPart}`;
+                    } else {
+                        statusOverlay.line2.textContent = `LINK ${sourceStatus.connected ? "UP" : "DOWN"}`;
+                    }
                 }
 
                 const measure1 = statusOverlay.line1.getBBox();
@@ -487,9 +502,48 @@
                 };
             }
 
+            function listConnectedPads(gamepads) {
+                const connected = gamepads.filter((pad) => pad != null);
+                sourceStatus.listedPadsText = connected.length === 0
+                    ? "PADS none"
+                    : `PADS ${connected.map((pad) => `${pad.index}:${pad.id}`).join(" | ")}`;
+                if (LIST_PADS) {
+                    console.table(connected.map((pad) => ({
+                        index: pad.index,
+                        id: pad.id,
+                        mapping: pad.mapping,
+                        connected: pad.connected,
+                        timestamp: pad.timestamp,
+                    })));
+                }
+            }
+
+            function selectBrowserGamepad(gamepads) {
+                const pads = gamepads.filter((pad) => pad != null && pad.connected);
+                if (PAD_INDEX != null) {
+                    const byIndex = pads.find((pad) => pad.index === PAD_INDEX);
+                    if (byIndex) {
+                        sourceStatus.selectedPadLabel = `${byIndex.index}`;
+                        return byIndex;
+                    }
+                }
+
+                let candidates = pads;
+                if (PAD_ID_CONTAINS) {
+                    candidates = candidates.filter((pad) => pad.id.toLowerCase().includes(PAD_ID_CONTAINS));
+                }
+                if (PAD_REQUIRE_STANDARD) {
+                    candidates = candidates.filter((pad) => pad.mapping === "standard");
+                }
+                const selected = candidates[0] ?? null;
+                sourceStatus.selectedPadLabel = selected ? `${selected.index}` : "none";
+                return selected;
+            }
+
             function startBrowserSource() {
                 sourceStatus.connected = true;
                 let lastTimestamp = null;
+                let lastPadListLogTime = 0;
                 let pollTimer = null;
 
                 function stopPolling() {
@@ -505,7 +559,13 @@
 
                 function tick() {
                     const gamepads = navigator.getGamepads?.() ?? [];
-                    const gamepad = gamepads[0] ?? null;
+                    const now = performance.now();
+                    if (LIST_PADS && now - lastPadListLogTime > 1500) {
+                        lastPadListLogTime = now;
+                        listConnectedPads(Array.from(gamepads));
+                    }
+
+                    const gamepad = selectBrowserGamepad(Array.from(gamepads));
                     sourceStatus.pad = gamepad ? "OK" : "WAIT";
                     if (!gamepad) {
                         applyState(EMPTY_STATE);
