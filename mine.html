@@ -142,7 +142,8 @@
                     ? source
                     : "browser";
             })(); // ?source=browser|websocket|demo (or ws)
-            const WS_URL = "ws://localhost:8765/gamepad-overlay";
+            const WS_HOST = QUERY.get("wsHost") || "localhost";
+            const WS_URL = `ws://${WS_HOST}:8765/gamepad-overlay`;
             const DEADZONE_MODE = "none"; // "none" | "fixed"
             const FIXED_DEADZONE = 0.0;
             const BROWSER_POLL_HZ = Math.max(1, Number.parseInt(QUERY.get("poll") || "240", 10));
