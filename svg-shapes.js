@@ -621,9 +621,13 @@ class GamepadEntity {
     #layerElements;
     #pressMode;
     #digitalThreshold;
+    #digitalRenderMode;
     #transformFramePending;
+    #pressedClassName;
+    #isPressed;
+    #themeVariables;
 
-    constructor({context, element, parent, layers=[{}], offset=Vector2.ZERO}) {
+    constructor({context, element, parent, layers=[{}], offset=Vector2.ZERO, themeVariables = {}}) {
         // TODO: null validation?
         this.#context = context;
         this.#element = element;
@@ -638,6 +642,10 @@ class GamepadEntity {
         this.#pressMode = "digital";
         this.#digitalThreshold = 0.5;
         this.#transformFramePending = false;
+        this.#digitalRenderMode = "fill";
+        this.#pressedClassName = "is-pressed";
+        this.#isPressed = false;
+        this.#themeVariables = {...themeVariables};
         this.setTranslation(offset);
         this.#context.addDefinition(this.#element);
 
@@ -660,6 +668,7 @@ class GamepadEntity {
             this.#layerElements.push(useElement);
             if (layer.styleSource) {
                 this.#styleSourceElement = useElement;
+                this.#applyThemeVariablesToElement(this.#styleSourceElement);
             }
         }
     }
@@ -686,7 +695,9 @@ class GamepadEntity {
             const role = this.#styleSourceElement.getAttribute("data-role");
             if (side != null) { useElement.setAttribute("data-side", side); }
             if (role != null) { useElement.setAttribute("data-role", role); }
+
         }
+        this.#applyThemeVariablesToElement(useElement);
         this.#context.addChild(useElement, {parent: this.#layerParent, prepend});
 
         if (fillDirection === PressFillDirection.OUTWARD) {
@@ -748,12 +759,22 @@ class GamepadEntity {
         this.#pressFillDirection = fillDirection;
         return this;
     }
-    setPressBehavior({mode = this.#pressMode, threshold = this.#digitalThreshold} = {}) {
+    setPressBehavior({
+        mode = this.#pressMode,
+        threshold = this.#digitalThreshold,
+        digitalRenderMode = this.#digitalRenderMode,
+        pressedClassName = this.#pressedClassName,
+    } = {}) {
         if (mode !== "analog" && mode !== "digital") {
             throw new Error(`Unknown press mode: ${String(mode)}`);
         }
+        if (digitalRenderMode !== "fill" && digitalRenderMode !== "class-toggle") {
+            throw new Error(`Unknown digital render mode: ${String(digitalRenderMode)}`);
+        }
         this.#pressMode = mode;
         this.#digitalThreshold = Math.max(0, Math.min(1, assertFiniteNumber(threshold, "threshold")));
+        this.#digitalRenderMode = digitalRenderMode;
+        this.#pressedClassName = String(pressedClassName || "is-pressed");
         return this;
     }
     setInputAmount(rawAmount) {
@@ -761,7 +782,16 @@ class GamepadEntity {
         if (this.#pressMode === "analog") {
             return this.setPressAmount(amount);
         }
-        return this.setPressAmount(amount >= this.#digitalThreshold ? 1 : 0);
+        const isPressed = amount >= this.#digitalThreshold;
+        if (this.#digitalRenderMode === "class-toggle") {
+            if (this.#isPressed === isPressed) {
+                return this;
+            }
+            this.#isPressed = isPressed;
+            this.#styleSourceElement?.classList.toggle(this.#pressedClassName, isPressed);
+            return this;
+        }
+        return this.setPressAmount(isPressed ? 1 : 0);
     }
     bringLayersToFront() {
         for (const element of this.#layerElements) {
@@ -791,6 +821,11 @@ class GamepadEntity {
             }
             default:
                 throw new Error(`Unknown fillDirection: ${String(fillDirection.description ?? fillDirection)}`);
+        }
+    }
+    #applyThemeVariablesToElement(element) {
+        for (const [name, value] of Object.entries(this.#themeVariables)) {
+            element.style.setProperty(name, value);
         }
     }
     connect(element, {extraTransform = null, includeTranslation = true} = {}) {
@@ -887,6 +922,9 @@ class GamepadOverlay {
     #borderWidth;
     #region;
     #digitalThreshold;
+    #digitalRenderMode;
+    #themeVariables;
+    #prewarmPressVisuals;
 
     static #DEFAULT_SIDE_OPTIONS = Object.freeze({
         left: Object.freeze({
@@ -960,6 +998,9 @@ class GamepadOverlay {
         gap,
         betweenHalvesGap = 0,
         digitalThreshold = 0.5,
+        digitalRenderMode = "fill",
+        themeVariables = {},
+        prewarmPressVisuals = true,
         hasAnalogStick = true,
         leftSide = {},
         rightSide = {},
@@ -970,6 +1011,9 @@ class GamepadOverlay {
         const betweenHalvesGapPixels = betweenHalvesGap * borderWidth;
         this.#borderWidth = borderWidth;
         this.#digitalThreshold = digitalThreshold;
+        this.#digitalRenderMode = digitalRenderMode;
+        this.#themeVariables = {...themeVariables};
+        this.#prewarmPressVisuals = Boolean(prewarmPressVisuals);
         this.#cornerCompensation = gapPixels + borderWidth * 2;
         const leftLayoutPosition = topLeft.clone()
             .add(Vector2.splat(borderWidth));
@@ -1031,6 +1075,9 @@ class GamepadOverlay {
         semanticAttributes = {},
         pressMode = "digital",
         digitalThreshold = this.#digitalThreshold,
+        digitalRenderMode = this.#digitalRenderMode,
+        themeVariables = this.#resolveThemeVariables(semanticAttributes),
+        prewarmPressVisual = this.#prewarmPressVisuals && pressMode === "digital" && digitalRenderMode === "fill",
     }) {
         const layers = [];
         if (includeBorder) {
@@ -1050,9 +1097,32 @@ class GamepadOverlay {
             ),
             layers,
             parent: group,
+            themeVariables,
         });
-        entity.setPressBehavior({mode: pressMode, threshold: digitalThreshold});
+        entity.setPressBehavior({
+            mode: pressMode,
+            threshold: digitalThreshold,
+            digitalRenderMode,
+        });
+        if (prewarmPressVisual) {
+            entity.enablePressVisual();
+        }
         return entity;
+    }
+
+    #resolveThemeVariables(semanticAttributes) {
+        const side = semanticAttributes?.["data-side"];
+        const role = semanticAttributes?.["data-role"];
+        const bySideRole = side != null && role != null
+            ? this.#themeVariables[`${side}:${role}`]
+            : null;
+        const byRole = role != null ? this.#themeVariables[`role:${role}`] : null;
+        const global = this.#themeVariables.global;
+        return {
+            ...(global || {}),
+            ...(byRole || {}),
+            ...(bySideRole || {}),
+        };
     }
 
     #createCrossBorder({group, id, layout}) {
@@ -1108,9 +1178,13 @@ class GamepadOverlay {
             semanticAttributes: {"data-side": sideName, "data-role": roleName},
             pressMode,
             digitalThreshold,
+            prewarmPressVisual: pressFillDirection == null,
         });
         if (pressFillDirection != null) {
             button.setPressFillDirection(pressFillDirection);
+            if (this.#prewarmPressVisuals && pressMode === "digital" && this.#digitalRenderMode === "fill") {
+                button.enablePressVisual();
+            }
         }
         return button;
     }
@@ -1408,6 +1482,7 @@ class GamepadOverlay {
                 includeBorder: true,
                 semanticClasses: [`side-${sideName}`, "role-analog-stick"],
                 semanticAttributes: {"data-side": sideName, "data-role": "analog-stick"},
+                pressMode: "analog",
             });
             analogStickRing = new GamepadEntity({
                 context: this.#context,

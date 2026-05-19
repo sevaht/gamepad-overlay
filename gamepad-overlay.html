@@ -10,8 +10,7 @@
 
             #overlayRoot {
                 display: block;
-                --btn-idle-rgb: 44, 47, 51;
-                --btn-idle-alpha: 0.7;
+                --btn-idle: rgba(44, 47, 51, 0.7);
                 --btn-pressed: #3f8cff;
                 --overlay-border-inner-size: 4;
                 --overlay-border-outer-size: 4;
@@ -34,7 +33,7 @@
             }
 
             .gamepad-button {
-                fill: rgba(var(--btn-idle-rgb, 44, 47, 51), var(--btn-idle-alpha, 0.7));
+                fill: var(--btn-idle, rgba(44, 47, 51, 0.7));
                 stroke: black;
                 stroke-width: 0;
             }
@@ -44,50 +43,20 @@
                 stroke: none;
             }
 
+            .gamepad-button.is-pressed {
+                fill: var(--btn-pressed, #c00);
+            }
+
             #overlayRoot [data-role="analog-area"] {
-                --btn-idle-rgb: 0, 0, 0;
-                --btn-idle-alpha: 1;
+                --btn-idle: rgba(0, 0, 0, 1);
             }
 
-            #overlayRoot.theme-xbox [data-side="right"][data-role="up"] {
-                --btn-idle-rgb: 95, 95, 31;
-                --btn-pressed: #ffff33;
-            }
-            #overlayRoot.theme-xbox [data-side="right"][data-role="right"] {
-                --btn-idle-rgb: 95, 31, 31;
-                --btn-pressed: #ff3333;
-            }
-            #overlayRoot.theme-xbox [data-side="right"][data-role="left"] {
-                --btn-idle-rgb: 31, 31, 95;
-                --btn-pressed: #3377ff;
-            }
-            #overlayRoot.theme-xbox [data-side="right"][data-role="down"] {
-                --btn-idle-rgb: 31, 79, 32;
-                --btn-pressed: #3fcf3f;
-            }
-
-            #overlayRoot.theme-snes [data-side="right"][data-role="up"] {
-                --btn-idle-rgb: 32, 32, 79;
-                --btn-pressed: #5555ff;
-            }
-            #overlayRoot.theme-snes [data-side="right"][data-role="right"] {
-                --btn-idle-rgb: 79, 32, 32;
-                --btn-pressed: #ff5555;
-            }
-            #overlayRoot.theme-snes [data-side="right"][data-role="down"] {
-                --btn-idle-rgb: 79, 79, 32;
-                --btn-pressed: #ffff55;
-            }
-            #overlayRoot.theme-snes [data-side="right"][data-role="left"] {
-                --btn-idle-rgb: 32, 79, 32;
-                --btn-pressed: #55ff55;
-            }
         </style>
         <script src="svg-shapes.js"></script>
         <script src="gamepad-input-sources.js"></script>
     </head>
     <body>
-        <svg id="overlayRoot" class="theme-xbox"></svg>
+        <svg id="overlayRoot"></svg>
         <script defer>
             const QUERY = new URLSearchParams(window.location.search);
             const INPUT_SOURCE = (() => {
@@ -99,6 +68,27 @@
             })();
 
             const context = new SvgContext(document.getElementById("overlayRoot"));
+            const THEME_PRESETS = {
+                xbox: {
+                    global: {},
+                    "right:up": {"--btn-idle": "rgba(95, 95, 31, 0.7)", "--btn-pressed": "#ffff33"},
+                    "right:right": {"--btn-idle": "rgba(95, 31, 31, 0.7)", "--btn-pressed": "#ff3333"},
+                    "right:left": {"--btn-idle": "rgba(31, 31, 95, 0.7)", "--btn-pressed": "#3377ff"},
+                    "right:down": {"--btn-idle": "rgba(31, 79, 32, 0.7)", "--btn-pressed": "#3fcf3f"},
+                },
+                snes: {
+                    global: {},
+                    "right:up": {"--btn-idle": "rgba(32, 32, 79, 0.7)", "--btn-pressed": "#5555ff"},
+                    "right:right": {"--btn-idle": "rgba(79, 32, 32, 0.7)", "--btn-pressed": "#ff5555"},
+                    "right:down": {"--btn-idle": "rgba(79, 79, 32, 0.7)", "--btn-pressed": "#ffff55"},
+                    "right:left": {"--btn-idle": "rgba(32, 79, 32, 0.7)", "--btn-pressed": "#55ff55"},
+                },
+            };
+
+            const theme = (QUERY.get("theme") || "xbox").toLowerCase();
+            const digitalRenderMode = QUERY.get("digitalRenderMode") === "class" ? "class-toggle" : "fill";
+            const prewarmPressVisuals = QUERY.get("prewarmPressVisuals") !== "0";
+            const themeVariables = THEME_PRESETS[theme] || THEME_PRESETS.xbox;
             const overlay = new GamepadOverlay({
                 context,
                 buttonLength: 132,
@@ -107,6 +97,9 @@
                 gap: 1,
                 betweenHalvesGap: 0,
                 digitalThreshold: 0.55,
+                digitalRenderMode,
+                prewarmPressVisuals,
+                themeVariables,
                 hasAnalogStick: true,
                 /*leftSide: {cornerButtons: {leftTrigger: {pressMode: "digital"}}},
                 rightSide: {cornerButtons: {rightTrigger: {pressMode: "digital"}}},*/

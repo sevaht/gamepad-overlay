@@ -340,6 +340,7 @@ class GamepadOverlayRenderer {
     #queuedState;
     #renderScheduled;
     #deadzone;
+    #digitalBindings;
 
     constructor({overlay, sourceStatus, deadzoneMode = "none", fixedDeadzone = 0.0}) {
         this.#overlay = overlay;
@@ -354,22 +355,22 @@ class GamepadOverlayRenderer {
         this.leftTrigger = overlay.entities.left.entities.leftTrigger;
         this.rightTrigger = overlay.entities.right.entities.rightTrigger;
 
-        this.digitalInputMap = {
-            A: overlay.entities.right.entities.downButton,
-            B: overlay.entities.right.entities.rightButton,
-            X: overlay.entities.right.entities.leftButton,
-            Y: overlay.entities.right.entities.upButton,
-            SELECT: overlay.entities.left.entities.select,
-            START: overlay.entities.right.entities.start,
-            LB: overlay.entities.left.entities.leftBumper,
-            RB: overlay.entities.right.entities.rightBumper,
-            LS: this.leftStick,
-            RS: this.rightStick,
-            DX_NEG: overlay.entities.left.entities.leftButton,
-            DX_POS: overlay.entities.left.entities.rightButton,
-            DY_NEG: overlay.entities.left.entities.upButton,
-            DY_POS: overlay.entities.left.entities.downButton,
-        };
+        this.#digitalBindings = [
+            [overlay.entities.right.entities.downButton, (state) => state.A],
+            [overlay.entities.right.entities.rightButton, (state) => state.B],
+            [overlay.entities.right.entities.leftButton, (state) => state.X],
+            [overlay.entities.right.entities.upButton, (state) => state.Y],
+            [overlay.entities.left.entities.select, (state) => state.SELECT],
+            [overlay.entities.right.entities.start, (state) => state.START],
+            [overlay.entities.left.entities.leftBumper, (state) => state.LB],
+            [overlay.entities.right.entities.rightBumper, (state) => state.RB],
+            [this.leftStick, (state) => state.LS],
+            [this.rightStick, (state) => state.RS],
+            [overlay.entities.left.entities.leftButton, (state) => (state.DX < 0 ? 1 : 0)],
+            [overlay.entities.left.entities.rightButton, (state) => (state.DX > 0 ? 1 : 0)],
+            [overlay.entities.left.entities.upButton, (state) => (state.DY < 0 ? 1 : 0)],
+            [overlay.entities.left.entities.downButton, (state) => (state.DY > 0 ? 1 : 0)],
+        ];
 
         this.leftStick.setPressFillDirection(PressFillDirection.OUTWARD).enablePressVisual();
         this.rightStick.setPressFillDirection(PressFillDirection.OUTWARD).enablePressVisual();
@@ -402,6 +403,12 @@ class GamepadOverlayRenderer {
         this.#lastAppliedState = state;
         this.#sourceStatus.lastUpdateMs = performance.now();
 
+        this.#applyStickPositions(state);
+        this.#applyAnalogPressAmounts(state);
+        this.#applyDigitalInputs(state);
+    }
+
+    #applyStickPositions(state) {
         this.leftStick.setTranslation(clampNormalizedOffsetToEllipse({
             offset: {x: state.LX, y: state.LY},
             halfSize: this.#overlay.leftAnalogClampHalfSize,
@@ -410,24 +417,17 @@ class GamepadOverlayRenderer {
             offset: {x: state.RX, y: state.RY},
             halfSize: this.#overlay.rightAnalogClampHalfSize,
         }));
+    }
 
+    #applyAnalogPressAmounts(state) {
         this.leftTrigger.setInputAmount(state.LT);
         this.rightTrigger.setInputAmount(state.RT);
-        this.leftStick.setInputAmount(state.LS);
-        this.rightStick.setInputAmount(state.RS);
+    }
 
-        this.digitalInputMap.A?.setInputAmount(state.A);
-        this.digitalInputMap.B?.setInputAmount(state.B);
-        this.digitalInputMap.X?.setInputAmount(state.X);
-        this.digitalInputMap.Y?.setInputAmount(state.Y);
-        this.digitalInputMap.SELECT?.setInputAmount(state.SELECT);
-        this.digitalInputMap.START?.setInputAmount(state.START);
-        this.digitalInputMap.LB?.setInputAmount(state.LB);
-        this.digitalInputMap.RB?.setInputAmount(state.RB);
-        this.digitalInputMap.DX_NEG?.setInputAmount(state.DX < 0 ? 1 : 0);
-        this.digitalInputMap.DX_POS?.setInputAmount(state.DX > 0 ? 1 : 0);
-        this.digitalInputMap.DY_NEG?.setInputAmount(state.DY < 0 ? 1 : 0);
-        this.digitalInputMap.DY_POS?.setInputAmount(state.DY > 0 ? 1 : 0);
+    #applyDigitalInputs(state) {
+        for (const [entity, getValue] of this.#digitalBindings) {
+            entity?.setInputAmount(getValue(state));
+        }
     }
 
     #hasMeaningfulChange(nextState) {
