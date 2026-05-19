@@ -198,6 +198,21 @@ class WebGLGamepadOverlayRenderer {
             });
             return [topLeft, topRight, pR, pL];
         };
+        const triFillSliceFromPoints = (points, amount) => {
+            const t = Math.max(0, Math.min(1, amount));
+            const bottom = points[0];
+            const topLeft = points[1];
+            const topRight = points[2];
+            const pL = new Vector2({
+                x: topLeft.x + (bottom.x - topLeft.x) * t,
+                y: topLeft.y + (bottom.y - topLeft.y) * t,
+            });
+            const pR = new Vector2({
+                x: topRight.x + (bottom.x - topRight.x) * t,
+                y: topRight.y + (bottom.y - topRight.y) * t,
+            });
+            return [topLeft, topRight, pR, pL];
+        };
 
         const drawButton = (button, base, amt) => {
             if (!button) {
@@ -228,12 +243,32 @@ class WebGLGamepadOverlayRenderer {
                 const f = (avg + pixels) / avg;
                 return points.map((p) => new Vector2({x: c.x + (p.x - c.x) * f, y: c.y + (p.y - c.y) * f}));
             };
+            const drawTriangleStroke = (points, strokeColor, strokeWidth) => {
+                const half = strokeWidth * 0.5;
+                for (let i = 0; i < 3; i += 1) {
+                    const p0 = points[i];
+                    const p1 = points[(i + 1) % 3];
+                    const dx = p1.x - p0.x;
+                    const dy = p1.y - p0.y;
+                    const len = Math.max(1e-6, Math.hypot(dx, dy));
+                    const nx = -dy / len;
+                    const ny = dx / len;
+                    const a = new Vector2({x: p0.x + nx * half, y: p0.y + ny * half});
+                    const b = new Vector2({x: p1.x + nx * half, y: p1.y + ny * half});
+                    const c = new Vector2({x: p1.x - nx * half, y: p1.y - ny * half});
+                    const d = new Vector2({x: p0.x - nx * half, y: p0.y - ny * half});
+                    pushPoly([a, b, c, d], strokeColor);
+                }
+                const capSize = Vector2.splat(strokeWidth);
+                for (const point of points) {
+                    pushEllipse(Region.fromCenter({center: point, size: capSize}), strokeColor, 28);
+                }
+            };
             if (button.shape === "triDown") {
                 const baseTri = triDownPoints(button.region);
-                const outerTri = triScaleByPixels(baseTri, borderPx * 1.6);
-                const innerTri = triScaleByPixels(baseTri, borderPx * 0.8);
-                pushPoly(outerTri, this.#theme.borderOuter);
-                pushPoly(innerTri, this.#theme.borderInner);
+                drawTriangleStroke(baseTri, this.#theme.borderOuter, borderPx * 2);
+                drawTriangleStroke(baseTri, this.#theme.borderInner, borderPx);
+                pushPoly(baseTri, this.#theme.borderInner);
                 pushPoly(baseTri, base);
             } else {
                 if (button.shape === "rect" && (button.cornerRadiusPercent || 0) > 0) {
@@ -260,17 +295,7 @@ class WebGLGamepadOverlayRenderer {
             } else if (button.shape === "triDown") {
                 if (button.pressMode === "analog" && amt > 0) {
                     const fillTri = triDownPoints(button.region);
-                    const fillRegion = new Region({
-                        topLeft: new Vector2({
-                            x: Math.min(fillTri[0].x, fillTri[1].x, fillTri[2].x),
-                            y: Math.min(fillTri[0].y, fillTri[1].y, fillTri[2].y),
-                        }),
-                        size: new Vector2({
-                            x: Math.max(fillTri[0].x, fillTri[1].x, fillTri[2].x) - Math.min(fillTri[0].x, fillTri[1].x, fillTri[2].x),
-                            y: Math.max(fillTri[0].y, fillTri[1].y, fillTri[2].y) - Math.min(fillTri[0].y, fillTri[1].y, fillTri[2].y),
-                        }),
-                    });
-                    pushPoly(triFillSlice(fillRegion, amt), this.#theme.pressed);
+                    pushPoly(triFillSliceFromPoints(fillTri, amt), this.#theme.pressed);
                 }
             }
         };
