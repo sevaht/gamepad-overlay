@@ -57,6 +57,12 @@ class WebGLGamepadOverlayRenderer {
                 left: [31 / 255, 31 / 255, 95 / 255, idleAlpha],
                 down: [31 / 255, 79 / 255, 32 / 255, idleAlpha],
             },
+            rightFacePressed: {
+                up: [1, 1, 51 / 255, 1],
+                right: [1, 51 / 255, 51 / 255, 1],
+                left: [51 / 255, 119 / 255, 1, 1],
+                down: [63 / 255, 207 / 255, 63 / 255, 1],
+            },
         };
     }
 
@@ -156,13 +162,14 @@ class WebGLGamepadOverlayRenderer {
                 pushPoly([outer[i], outer[j], inner[j], inner[i]], color);
             }
         };
-        const mix = (base, amt) => {
+        const mix = (base, amt, pressedOverride = null) => {
             const p = Math.max(0, Math.min(1, amt));
+            const pressed = pressedOverride ?? this.#theme.pressed;
             return [
-                base[0] + (this.#theme.pressed[0] - base[0]) * p,
-                base[1] + (this.#theme.pressed[1] - base[1]) * p,
-                base[2] + (this.#theme.pressed[2] - base[2]) * p,
-                base[3] + (this.#theme.pressed[3] - base[3]) * p,
+                base[0] + (pressed[0] - base[0]) * p,
+                base[1] + (pressed[1] - base[1]) * p,
+                base[2] + (pressed[2] - base[2]) * p,
+                base[3] + (pressed[3] - base[3]) * p,
             ];
         };
         const insetRegion = (region, inset) => {
@@ -214,11 +221,11 @@ class WebGLGamepadOverlayRenderer {
             return [topLeft, topRight, pR, pL];
         };
 
-        const drawButton = (button, base, amt) => {
+        const drawButton = (button, base, amt, pressedOverride = null) => {
             if (!button) {
                 return;
             }
-            const color = mix(base, amt);
+            const color = mix(base, amt, pressedOverride);
             const borderPx = Math.max(2.5, this.#model.borderWidth);
 
             const drawShape = (shape, region, fillColor, cornerRadiusPercent = 0) => {
@@ -320,10 +327,10 @@ class WebGLGamepadOverlayRenderer {
         drawButton(model.buttons.left.up, this.#theme.idle, s.DY < 0 ? 1 : 0);
         drawButton(model.buttons.left.down, this.#theme.idle, s.DY > 0 ? 1 : 0);
         drawButton(model.buttons.left.origin, this.#theme.idle, 0);
-        drawButton(model.buttons.right.up, this.#theme.rightFace.up, s.Y);
-        drawButton(model.buttons.right.right, this.#theme.rightFace.right, s.B);
-        drawButton(model.buttons.right.left, this.#theme.rightFace.left, s.X);
-        drawButton(model.buttons.right.down, this.#theme.rightFace.down, s.A);
+        drawButton(model.buttons.right.up, this.#theme.rightFace.up, s.Y, this.#theme.rightFacePressed.up);
+        drawButton(model.buttons.right.right, this.#theme.rightFace.right, s.B, this.#theme.rightFacePressed.right);
+        drawButton(model.buttons.right.left, this.#theme.rightFace.left, s.X, this.#theme.rightFacePressed.left);
+        drawButton(model.buttons.right.down, this.#theme.rightFace.down, s.A, this.#theme.rightFacePressed.down);
         drawButton(model.buttons.left.analogArea, this.#theme.black, 0);
         drawButton(model.buttons.right.analogArea, this.#theme.black, 0);
 
