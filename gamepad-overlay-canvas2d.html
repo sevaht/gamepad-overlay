@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Gamepad Overlay Canvas2D</title>
+        <style>
+            :root {
+                --btn-idle-rgb: 44, 47, 51;
+                --btn-idle-alpha: 0.7;
+            }
+            body {
+                margin: 0;
+                background: transparent;
+            }
+            #overlayCanvas {
+                display: block;
+                background: transparent;
+            }
+        </style>
+        <script src="svg-shapes.js"></script>
+        <script src="gamepad-input-sources.js"></script>
+        <script src="gamepad-overlay-raster-common.js"></script>
+        <script src="gamepad-overlay-canvas2d.js"></script>
+    </head>
+    <body>
+        <canvas id="overlayCanvas"></canvas>
+        <script defer>
+            const QUERY = new URLSearchParams(window.location.search);
+            const INPUT_SOURCE = (() => {
+                const source = (QUERY.get("source") || "websocket").toLowerCase();
+                if (source === "ws") {
+                    return "websocket";
+                }
+                return ["browser", "websocket", "demo"].includes(source) ? source : "browser";
+            })();
+
+            const style = getComputedStyle(document.documentElement);
+            const borderWidth = (Number.parseFloat(style.getPropertyValue("--overlay-border-inner-size")) || 4)
+                + (Number.parseFloat(style.getPropertyValue("--overlay-border-outer-size")) || 4);
+            const model = createRasterOverlayModel({buttonLength: 132, buttonWidth: 132, borderWidth, gap: 1, betweenHalvesGap: 0});
+            const renderer = new Canvas2DGamepadOverlayRenderer({canvas: document.getElementById("overlayCanvas"), model});
+
+            const source = createGamepadSource({
+                mode: INPUT_SOURCE,
+                wsUrl: `ws://${QUERY.get("wsHost") || "localhost"}:8765/gamepad-overlay`,
+                pollMs: Math.max(1, Math.round(1000 / Math.max(1, Number.parseInt(QUERY.get("poll") || "240", 10)))),
+                padIndex: QUERY.get("padIndex") == null ? null : Math.max(0, Number.parseInt(QUERY.get("padIndex"), 10) || 0),
+                padIdContains: (QUERY.get("padIdContains") || "").trim(),
+                padRequireStandard: QUERY.get("padRequireStandard") === "1",
+                listPads: QUERY.get("pads") === "1" || QUERY.get("listPads") === "1",
+                onState: (state) => renderer.applyState(state),
+                onStatus: () => {},
+            });
+            source.start();
+        </script>
+    </body>
+</html>
