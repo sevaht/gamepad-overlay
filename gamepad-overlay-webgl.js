@@ -15,6 +15,9 @@ class WebglBufferStream {
         this.#vertexCount = 0;
     }
 
+    // Uploads interleaved position/color arrays into dedicated buffers.
+    // Call bind() + draw() after upload().
+
     #ensureFloatCapacity(currentData, requiredLength) {
         if (currentData.length >= requiredLength) {
             return currentData;
@@ -74,6 +77,8 @@ class PerfTracker {
         this.#enabled = enabled;
         this.#state = {windowStartTimestamp: performance.now(), frameCount: 0, geometryBuildMilliseconds: 0, uploadAndDrawMilliseconds: 0};
     }
+
+    // Records one rendered frame and emits a periodic 1-second summary when enabled.
     addFrame({geometryBuildMilliseconds, uploadAndDrawMilliseconds, dynamicVertexCount, stickVertexCount}) {
         this.#state.frameCount += 1;
         this.#state.geometryBuildMilliseconds += geometryBuildMilliseconds;
@@ -84,6 +89,156 @@ class PerfTracker {
             console.log(`[webgl perf] fps=${(this.#state.frameCount / elapsedSeconds).toFixed(1)} dynVerts=${dynamicVertexCount} stickVerts=${stickVertexCount} build=${(this.#state.geometryBuildMilliseconds / this.#state.frameCount).toFixed(3)}ms upload+draw=${(this.#state.uploadAndDrawMilliseconds / this.#state.frameCount).toFixed(3)}ms`);
             this.#state = {windowStartTimestamp: nowTimestamp, frameCount: 0, geometryBuildMilliseconds: 0, uploadAndDrawMilliseconds: 0};
         }
+    }
+}
+
+class WebglGeometryBuilder {
+    #circleLookupBySegmentCount;
+
+    constructor(circleLookupBySegmentCount) {
+        this.#circleLookupBySegmentCount = circleLookupBySegmentCount;
+    }
+
+    // Returns cached unit-circle lookup points for a segment count.
+
+    getCircleLookupTable(segmentCount) {
+        let unitCircleLookupTable = this.#circleLookupBySegmentCount.get(segmentCount);
+        if (!unitCircleLookupTable) {
+            unitCircleLookupTable = [];
+            for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex += 1) {
+                const radians = (segmentIndex / segmentCount) * Math.PI * 2;
+                unitCircleLookupTable.push([Math.cos(radians), Math.sin(radians)]);
+            }
+            this.#circleLookupBySegmentCount.set(segmentCount, unitCircleLookupTable);
+        }
+        return unitCircleLookupTable;
+    }
+
+    mixColor(baseColor, inputAmount, pressedColor) {
+        const clampedAmount = Math.max(0, Math.min(1, inputAmount));
+        return [
+            baseColor[0] + (pressedColor[0] - baseColor[0]) * clampedAmount,
+            baseColor[1] + (pressedColor[1] - baseColor[1]) * clampedAmount,
+            baseColor[2] + (pressedColor[2] - baseColor[2]) * clampedAmount,
+            baseColor[3] + (pressedColor[3] - baseColor[3]) * clampedAmount,
+        ];
+    }
+
+    expandRegion(region, amount) {
+        return Region.fromCenter({
+            center: region.center,
+            size: new Vector2({x: region.size.x + amount * 2, y: region.size.y + amount * 2}),
+        });
+    }
+
+    insetRegion(region, inset) {
+        const width = Math.max(2, region.size.x - inset * 2);
+        const height = Math.max(2, region.size.y - inset * 2);
+        return Region.fromCenter({center: region.center, size: new Vector2({x: width, y: height})});
+    }
+
+    pushTri(vertices, colors, ax, ay, bx, by, cx, cy, color) {
+        vertices.push(ax, ay, bx, by, cx, cy);
+        for (let i = 0; i < 3; i += 1) {
+            colors.push(color[0], color[1], color[2], color[3]);
+        }
+    }
+
+    pushPoly(vertices, colors, polygonPoints, color) {
+        for (let pointIndex = 1; pointIndex < polygonPoints.length - 1; pointIndex += 1) {
+            const firstPoint = polygonPoints[0];
+            const secondPoint = polygonPoints[pointIndex];
+            const thirdPoint = polygonPoints[pointIndex + 1];
+            this.pushTri(vertices, colors, firstPoint.x, firstPoint.y, secondPoint.x, secondPoint.y, thirdPoint.x, thirdPoint.y, color);
+        }
+    }
+
+    pushEllipse(vertices, colors, region, color, segmentCount = 36) {
+        const center = region.center;
+        const unitCircleLookupTable = this.getCircleLookupTable(segmentCount);
+        for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex += 1) {
+            const currentUnitPoint = unitCircleLookupTable[segmentIndex];
+            const nextUnitPoint = unitCircleLookupTable[(segmentIndex + 1) % segmentCount];
+            this.pushTri(
+                vertices,
+                colors,
+                center.x,
+                center.y,
+                center.x + currentUnitPoint[0] * region.halfSize.x,
+                center.y + currentUnitPoint[1] * region.halfSize.y,
+                center.x + nextUnitPoint[0] * region.halfSize.x,
+                center.y + nextUnitPoint[1] * region.halfSize.y,
+                color,
+            );
+        }
+    }
+
+    pushRoundedRect(vertices, colors, region, radius, color, segmentCount = 6) {
+        const cornerRadius = Math.max(0, Math.min(radius, region.halfSize.x, region.halfSize.y));
+        if (cornerRadius < 0.01) {
+            this.pushPoly(vertices, colors, [region.topLeft, region.topRight, region.bottomRight, region.bottomLeft], color);
+            return;
+        }
+        const polygonPoints = [];
+        const appendArcPoints = (centerX, centerY, startRadians, endRadians) => {
+            for (let segmentIndex = 0; segmentIndex <= segmentCount; segmentIndex += 1) {
+                const radians = startRadians + (endRadians - startRadians) * (segmentIndex / segmentCount);
+                polygonPoints.push(new Vector2({x: centerX + Math.cos(radians) * cornerRadius, y: centerY + Math.sin(radians) * cornerRadius}));
+            }
+        };
+        appendArcPoints(region.topRight.x - cornerRadius, region.topRight.y + cornerRadius, -Math.PI / 2, 0);
+        appendArcPoints(region.bottomRight.x - cornerRadius, region.bottomRight.y - cornerRadius, 0, Math.PI / 2);
+        appendArcPoints(region.bottomLeft.x + cornerRadius, region.bottomLeft.y - cornerRadius, Math.PI / 2, Math.PI);
+        appendArcPoints(region.topLeft.x + cornerRadius, region.topLeft.y + cornerRadius, Math.PI, Math.PI * 1.5);
+        this.pushPoly(vertices, colors, polygonPoints, color);
+    }
+
+    roundedRectLoop(region, radius, segmentCount = 6) {
+        const cornerRadius = Math.max(0, Math.min(radius, region.halfSize.x, region.halfSize.y));
+        if (cornerRadius < 0.01) {
+            return [region.topLeft, region.topRight, region.bottomRight, region.bottomLeft];
+        }
+        const polygonPoints = [];
+        const appendArcPoints = (centerX, centerY, startRadians, endRadians) => {
+            for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex += 1) {
+                const radians = startRadians + (endRadians - startRadians) * (segmentIndex / segmentCount);
+                polygonPoints.push(new Vector2({x: centerX + Math.cos(radians) * cornerRadius, y: centerY + Math.sin(radians) * cornerRadius}));
+            }
+        };
+        appendArcPoints(region.topRight.x - cornerRadius, region.topRight.y + cornerRadius, -Math.PI / 2, 0);
+        appendArcPoints(region.bottomRight.x - cornerRadius, region.bottomRight.y - cornerRadius, 0, Math.PI / 2);
+        appendArcPoints(region.bottomLeft.x + cornerRadius, region.bottomLeft.y - cornerRadius, Math.PI / 2, Math.PI);
+        appendArcPoints(region.topLeft.x + cornerRadius, region.topLeft.y + cornerRadius, Math.PI, Math.PI * 1.5);
+        return polygonPoints;
+    }
+
+    pushRing(vertices, colors, outer, inner, color) {
+        const pointCount = Math.min(outer.length, inner.length);
+        for (let pointIndex = 0; pointIndex < pointCount; pointIndex += 1) {
+            const nextPointIndex = (pointIndex + 1) % pointCount;
+            this.pushPoly(vertices, colors, [outer[pointIndex], outer[nextPointIndex], inner[nextPointIndex], inner[pointIndex]], color);
+        }
+    }
+
+    drawTriangleStroke(vertices, colors, points, strokeColor, strokeWidth) {
+        const halfStrokeWidth = strokeWidth * 0.5;
+        for (let edgeIndex = 0; edgeIndex < 3; edgeIndex += 1) {
+            const startPoint = points[edgeIndex];
+            const endPoint = points[(edgeIndex + 1) % 3];
+            const deltaX = endPoint.x - startPoint.x;
+            const deltaY = endPoint.y - startPoint.y;
+            const edgeLength = Math.max(1e-6, Math.hypot(deltaX, deltaY));
+            const normalX = -deltaY / edgeLength;
+            const normalY = deltaX / edgeLength;
+            const offsetStartPositive = new Vector2({x: startPoint.x + normalX * halfStrokeWidth, y: startPoint.y + normalY * halfStrokeWidth});
+            const offsetEndPositive = new Vector2({x: endPoint.x + normalX * halfStrokeWidth, y: endPoint.y + normalY * halfStrokeWidth});
+            const offsetEndNegative = new Vector2({x: endPoint.x - normalX * halfStrokeWidth, y: endPoint.y - normalY * halfStrokeWidth});
+            const offsetStartNegative = new Vector2({x: startPoint.x - normalX * halfStrokeWidth, y: startPoint.y - normalY * halfStrokeWidth});
+            this.pushPoly(vertices, colors, [offsetStartPositive, offsetEndPositive, offsetEndNegative, offsetStartNegative], strokeColor);
+        }
+        this.pushEllipse(vertices, colors, Region.fromCenter({center: points[0], size: Vector2.splat(strokeWidth)}), strokeColor, 28);
+        this.pushEllipse(vertices, colors, Region.fromCenter({center: points[1], size: Vector2.splat(strokeWidth)}), strokeColor, 28);
+        this.pushEllipse(vertices, colors, Region.fromCenter({center: points[2], size: Vector2.splat(strokeWidth)}), strokeColor, 28);
     }
 }
 
@@ -119,147 +274,9 @@ class WebGLGamepadOverlayRenderer {
     #staticColors;
     #staticVertexCount;
     #perf;
+    #geometryBuilder;
 
-    #getCircleLut(segmentCount) {
-        let unitCircleLookupTable = this.#circleLut.get(segmentCount);
-        if (!unitCircleLookupTable) {
-            unitCircleLookupTable = [];
-            for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex += 1) {
-                const radians = (segmentIndex / segmentCount) * Math.PI * 2;
-                unitCircleLookupTable.push([Math.cos(radians), Math.sin(radians)]);
-            }
-            this.#circleLut.set(segmentCount, unitCircleLookupTable);
-        }
-        return unitCircleLookupTable;
-    }
-
-    #pushTri(vertices, colors, ax, ay, bx, by, cx, cy, color) {
-        vertices.push(ax, ay, bx, by, cx, cy);
-        for (let i = 0; i < 3; i += 1) {
-            colors.push(color[0], color[1], color[2], color[3]);
-        }
-    }
-
-    #pushPoly(vertices, colors, polygonPoints, color) {
-        for (let pointIndex = 1; pointIndex < polygonPoints.length - 1; pointIndex += 1) {
-            const firstPoint = polygonPoints[0];
-            const secondPoint = polygonPoints[pointIndex];
-            const thirdPoint = polygonPoints[pointIndex + 1];
-            this.#pushTri(vertices, colors, firstPoint.x, firstPoint.y, secondPoint.x, secondPoint.y, thirdPoint.x, thirdPoint.y, color);
-        }
-    }
-
-    #pushEllipse(vertices, colors, region, color, segmentCount = 36) {
-        const center = region.center;
-        const unitCircleLookupTable = this.#getCircleLut(segmentCount);
-        for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex += 1) {
-            const currentUnitPoint = unitCircleLookupTable[segmentIndex];
-            const nextUnitPoint = unitCircleLookupTable[(segmentIndex + 1) % segmentCount];
-            this.#pushTri(
-                vertices,
-                colors,
-                center.x,
-                center.y,
-                center.x + currentUnitPoint[0] * region.halfSize.x,
-                center.y + currentUnitPoint[1] * region.halfSize.y,
-                center.x + nextUnitPoint[0] * region.halfSize.x,
-                center.y + nextUnitPoint[1] * region.halfSize.y,
-                color,
-            );
-        }
-    }
-
-    #pushRoundedRect(vertices, colors, region, radius, color, segmentCount = 6) {
-        const cornerRadius = Math.max(0, Math.min(radius, region.halfSize.x, region.halfSize.y));
-        if (cornerRadius < 0.01) {
-            this.#pushPoly(vertices, colors, [region.topLeft, region.topRight, region.bottomRight, region.bottomLeft], color);
-            return;
-        }
-        const polygonPoints = [];
-        const appendArcPoints = (centerX, centerY, startRadians, endRadians) => {
-            for (let segmentIndex = 0; segmentIndex <= segmentCount; segmentIndex += 1) {
-                const radians = startRadians + (endRadians - startRadians) * (segmentIndex / segmentCount);
-                polygonPoints.push(new Vector2({x: centerX + Math.cos(radians) * cornerRadius, y: centerY + Math.sin(radians) * cornerRadius}));
-            }
-        };
-        appendArcPoints(region.topRight.x - cornerRadius, region.topRight.y + cornerRadius, -Math.PI / 2, 0);
-        appendArcPoints(region.bottomRight.x - cornerRadius, region.bottomRight.y - cornerRadius, 0, Math.PI / 2);
-        appendArcPoints(region.bottomLeft.x + cornerRadius, region.bottomLeft.y - cornerRadius, Math.PI / 2, Math.PI);
-        appendArcPoints(region.topLeft.x + cornerRadius, region.topLeft.y + cornerRadius, Math.PI, Math.PI * 1.5);
-        this.#pushPoly(vertices, colors, polygonPoints, color);
-    }
-
-    #roundedRectLoop(region, radius, segments = 6) {
-        const r = Math.max(0, Math.min(radius, region.halfSize.x, region.halfSize.y));
-        if (r < 0.01) {
-            return [region.topLeft, region.topRight, region.bottomRight, region.bottomLeft];
-        }
-        const pts = [];
-        const arc = (cx, cy, a0, a1) => {
-            for (let i = 0; i < segments; i += 1) {
-                const a = a0 + (a1 - a0) * (i / segments);
-                pts.push(new Vector2({x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r}));
-            }
-        };
-        arc(region.topRight.x - r, region.topRight.y + r, -Math.PI / 2, 0);
-        arc(region.bottomRight.x - r, region.bottomRight.y - r, 0, Math.PI / 2);
-        arc(region.bottomLeft.x + r, region.bottomLeft.y - r, Math.PI / 2, Math.PI);
-        arc(region.topLeft.x + r, region.topLeft.y + r, Math.PI, Math.PI * 1.5);
-        return pts;
-    }
-
-    #pushRing(vertices, colors, outer, inner, color) {
-        const n = Math.min(outer.length, inner.length);
-        for (let i = 0; i < n; i += 1) {
-            const j = (i + 1) % n;
-            this.#pushPoly(vertices, colors, [outer[i], outer[j], inner[j], inner[i]], color);
-        }
-    }
-
-    #drawTriangleStroke(vertices, colors, points, strokeColor, strokeWidth) {
-        const half = strokeWidth * 0.5;
-        for (let i = 0; i < 3; i += 1) {
-            const p0 = points[i];
-            const p1 = points[(i + 1) % 3];
-            const dx = p1.x - p0.x;
-            const dy = p1.y - p0.y;
-            const len = Math.max(1e-6, Math.hypot(dx, dy));
-            const nx = -dy / len;
-            const ny = dx / len;
-            const a = new Vector2({x: p0.x + nx * half, y: p0.y + ny * half});
-            const b = new Vector2({x: p1.x + nx * half, y: p1.y + ny * half});
-            const c = new Vector2({x: p1.x - nx * half, y: p1.y - ny * half});
-            const d = new Vector2({x: p0.x - nx * half, y: p0.y - ny * half});
-            this.#pushPoly(vertices, colors, [a, b, c, d], strokeColor);
-        }
-        this.#pushEllipse(vertices, colors, Region.fromCenter({center: points[0], size: Vector2.splat(strokeWidth)}), strokeColor, 28);
-        this.#pushEllipse(vertices, colors, Region.fromCenter({center: points[1], size: Vector2.splat(strokeWidth)}), strokeColor, 28);
-        this.#pushEllipse(vertices, colors, Region.fromCenter({center: points[2], size: Vector2.splat(strokeWidth)}), strokeColor, 28);
-    }
-
-    #mix(base, amt, pressedOverride = null) {
-        const p = Math.max(0, Math.min(1, amt));
-        const pressed = pressedOverride ?? this.#theme.pressed;
-        return [
-            base[0] + (pressed[0] - base[0]) * p,
-            base[1] + (pressed[1] - base[1]) * p,
-            base[2] + (pressed[2] - base[2]) * p,
-            base[3] + (pressed[3] - base[3]) * p,
-        ];
-    }
-
-    #expandRegion(region, amount) {
-        return Region.fromCenter({
-            center: region.center,
-            size: new Vector2({x: region.size.x + amount * 2, y: region.size.y + amount * 2}),
-        });
-    }
-
-    #insetRegion(region, inset) {
-        const w = Math.max(2, region.size.x - inset * 2);
-        const h = Math.max(2, region.size.y - inset * 2);
-        return Region.fromCenter({center: region.center, size: new Vector2({x: w, y: h})});
-    }
+    // ---------- Geometry and color helpers ----------
 
     constructor({canvas, model, maxFps = 0, debugPerf = false}) {
         this.#canvas = canvas;
@@ -281,6 +298,7 @@ class WebGLGamepadOverlayRenderer {
         const parsedMaxFps = Number(maxFps) || 0;
         this.#minFrameMs = parsedMaxFps > 0 ? (1000 / Math.max(1, parsedMaxFps)) : 0;
         this.#circleLut = new Map();
+        this.#geometryBuilder = new WebglGeometryBuilder(this.#circleLut);
         this.#vertices = [];
         this.#colors = [];
         this.#stickVerts = [];
@@ -292,6 +310,8 @@ class WebGLGamepadOverlayRenderer {
         this.#initProgram();
         this.resize();
     }
+
+    // ---------- Lifecycle and frame scheduling ----------
 
     resize() {
         this.#canvas.width = Math.ceil(this.#model.width);
@@ -384,6 +404,8 @@ class WebGLGamepadOverlayRenderer {
         };
     }
 
+    // ---------- GPU pipeline setup ----------
+
     #initProgram() {
         const gl = this.#gl;
         const vert = gl.createShader(gl.VERTEX_SHADER);
@@ -412,46 +434,44 @@ class WebGLGamepadOverlayRenderer {
         const dynamicVertexColors = this.#colors;
         dynamicVertexPositions.length = 0;
         dynamicVertexColors.length = 0;
-        // Keep existing behavior by delegating to previous draw-time logic inline replacement
-        // through local composition kept minimal for refactor safety.
         const drawButton = (buttonSpec, baseColor, inputAmount, pressedColorOverride = null) => {
             if (!buttonSpec) { return; }
-            const blendedFillColor = this.#mix(baseColor, inputAmount, pressedColorOverride);
+            const blendedFillColor = this.#geometryBuilder.mixColor(baseColor, inputAmount, pressedColorOverride ?? this.#theme.pressed);
             const borderThickness = Math.max(2.5, this.#model.borderWidth);
             const drawButtonShape = (shapeType, buttonRegion, fillColor, cornerRadiusPercent = 0) => {
                 if (shapeType === "ellipse") {
-                    this.#pushEllipse(dynamicVertexPositions, dynamicVertexColors, buttonRegion, fillColor);
+                    this.#geometryBuilder.pushEllipse(dynamicVertexPositions, dynamicVertexColors, buttonRegion, fillColor);
                 } else if (shapeType === "triDown") {
-                    this.#pushPoly(dynamicVertexPositions, dynamicVertexColors, [buttonRegion.bottomCenter, buttonRegion.topLeft, buttonRegion.topRight], fillColor);
+                    this.#geometryBuilder.pushPoly(dynamicVertexPositions, dynamicVertexColors, [buttonRegion.bottomCenter, buttonRegion.topLeft, buttonRegion.topRight], fillColor);
                 } else {
                     const cornerRadius = Math.max(0, Math.min(buttonRegion.halfSize.x, buttonRegion.halfSize.y) * cornerRadiusPercent);
-                    this.#pushRoundedRect(dynamicVertexPositions, dynamicVertexColors, buttonRegion, cornerRadius, fillColor);
+                    this.#geometryBuilder.pushRoundedRect(dynamicVertexPositions, dynamicVertexColors, buttonRegion, cornerRadius, fillColor);
                 }
             };
             if (buttonSpec.shape === "triDown") {
                 const trianglePoints = [buttonSpec.region.bottomCenter, buttonSpec.region.topLeft, buttonSpec.region.topRight];
-                this.#drawTriangleStroke(dynamicVertexPositions, dynamicVertexColors, trianglePoints, this.#theme.borderOuter, borderThickness * 2);
-                this.#drawTriangleStroke(dynamicVertexPositions, dynamicVertexColors, trianglePoints, this.#theme.borderInner, borderThickness);
+                this.#geometryBuilder.drawTriangleStroke(dynamicVertexPositions, dynamicVertexColors, trianglePoints, this.#theme.borderOuter, borderThickness * 2);
+                this.#geometryBuilder.drawTriangleStroke(dynamicVertexPositions, dynamicVertexColors, trianglePoints, this.#theme.borderInner, borderThickness);
                 drawButtonShape("triDown", buttonSpec.region, this.#theme.borderInner);
                 drawButtonShape("triDown", buttonSpec.region, baseColor);
                 if (buttonSpec.pressMode === "analog" && inputAmount > 0) {
                     const clampedAmount = Math.max(0, Math.min(1, inputAmount));
                     const leftEdgePoint = new Vector2({x: trianglePoints[1].x + (trianglePoints[0].x - trianglePoints[1].x) * clampedAmount, y: trianglePoints[1].y + (trianglePoints[0].y - trianglePoints[1].y) * clampedAmount});
                     const rightEdgePoint = new Vector2({x: trianglePoints[2].x + (trianglePoints[0].x - trianglePoints[2].x) * clampedAmount, y: trianglePoints[2].y + (trianglePoints[0].y - trianglePoints[2].y) * clampedAmount});
-                    this.#pushPoly(dynamicVertexPositions, dynamicVertexColors, [trianglePoints[1], trianglePoints[2], rightEdgePoint, leftEdgePoint], this.#theme.pressed);
+                    this.#geometryBuilder.pushPoly(dynamicVertexPositions, dynamicVertexColors, [trianglePoints[1], trianglePoints[2], rightEdgePoint, leftEdgePoint], this.#theme.pressed);
                 }
             } else if (buttonSpec.shape === "rect" && (buttonSpec.cornerRadiusPercent || 0) > 0) {
-                drawButtonShape(buttonSpec.shape, this.#expandRegion(buttonSpec.region, borderThickness * 0.5), this.#theme.borderInner, buttonSpec.cornerRadiusPercent);
+                drawButtonShape(buttonSpec.shape, this.#geometryBuilder.expandRegion(buttonSpec.region, borderThickness * 0.5), this.#theme.borderInner, buttonSpec.cornerRadiusPercent);
                 drawButtonShape(buttonSpec.shape, buttonSpec.region, blendedFillColor, buttonSpec.cornerRadiusPercent);
                 const cornerRadius = Math.min(buttonSpec.region.halfSize.x, buttonSpec.region.halfSize.y) * buttonSpec.cornerRadiusPercent;
-                const baseLoop = this.#roundedRectLoop(buttonSpec.region, cornerRadius, 8);
-                const blackBorderLoop = this.#roundedRectLoop(this.#expandRegion(buttonSpec.region, borderThickness * 0.5), cornerRadius + borderThickness * 0.5, 8);
-                const whiteBorderLoop = this.#roundedRectLoop(this.#expandRegion(buttonSpec.region, borderThickness), cornerRadius + borderThickness, 8);
-                this.#pushRing(dynamicVertexPositions, dynamicVertexColors, whiteBorderLoop, blackBorderLoop, this.#theme.borderOuter);
-                this.#pushRing(dynamicVertexPositions, dynamicVertexColors, blackBorderLoop, baseLoop, this.#theme.borderInner);
+                const baseLoop = this.#geometryBuilder.roundedRectLoop(buttonSpec.region, cornerRadius, 8);
+                const blackBorderLoop = this.#geometryBuilder.roundedRectLoop(this.#geometryBuilder.expandRegion(buttonSpec.region, borderThickness * 0.5), cornerRadius + borderThickness * 0.5, 8);
+                const whiteBorderLoop = this.#geometryBuilder.roundedRectLoop(this.#geometryBuilder.expandRegion(buttonSpec.region, borderThickness), cornerRadius + borderThickness, 8);
+                this.#geometryBuilder.pushRing(dynamicVertexPositions, dynamicVertexColors, whiteBorderLoop, blackBorderLoop, this.#theme.borderOuter);
+                this.#geometryBuilder.pushRing(dynamicVertexPositions, dynamicVertexColors, blackBorderLoop, baseLoop, this.#theme.borderInner);
             } else {
-                drawButtonShape(buttonSpec.shape, this.#expandRegion(buttonSpec.region, borderThickness), this.#theme.borderOuter, buttonSpec.cornerRadiusPercent);
-                drawButtonShape(buttonSpec.shape, this.#expandRegion(buttonSpec.region, borderThickness * 0.5), this.#theme.borderInner, buttonSpec.cornerRadiusPercent);
+                drawButtonShape(buttonSpec.shape, this.#geometryBuilder.expandRegion(buttonSpec.region, borderThickness), this.#theme.borderOuter, buttonSpec.cornerRadiusPercent);
+                drawButtonShape(buttonSpec.shape, this.#geometryBuilder.expandRegion(buttonSpec.region, borderThickness * 0.5), this.#theme.borderInner, buttonSpec.cornerRadiusPercent);
                 drawButtonShape(buttonSpec.shape, buttonSpec.region, blendedFillColor, buttonSpec.cornerRadiusPercent);
             }
         };
@@ -475,6 +495,8 @@ class WebGLGamepadOverlayRenderer {
         drawButton(overlayModel.buttons.right.analogArea, this.#theme.black, 0);
     }
 
+    // ---------- Dynamic geometry builders ----------
+
     #buildSticks(state) {
         const overlayModel = this.#model;
         const stickVertexPositions = this.#stickVerts;
@@ -482,7 +504,7 @@ class WebGLGamepadOverlayRenderer {
         stickVertexPositions.length = 0;
         stickVertexColors.length = 0;
         const pushStick = (stickRegion, fillColor) => {
-            const unitCircleLookupTable = this.#getCircleLut(36);
+            const unitCircleLookupTable = this.#geometryBuilder.getCircleLookupTable(36);
             for (let segmentIndex = 0; segmentIndex < 36; segmentIndex += 1) {
                 const currentUnitPoint = unitCircleLookupTable[segmentIndex];
                 const nextUnitPoint = unitCircleLookupTable[(segmentIndex + 1) % 36];
@@ -499,27 +521,29 @@ class WebGLGamepadOverlayRenderer {
         const rightStickRegion = overlayModel.buttons.right.analogStick.region.clone().update({topLeft: overlayModel.buttons.right.analogStick.region.topLeft.clone().add(rightStickOffset)});
         const leftRingRegion = overlayModel.buttons.left.analogStickRing.region.clone().update({topLeft: overlayModel.buttons.left.analogStickRing.region.topLeft.clone().add(leftStickOffset)});
         const rightRingRegion = overlayModel.buttons.right.analogStickRing.region.clone().update({topLeft: overlayModel.buttons.right.analogStickRing.region.topLeft.clone().add(rightStickOffset)});
-        const leftStickFillColor = this.#mix(this.#theme.idle, state.LS);
-        const rightStickFillColor = this.#mix(this.#theme.idle, state.RS);
+        const leftStickFillColor = this.#geometryBuilder.mixColor(this.#theme.idle, state.LS, this.#theme.pressed);
+        const rightStickFillColor = this.#geometryBuilder.mixColor(this.#theme.idle, state.RS, this.#theme.pressed);
         const drawRing = (ringRegion, ringFillColor) => {
-            const whiteBorderOuterRegion = this.#expandRegion(ringRegion, borderThickness);
-            const whiteBorderInnerRegion = this.#insetRegion(whiteBorderOuterRegion, borderThickness * 0.5);
+            const whiteBorderOuterRegion = this.#geometryBuilder.expandRegion(ringRegion, borderThickness);
+            const whiteBorderInnerRegion = this.#geometryBuilder.insetRegion(whiteBorderOuterRegion, borderThickness * 0.5);
             const blackBorderOuterRegion = whiteBorderInnerRegion;
-            const blackBorderInnerRegion = this.#insetRegion(blackBorderOuterRegion, borderThickness * 0.5);
+            const blackBorderInnerRegion = this.#geometryBuilder.insetRegion(blackBorderOuterRegion, borderThickness * 0.5);
             pushStick(whiteBorderOuterRegion, this.#theme.borderOuter);
             pushStick(whiteBorderInnerRegion, ringFillColor);
             pushStick(blackBorderOuterRegion, this.#theme.borderInner);
             pushStick(blackBorderInnerRegion, ringFillColor);
         };
-        pushStick(this.#expandRegion(leftStickRegion, borderThickness), this.#theme.borderOuter);
-        pushStick(this.#expandRegion(leftStickRegion, borderThickness * 0.5), this.#theme.borderInner);
+        pushStick(this.#geometryBuilder.expandRegion(leftStickRegion, borderThickness), this.#theme.borderOuter);
+        pushStick(this.#geometryBuilder.expandRegion(leftStickRegion, borderThickness * 0.5), this.#theme.borderInner);
         pushStick(leftStickRegion, leftStickFillColor);
         drawRing(leftRingRegion, leftStickFillColor);
-        pushStick(this.#expandRegion(rightStickRegion, borderThickness), this.#theme.borderOuter);
-        pushStick(this.#expandRegion(rightStickRegion, borderThickness * 0.5), this.#theme.borderInner);
+        pushStick(this.#geometryBuilder.expandRegion(rightStickRegion, borderThickness), this.#theme.borderOuter);
+        pushStick(this.#geometryBuilder.expandRegion(rightStickRegion, borderThickness * 0.5), this.#theme.borderInner);
         pushStick(rightStickRegion, rightStickFillColor);
         drawRing(rightRingRegion, rightStickFillColor);
     }
+
+    // ---------- Rendering ----------
 
     #renderStreams() {
         const gl = this.#gl;
