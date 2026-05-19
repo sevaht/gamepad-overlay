@@ -333,7 +333,31 @@ function createSvgPolygon(points, attributes = {}) {
         ...attributes,
     });
 }
+
+const SHAPE_SNAP_STEP = 0.5;
+
+function snapNumberToStep(value, step = SHAPE_SNAP_STEP) {
+    if (!Number.isFinite(value) || step <= 0) {
+        return value;
+    }
+    return Math.round(value / step) * step;
+}
+
+function snapRegionToStep(region, step = SHAPE_SNAP_STEP) {
+    return new Region({
+        topLeft: new Vector2({
+            x: snapNumberToStep(region.topLeft.x, step),
+            y: snapNumberToStep(region.topLeft.y, step),
+        }),
+        size: new Vector2({
+            x: Math.max(step, snapNumberToStep(region.size.x, step)),
+            y: Math.max(step, snapNumberToStep(region.size.y, step)),
+        }),
+    });
+}
+
 function createSvgShape({region, shapeType, cornerRadiusPercent = Vector2.ZERO}, attributes = {}) {
+    region = snapRegionToStep(region);
     let element;
     switch (shapeType) {
         case ShapeType.RECTANGLE:
@@ -626,8 +650,10 @@ class GamepadEntity {
     #pressedClassName;
     #isPressed;
     #themeVariables;
+    #cutoutMasksBySourceId;
+    #pressVisualSourceId;
 
-    constructor({context, element, parent, layers=[{}], offset=Vector2.ZERO, themeVariables = {}}) {
+    constructor({context, element, parent, layers=[{}], offset=Vector2.ZERO, themeVariables = {}, pressVisualSourceId = null}) {
         // TODO: null validation?
         this.#context = context;
         this.#element = element;
@@ -646,11 +672,15 @@ class GamepadEntity {
         this.#pressedClassName = "is-pressed";
         this.#isPressed = false;
         this.#themeVariables = {...themeVariables};
+        this.#cutoutMasksBySourceId = new Map();
+        this.#pressVisualSourceId = pressVisualSourceId ?? this.element.id;
         this.setTranslation(offset);
         this.#context.addDefinition(this.#element);
+        const connectedSourceIds = new Set([this.element.id]);
 
         for (const layer of layers) {
-            const useElement = createSvgUse(this.element.id);
+            const sourceId = layer.sourceId ?? this.element.id;
+            const useElement = createSvgUse(sourceId);
             const classList = layer.classes == null ? [] : [].concat(layer.classes);
             for (const className of classList) {
                 useElement.classList.add(className);
@@ -662,10 +692,27 @@ class GamepadEntity {
                 setAttributes(useElement, layer.attributes);
             }
             if (layer.cutout) {
-                setMask(useElement, this.mask.id);
+                const cutoutSourceId = layer.cutoutSourceId ?? this.element.id;
+                setMask(useElement, this.getMaskIdForSource(cutoutSourceId));
+                if (!connectedSourceIds.has(cutoutSourceId)) {
+                    const cutoutSourceElement = this.#context.queryChild(cutoutSourceId);
+                    if (cutoutSourceElement != null) {
+                        connectedSourceIds.add(cutoutSourceId);
+                        this.#connectedElements.push(cutoutSourceElement);
+                        this.#connectionTransforms.set(cutoutSourceElement, {extraTransform: null, includeTranslation: true});
+                    }
+                }
             }
             this.#context.addChild(useElement, {parent});
             this.#layerElements.push(useElement);
+            if (!connectedSourceIds.has(sourceId)) {
+                const sourceElement = this.#context.queryChild(sourceId);
+                if (sourceElement != null) {
+                    connectedSourceIds.add(sourceId);
+                    this.#connectedElements.push(sourceElement);
+                    this.#connectionTransforms.set(sourceElement, {extraTransform: null, includeTranslation: true});
+                }
+            }
             if (layer.styleSource) {
                 this.#styleSourceElement = useElement;
                 this.#applyThemeVariablesToElement(this.#styleSourceElement);
@@ -683,7 +730,7 @@ class GamepadEntity {
         this.#resolvePressFillAttributes(0.5, fillDirection);
         this.#pressFillDirection = fillDirection;
 
-        const useElement = createSvgUse(this.element.id);
+        const useElement = createSvgUse(this.#pressVisualSourceId);
         useElement.classList.add(className);
         if (this.#styleSourceElement != null) {
             for (const sourceClass of this.#styleSourceElement.classList) {
@@ -851,10 +898,29 @@ class GamepadEntity {
     get cutoutId() {  // cache?
         return `cutout-${this.element.id}`;
     }
-    createMaskRect() {
-        return createSvgUse(this.element.id, {
+    createMaskRect({sourceId = this.element.id} = {}) {
+        return createSvgUse(sourceId, {
             fill: "black",
         });
+    }
+
+    getMaskIdForSource(sourceId = this.element.id) {
+        const key = String(sourceId);
+        const cached = this.#cutoutMasksBySourceId.get(key);
+        if (cached) {
+            return cached.id;
+        }
+        if (sourceId === this.element.id) {
+            return this.mask.id;
+        }
+        const maskId = `${this.cutoutId}-source-${key.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+        let mask = this.#context.queryChild(maskId);
+        if (mask == null) {
+            mask = this.#context.addMask(maskId);
+            mask.appendChild(this.createMaskRect({sourceId}));
+        }
+        this.#cutoutMasksBySourceId.set(key, mask);
+        return mask.id;
     }
 
     get mask() {
@@ -863,6 +929,7 @@ class GamepadEntity {
             this.#mask = this.#context.addMask(this.cutoutId);
             this.#mask.appendChild(this.createMaskRect());
         }
+        this.#cutoutMasksBySourceId.set(String(this.element.id), this.#mask);
         return this.#mask;
     }
 
@@ -920,6 +987,7 @@ class GamepadOverlay {
     #entities;
     #cornerCompensation;
     #borderWidth;
+    #innerBorderSize;
     #region;
     #digitalThreshold;
     #digitalRenderMode;
@@ -989,6 +1057,11 @@ class GamepadOverlay {
         return inner + outer;
     }
 
+    static #resolveInnerBorderSizeFromCss(context) {
+        const styles = getComputedStyle(context.svg);
+        return Math.max(0, this.#parseCssNumber(styles.getPropertyValue("--overlay-border-inner-size"), 0));
+    }
+
     constructor({
         context,
         buttonLength,
@@ -1010,6 +1083,7 @@ class GamepadOverlay {
         const gapPixels = gap * borderWidth;
         const betweenHalvesGapPixels = betweenHalvesGap * borderWidth;
         this.#borderWidth = borderWidth;
+        this.#innerBorderSize = this.constructor.#resolveInnerBorderSizeFromCss(context);
         this.#digitalThreshold = digitalThreshold;
         this.#digitalRenderMode = digitalRenderMode;
         this.#themeVariables = {...themeVariables};
@@ -1063,6 +1137,16 @@ class GamepadOverlay {
         return this.#rightLayout.origin.halfSize;
     }
 
+    #inflateRegion(region, amount) {
+        if (amount <= 0) {
+            return region;
+        }
+        return Region.fromCenter({
+            center: region.center,
+            size: region.size.clone().add(Vector2.splat(amount * 2)),
+        });
+    }
+
     #createButton({
         group,
         id,
@@ -1079,25 +1163,42 @@ class GamepadOverlay {
         themeVariables = this.#resolveThemeVariables(semanticAttributes),
         prewarmPressVisual = this.#prewarmPressVisuals && pressMode === "digital" && digitalRenderMode === "fill",
     }) {
+        const includeBorderStroke = includeBorder && this.#innerBorderSize > 0;
+        const expandedRegion = includeBorderStroke
+            ? this.#inflateRegion(region, this.#innerBorderSize / 2)
+            : region;
+        const fillCutoutShapeId = includeBorderStroke
+            ? monotonicId(`${id}-cutout-`)
+            : null;
         const layers = [];
         if (includeBorder) {
-            layers.push({classes: "outer-border", cutout: true});
-            layers.push({classes: "inner-border", cutout: true});
+            layers.push({
+                classes: "outer-border",
+                cutout: true,
+                cutoutSourceId: fillCutoutShapeId ?? id,
+            });
         }
         layers.push({
-            classes: [].concat(buttonClasses, semanticClasses),
+            classes: [].concat(buttonClasses, semanticClasses, includeBorderStroke ? ["gamepad-button-bordered"] : []),
             attributes: semanticAttributes,
             styleSource: true,
         });
+        if (fillCutoutShapeId != null) {
+            this.#context.addDefinition(createSvgShape(
+                {region, shapeType, cornerRadiusPercent},
+                {id: fillCutoutShapeId},
+            ));
+        }
         const entity = new GamepadEntity({
             context: this.#context,
             element: createSvgShape(
-                {region, shapeType, cornerRadiusPercent},
+                {region: expandedRegion, shapeType, cornerRadiusPercent},
                 {id},
             ),
             layers,
             parent: group,
             themeVariables,
+            pressVisualSourceId: fillCutoutShapeId ?? id,
         });
         entity.setPressBehavior({
             mode: pressMode,
@@ -1442,26 +1543,18 @@ class GamepadOverlay {
             );
             const analogAreaRegion = Region.fromCenter({
                 center: layout.analogRegion.center,
-                size: layout.analogRegion.size.clone().add(Vector2.TWO),
+                size: layout.analogRegion.size.clone(),
             });
-            const analogAreaLayers = [];
-            if (analogAreaHasOuterBorder) {
-                analogAreaLayers.push({classes: "outer-border", cutout: true});
-                analogAreaLayers.push({classes: "inner-border", cutout: true});
-            }
-            analogAreaLayers.push({
-                classes: ["gamepad-button", `side-${sideName}`, "role-analog-area"],
-                attributes: {"data-side": sideName, "data-role": "analog-area"},
-                styleSource: true,
-            });
-            analogArea = new GamepadEntity({
-                context: this.#context,
-                element: createSvgShape(
-                    {region: analogAreaRegion, shapeType: ShapeType.ELLIPSE},
-                    {id: `${sidePrefix}AnalogArea`},
-                ),
-                layers: analogAreaLayers,
-                parent: analogAreaGroup,
+            analogArea = this.#createButton({
+                group: analogAreaGroup,
+                id: `${sidePrefix}AnalogArea`,
+                region: analogAreaRegion,
+                shapeType: ShapeType.ELLIPSE,
+                includeBorder: analogAreaHasOuterBorder,
+                semanticClasses: [`side-${sideName}`, "role-analog-area"],
+                semanticAttributes: {"data-side": sideName, "data-role": "analog-area"},
+                pressMode: "digital",
+                digitalRenderMode: "class-toggle",
             });
 
             setMask(dpadGroup, analogArea.mask.id);
@@ -1484,25 +1577,34 @@ class GamepadOverlay {
                 semanticAttributes: {"data-side": sideName, "data-role": "analog-stick"},
                 pressMode: "analog",
             });
+            const analogStickRingRegion = Region.fromCenter({
+                center: layout.analogRegion.center,
+                size: analogStickSize.clone().multiply(Vector2.splat(0.75)),
+            });
+            const analogStickRingCutoutId = monotonicId(`${sidePrefix}AnalogStickRingCutout-`);
+            this.#context.addDefinition(createSvgShape(
+                {region: analogStickRingRegion, shapeType: ShapeType.ELLIPSE},
+                {id: analogStickRingCutoutId},
+            ));
+            const analogStickRingExpandedRegion = this.#inflateRegion(analogStickRingRegion, this.#innerBorderSize / 2);
             analogStickRing = new GamepadEntity({
                 context: this.#context,
-                element: createSvgShape(
-                    {
-                        region: Region.fromCenter({
-                            center: layout.analogRegion.center,
-                            size: analogStickSize.clone().multiply(Vector2.splat(0.75)),
-                        }),
-                        shapeType: ShapeType.ELLIPSE,
-                    },
-                    {id: `${sidePrefix}AnalogStickRing`},
-                ),
+                element: createSvgShape({
+                    region: analogStickRingExpandedRegion,
+                    shapeType: ShapeType.ELLIPSE,
+                }, {id: `${sidePrefix}AnalogStickRing`} ),
                 layers: [
-                    {classes: "outer-border", cutout: true},
-                    {classes: "inner-border", cutout: true},
+                    {
+                        classes: "outer-border",
+                        cutout: true,
+                        cutoutSourceId: analogStickRingCutoutId,
+                    },
+                    {classes: "black-border-stroke"},
                 ],
                 parent: analogStickGroup,
             });
             analogStick.connect(analogStickRing.element);
+            analogStick.connect(this.#context.queryChild(analogStickRingCutoutId));
             setMask(backgroundGroup, analogStick.mask.id);
         }
 

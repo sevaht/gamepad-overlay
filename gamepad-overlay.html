@@ -19,7 +19,7 @@
             .outer-border {
                 fill: none;
                 stroke: white;
-                stroke-width: calc((var(--overlay-border-inner-size) + var(--overlay-border-outer-size)) * 2px);
+                stroke-width: calc((var(--overlay-border-inner-size) + (var(--overlay-border-outer-size) * 2)) * 1px);
                 stroke-linejoin: round;
                 stroke-linecap: round;
             }
@@ -36,6 +36,20 @@
                 fill: var(--btn-idle, rgba(44, 47, 51, 0.7));
                 stroke: black;
                 stroke-width: 0;
+            }
+
+            .gamepad-button-bordered {
+                stroke-width: calc(var(--overlay-border-inner-size) * 1px);
+                stroke-linejoin: round;
+                stroke-linecap: round;
+            }
+
+            .black-border-stroke {
+                fill: none;
+                stroke: black;
+                stroke-width: calc(var(--overlay-border-inner-size) * 1px);
+                stroke-linejoin: round;
+                stroke-linecap: round;
             }
 
             .gamepad-button-pressed-fill {
