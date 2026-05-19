@@ -14,9 +14,14 @@ function getIdPrefixedChild({target, prefix}) {
 function setAttributes(element, attributes = {}) {
     for (const [name, value] of Object.entries(attributes)) {
         if (value == null) {
-            element.removeAttribute(name);
+            if (element.hasAttribute(name)) {
+                element.removeAttribute(name);
+            }
         } else {
-            element.setAttribute(name, String(value));
+            const nextValue = String(value);
+            if (element.getAttribute(name) !== nextValue) {
+                element.setAttribute(name, nextValue);
+            }
         }
     }
     return element;
@@ -616,6 +621,7 @@ class GamepadEntity {
     #layerElements;
     #pressMode;
     #digitalThreshold;
+    #transformFramePending;
 
     constructor({context, element, parent, layers=[{}], offset=Vector2.ZERO}) {
         // TODO: null validation?
@@ -631,6 +637,7 @@ class GamepadEntity {
         this.#layerElements = [];
         this.#pressMode = "digital";
         this.#digitalThreshold = 0.5;
+        this.#transformFramePending = false;
         this.setTranslation(offset);
         this.#context.addDefinition(this.#element);
 
@@ -793,6 +800,12 @@ class GamepadEntity {
         return this;
     }
     setTranslation(offset) {
+        if (offset == null) {
+            offset = Vector2.ZERO;
+        }
+        if (this.#translation != null && offset instanceof Vector2 && this.#translation.equals(offset)) {
+            return this;
+        }
         this.#translation = offset;
         this.#applyTransforms();
         return this;
@@ -826,7 +839,12 @@ class GamepadEntity {
     }
 
     #applyTransforms() {
+        if (this.#transformFramePending) {
+            return;
+        }
+        this.#transformFramePending = true;
         requestAnimationFrame(() => {
+            this.#transformFramePending = false;
             const translate = this.#translation == null || Vector2.ZERO.equals(this.#translation)
                 ? null
                 : `translate(${this.#translation.x} ${this.#translation.y})`;
