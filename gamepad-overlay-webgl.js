@@ -6,12 +6,40 @@ class WebGLGamepadOverlayRenderer {
     #program;
     #posBuffer;
     #colorBuffer;
+    #dynamicPosBuffer;
+    #dynamicColorBuffer;
+    #stickPosBuffer;
+    #stickColorBuffer;
+    #staticPosBuffer;
+    #staticColorBuffer;
     #aPos;
     #aColor;
     #uResolution;
     #uColor;
+    #queuedState;
+    #renderScheduled;
+    #lastRenderMs;
+    #minFrameMs;
+    #circleLut;
+    #vertices;
+    #colors;
+    #stickVerts;
+    #stickColors;
+    #vertexData;
+    #colorData;
+    #stickVertexData;
+    #stickColorData;
+    #staticVertices;
+    #staticColors;
+    #staticVertexData;
+    #staticColorData;
+    #staticVertexCount;
+    #dynamicVertexCount;
+    #stickVertexCount;
+    #debugPerf;
+    #perf;
 
-    constructor({canvas, model}) {
+    constructor({canvas, model, maxFps = 0, debugPerf = false}) {
         this.#canvas = canvas;
         this.#model = model;
         this.#gl = canvas.getContext("webgl", {
@@ -25,19 +53,143 @@ class WebGLGamepadOverlayRenderer {
             throw new Error("WebGL unavailable in this browser");
         }
         this.#theme = this.#buildTheme();
+        this.#queuedState = null;
+        this.#renderScheduled = false;
+        this.#lastRenderMs = 0;
+        const parsedMaxFps = Number(maxFps) || 0;
+        this.#minFrameMs = parsedMaxFps > 0 ? (1000 / Math.max(1, parsedMaxFps)) : 0;
+        this.#circleLut = new Map();
+        this.#vertices = [];
+        this.#colors = [];
+        this.#stickVerts = [];
+        this.#stickColors = [];
+        this.#vertexData = new Float32Array(0);
+        this.#colorData = new Float32Array(0);
+        this.#stickVertexData = new Float32Array(0);
+        this.#stickColorData = new Float32Array(0);
+        this.#staticVertices = [];
+        this.#staticColors = [];
+        this.#staticVertexData = new Float32Array(0);
+        this.#staticColorData = new Float32Array(0);
+        this.#staticVertexCount = 0;
+        this.#dynamicVertexCount = 0;
+        this.#stickVertexCount = 0;
+        this.#debugPerf = !!debugPerf;
+        this.#perf = {t0: performance.now(), frames: 0, buildMs: 0, uploadMs: 0, drawMs: 0};
         this.#initProgram();
         this.resize();
+    }
+
+    #ensureFloatCapacity(current, needed) {
+        if (current.length >= needed) {
+            return current;
+        }
+        const next = new Float32Array(Math.max(needed, Math.ceil(current.length * 1.5) + 1024));
+        next.set(current);
+        return next;
+    }
+
+    #copyToFloatArray(source, target) {
+        for (let i = 0; i < source.length; i += 1) {
+            target[i] = source[i];
+        }
     }
 
     resize() {
         this.#canvas.width = Math.ceil(this.#model.width);
         this.#canvas.height = Math.ceil(this.#model.height);
         this.#gl.viewport(0, 0, this.#canvas.width, this.#canvas.height);
+        this.#rebuildStaticGeometry();
         this.draw();
     }
 
+    #rebuildStaticGeometry() {
+        const model = this.#model;
+        const vertices = this.#staticVertices;
+        const colors = this.#staticColors;
+        vertices.length = 0;
+        colors.length = 0;
+
+        const pushTriNums = (ax, ay, bx, by, cx, cy, color) => {
+            vertices.push(ax, ay, bx, by, cx, cy);
+            for (let i = 0; i < 3; i += 1) {
+                colors.push(color[0], color[1], color[2], color[3]);
+            }
+        };
+        const pushPoly = (points, color) => {
+            for (let i = 1; i < points.length - 1; i += 1) {
+                const a = points[0];
+                const b = points[i];
+                const c = points[i + 1];
+                pushTriNums(a.x, a.y, b.x, b.y, c.x, c.y, color);
+            }
+        };
+        const getCircleLut = (segments) => {
+            let lut = this.#circleLut.get(segments);
+            if (!lut) {
+                lut = [];
+                for (let i = 0; i < segments; i += 1) {
+                    const a = (i / segments) * Math.PI * 2;
+                    lut.push([Math.cos(a), Math.sin(a)]);
+                }
+                this.#circleLut.set(segments, lut);
+            }
+            return lut;
+        };
+        const pushEllipse = (region, color, segments = 36) => {
+            const c = region.center;
+            const lut = getCircleLut(segments);
+            for (let i = 0; i < segments; i += 1) {
+                const p0 = lut[i];
+                const p1 = lut[(i + 1) % segments];
+                pushTriNums(c.x, c.y, c.x + p0[0] * region.halfSize.x, c.y + p0[1] * region.halfSize.y, c.x + p1[0] * region.halfSize.x, c.y + p1[1] * region.halfSize.y, color);
+            }
+        };
+
+        pushPoly(model.leftLayout.crossPoints, this.#theme.borderOuter);
+        const insetCross = model.leftLayout.crossPoints.map((p) => {
+            const c = model.leftLayout.origin.center;
+            const dx = p.x - c.x;
+            const dy = p.y - c.y;
+            return new Vector2({x: c.x + dx * 0.965, y: c.y + dy * 0.965});
+        });
+        pushPoly(insetCross, this.#theme.borderInner);
+        this.#staticVertexData = this.#ensureFloatCapacity(this.#staticVertexData, vertices.length);
+        this.#staticColorData = this.#ensureFloatCapacity(this.#staticColorData, colors.length);
+        this.#copyToFloatArray(vertices, this.#staticVertexData);
+        this.#copyToFloatArray(colors, this.#staticColorData);
+        this.#staticVertexCount = vertices.length / 2;
+
+        const gl = this.#gl;
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.#staticPosBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, this.#staticVertexData.length * 4, gl.DYNAMIC_DRAW);
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.#staticVertexData.subarray(0, vertices.length));
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.#staticColorBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, this.#staticColorData.length * 4, gl.DYNAMIC_DRAW);
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.#staticColorData.subarray(0, colors.length));
+    }
+
     applyState(state) {
-        applyGamepadStateToModel(this.#model, state);
+        this.#queuedState = state;
+        if (!this.#renderScheduled) {
+            this.#renderScheduled = true;
+            requestAnimationFrame((now) => this.#onAnimationFrame(now));
+        }
+    }
+
+    #onAnimationFrame(now) {
+        this.#renderScheduled = false;
+        if (!this.#queuedState) {
+            return;
+        }
+        if (now - this.#lastRenderMs < this.#minFrameMs) {
+            this.#renderScheduled = true;
+            requestAnimationFrame((nextNow) => this.#onAnimationFrame(nextNow));
+            return;
+        }
+        applyGamepadStateToModel(this.#model, this.#queuedState);
+        this.#queuedState = null;
+        this.#lastRenderMs = now;
         this.draw();
     }
 
@@ -85,17 +237,32 @@ class WebGLGamepadOverlayRenderer {
         this.#uResolution = gl.getUniformLocation(this.#program, "u_resolution");
         this.#posBuffer = gl.createBuffer();
         this.#colorBuffer = gl.createBuffer();
+        this.#dynamicPosBuffer = gl.createBuffer();
+        this.#dynamicColorBuffer = gl.createBuffer();
+        this.#stickPosBuffer = gl.createBuffer();
+        this.#stickColorBuffer = gl.createBuffer();
+        this.#staticPosBuffer = gl.createBuffer();
+        this.#staticColorBuffer = gl.createBuffer();
     }
 
     draw() {
+        const buildStart = performance.now();
         const gl = this.#gl;
         const model = this.#model;
         const s = model.state;
-        const vertices = [];
-        const colors = [];
+        const vertices = this.#vertices;
+        const colors = this.#colors;
+        vertices.length = 0;
+        colors.length = 0;
 
         const pushTri = (a, b, c, color) => {
             vertices.push(a.x, a.y, b.x, b.y, c.x, c.y);
+            for (let i = 0; i < 3; i += 1) {
+                colors.push(color[0], color[1], color[2], color[3]);
+            }
+        };
+        const pushTriNums = (ax, ay, bx, by, cx, cy, color) => {
+            vertices.push(ax, ay, bx, by, cx, cy);
             for (let i = 0; i < 3; i += 1) {
                 colors.push(color[0], color[1], color[2], color[3]);
             }
@@ -105,15 +272,32 @@ class WebGLGamepadOverlayRenderer {
                 pushTri(points[0], points[i], points[i + 1], color);
             }
         };
+        const getCircleLut = (segments) => {
+            let lut = this.#circleLut.get(segments);
+            if (lut) {
+                return lut;
+            }
+            lut = [];
+            for (let i = 0; i < segments; i += 1) {
+                const a = (i / segments) * Math.PI * 2;
+                lut.push([Math.cos(a), Math.sin(a)]);
+            }
+            this.#circleLut.set(segments, lut);
+            return lut;
+        };
         const pushEllipse = (region, color, segments = 36) => {
             const c = region.center;
+            const lut = getCircleLut(segments);
             for (let i = 0; i < segments; i += 1) {
-                const a0 = (i / segments) * Math.PI * 2;
-                const a1 = ((i + 1) / segments) * Math.PI * 2;
-                pushTri(
-                    c,
-                    new Vector2({x: c.x + Math.cos(a0) * region.halfSize.x, y: c.y + Math.sin(a0) * region.halfSize.y}),
-                    new Vector2({x: c.x + Math.cos(a1) * region.halfSize.x, y: c.y + Math.sin(a1) * region.halfSize.y}),
+                const p0 = lut[i];
+                const p1 = lut[(i + 1) % segments];
+                pushTriNums(
+                    c.x,
+                    c.y,
+                    c.x + p0[0] * region.halfSize.x,
+                    c.y + p0[1] * region.halfSize.y,
+                    c.x + p1[0] * region.halfSize.x,
+                    c.y + p1[1] * region.halfSize.y,
                     color
                 );
             }
@@ -307,15 +491,6 @@ class WebGLGamepadOverlayRenderer {
             }
         };
 
-        pushPoly(model.leftLayout.crossPoints, this.#theme.borderOuter);
-        const insetCross = (layout) => layout.crossPoints.map((p) => {
-            const c = layout.origin.center;
-            const dx = p.x - c.x;
-            const dy = p.y - c.y;
-            return new Vector2({x: c.x + dx * 0.965, y: c.y + dy * 0.965});
-        });
-        pushPoly(insetCross(model.leftLayout), this.#theme.borderInner);
-
         drawButton(model.buttons.left.leftBumper, this.#theme.idle, s.LB);
         drawButton(model.buttons.left.select, this.#theme.idle, s.SELECT);
         drawButton(model.buttons.left.leftTrigger, this.#theme.idle, s.LT);
@@ -333,7 +508,6 @@ class WebGLGamepadOverlayRenderer {
         drawButton(model.buttons.right.down, this.#theme.rightFace.down, s.A, this.#theme.rightFacePressed.down);
         drawButton(model.buttons.left.analogArea, this.#theme.black, 0);
         drawButton(model.buttons.right.analogArea, this.#theme.black, 0);
-
         const leftOffset = clampNormalizedOffsetToEllipse({offset: {x: s.LX, y: s.LY}, halfSize: model.leftLayout.origin.halfSize});
         const rightOffset = clampNormalizedOffsetToEllipse({offset: {x: s.RX, y: s.RY}, halfSize: model.rightLayout.origin.halfSize});
         const leftStick = model.buttons.left.analogStick.region.clone().update({topLeft: model.buttons.left.analogStick.region.topLeft.clone().add(leftOffset)});
@@ -346,31 +520,52 @@ class WebGLGamepadOverlayRenderer {
         gl.useProgram(this.#program);
         gl.uniform2f(this.#uResolution, this.#canvas.width, this.#canvas.height);
 
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.#posBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.DYNAMIC_DRAW);
-        gl.enableVertexAttribArray(this.#aPos);
-        gl.vertexAttribPointer(this.#aPos, 2, gl.FLOAT, false, 0, 0);
+        const uploadStart = performance.now();
+        this.#vertexData = this.#ensureFloatCapacity(this.#vertexData, vertices.length);
+        this.#colorData = this.#ensureFloatCapacity(this.#colorData, colors.length);
+        this.#copyToFloatArray(vertices, this.#vertexData);
+        this.#copyToFloatArray(colors, this.#colorData);
+        this.#dynamicVertexCount = vertices.length / 2;
 
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.#colorBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(colors), gl.DYNAMIC_DRAW);
-        gl.enableVertexAttribArray(this.#aColor);
-        gl.vertexAttribPointer(this.#aColor, 4, gl.FLOAT, false, 0, 0);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.#dynamicPosBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, this.#vertexData.length * 4, gl.DYNAMIC_DRAW);
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.#vertexData.subarray(0, vertices.length));
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.#dynamicColorBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, this.#colorData.length * 4, gl.DYNAMIC_DRAW);
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.#colorData.subarray(0, colors.length));
 
         gl.enable(gl.BLEND);
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-        gl.drawArrays(gl.TRIANGLES, 0, vertices.length / 2);
 
-        const stickVerts = [];
-        const stickCols = [];
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.#staticPosBuffer);
+        gl.enableVertexAttribArray(this.#aPos);
+        gl.vertexAttribPointer(this.#aPos, 2, gl.FLOAT, false, 0, 0);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.#staticColorBuffer);
+        gl.enableVertexAttribArray(this.#aColor);
+        gl.vertexAttribPointer(this.#aColor, 4, gl.FLOAT, false, 0, 0);
+        gl.drawArrays(gl.TRIANGLES, 0, this.#staticVertexCount);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.#dynamicPosBuffer);
+        gl.vertexAttribPointer(this.#aPos, 2, gl.FLOAT, false, 0, 0);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.#dynamicColorBuffer);
+        gl.vertexAttribPointer(this.#aColor, 4, gl.FLOAT, false, 0, 0);
+        gl.drawArrays(gl.TRIANGLES, 0, this.#dynamicVertexCount);
+
+        const stickVerts = this.#stickVerts;
+        const stickCols = this.#stickColors;
+        stickVerts.length = 0;
+        stickCols.length = 0;
         const pushStick = (region, color) => {
             const seg = 36;
+            const lut = getCircleLut(seg);
             for (let i = 0; i < seg; i += 1) {
-                const a0 = (i / seg) * Math.PI * 2;
-                const a1 = ((i + 1) / seg) * Math.PI * 2;
+                const p0 = lut[i];
+                const p1 = lut[(i + 1) % seg];
                 stickVerts.push(
                     region.center.x, region.center.y,
-                    region.center.x + Math.cos(a0) * region.halfSize.x, region.center.y + Math.sin(a0) * region.halfSize.y,
-                    region.center.x + Math.cos(a1) * region.halfSize.x, region.center.y + Math.sin(a1) * region.halfSize.y
+                    region.center.x + p0[0] * region.halfSize.x, region.center.y + p0[1] * region.halfSize.y,
+                    region.center.x + p1[0] * region.halfSize.x, region.center.y + p1[1] * region.halfSize.y
                 );
                 for (let j = 0; j < 3; j += 1) {
                     stickCols.push(color[0], color[1], color[2], color[3]);
@@ -401,12 +596,34 @@ class WebGLGamepadOverlayRenderer {
         pushStick(expandRegion(rightStick, borderPx * 0.5), this.#theme.borderInner);
         pushStick(rightStick, rightStickFill);
         drawStickRing(rightStickRing, rightStickFill);
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.#posBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(stickVerts), gl.DYNAMIC_DRAW);
+        this.#stickVertexData = this.#ensureFloatCapacity(this.#stickVertexData, stickVerts.length);
+        this.#stickColorData = this.#ensureFloatCapacity(this.#stickColorData, stickCols.length);
+        this.#copyToFloatArray(stickVerts, this.#stickVertexData);
+        this.#copyToFloatArray(stickCols, this.#stickColorData);
+        this.#stickVertexCount = stickVerts.length / 2;
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.#stickPosBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, this.#stickVertexData.length * 4, gl.DYNAMIC_DRAW);
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.#stickVertexData.subarray(0, stickVerts.length));
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.#stickColorBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, this.#stickColorData.length * 4, gl.DYNAMIC_DRAW);
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.#stickColorData.subarray(0, stickCols.length));
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.#stickPosBuffer);
         gl.vertexAttribPointer(this.#aPos, 2, gl.FLOAT, false, 0, 0);
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.#colorBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(stickCols), gl.DYNAMIC_DRAW);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.#stickColorBuffer);
         gl.vertexAttribPointer(this.#aColor, 4, gl.FLOAT, false, 0, 0);
-        gl.drawArrays(gl.TRIANGLES, 0, stickVerts.length / 2);
+        gl.drawArrays(gl.TRIANGLES, 0, this.#stickVertexCount);
+
+        const drawEnd = performance.now();
+        this.#perf.frames += 1;
+        this.#perf.buildMs += (uploadStart - buildStart);
+        this.#perf.uploadMs += (drawEnd - uploadStart);
+        this.#perf.drawMs += 0;
+        if (this.#debugPerf && drawEnd - this.#perf.t0 >= 1000) {
+            const sec = (drawEnd - this.#perf.t0) / 1000;
+            console.log(`[webgl perf] fps=${(this.#perf.frames / sec).toFixed(1)} dynVerts=${this.#dynamicVertexCount} stickVerts=${this.#stickVertexCount} build=${(this.#perf.buildMs / this.#perf.frames).toFixed(3)}ms upload+draw=${(this.#perf.uploadMs / this.#perf.frames).toFixed(3)}ms`);
+            this.#perf = {t0: drawEnd, frames: 0, buildMs: 0, uploadMs: 0, drawMs: 0};
+        }
     }
 }

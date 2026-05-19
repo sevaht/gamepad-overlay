@@ -30,7 +30,12 @@
             })();
 
             const model = createRasterOverlayModel({buttonLength: 132, buttonWidth: 132, borderWidth: 8, gap: 1, betweenHalvesGap: 0});
-            const renderer = new WebGLGamepadOverlayRenderer({canvas: document.getElementById("overlayWebgl"), model});
+            const renderer = new WebGLGamepadOverlayRenderer({
+                canvas: document.getElementById("overlayWebgl"),
+                model,
+                maxFps: Number.parseInt(QUERY.get("maxFps") || "0", 10),
+                debugPerf: QUERY.get("debugPerf") === "1",
+            });
 
             const source = createGamepadSource({
                 mode: INPUT_SOURCE,
