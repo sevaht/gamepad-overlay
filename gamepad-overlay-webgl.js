@@ -15,18 +15,18 @@ class WebglBufferStream {
         this.#vertexCount = 0;
     }
 
-    #ensureFloatCapacity(current, needed) {
-        if (current.length >= needed) {
-            return current;
+    #ensureFloatCapacity(currentData, requiredLength) {
+        if (currentData.length >= requiredLength) {
+            return currentData;
         }
-        const next = new Float32Array(Math.max(needed, Math.ceil(current.length * 1.5) + 1024));
-        next.set(current);
-        return next;
+        const expandedData = new Float32Array(Math.max(requiredLength, Math.ceil(currentData.length * 1.5) + 1024));
+        expandedData.set(currentData);
+        return expandedData;
     }
 
-    #copyToFloatArray(source, target) {
-        for (let i = 0; i < source.length; i += 1) {
-            target[i] = source[i];
+    #copyToFloatArray(sourceValues, targetValues) {
+        for (let index = 0; index < sourceValues.length; index += 1) {
+            targetValues[index] = sourceValues[index];
         }
     }
 
@@ -72,21 +72,27 @@ class PerfTracker {
     #state;
     constructor(enabled = false) {
         this.#enabled = enabled;
-        this.#state = {t0: performance.now(), frames: 0, buildMs: 0, uploadMs: 0};
+        this.#state = {windowStartTimestamp: performance.now(), frameCount: 0, geometryBuildMilliseconds: 0, uploadAndDrawMilliseconds: 0};
     }
-    addFrame({buildMs, uploadMs, dynamicVertices, stickVertices}) {
-        this.#state.frames += 1;
-        this.#state.buildMs += buildMs;
-        this.#state.uploadMs += uploadMs;
-        const now = performance.now();
-        if (this.#enabled && now - this.#state.t0 >= 1000) {
-            const sec = (now - this.#state.t0) / 1000;
-            console.log(`[webgl perf] fps=${(this.#state.frames / sec).toFixed(1)} dynVerts=${dynamicVertices} stickVerts=${stickVertices} build=${(this.#state.buildMs / this.#state.frames).toFixed(3)}ms upload+draw=${(this.#state.uploadMs / this.#state.frames).toFixed(3)}ms`);
-            this.#state = {t0: now, frames: 0, buildMs: 0, uploadMs: 0};
+    addFrame({geometryBuildMilliseconds, uploadAndDrawMilliseconds, dynamicVertexCount, stickVertexCount}) {
+        this.#state.frameCount += 1;
+        this.#state.geometryBuildMilliseconds += geometryBuildMilliseconds;
+        this.#state.uploadAndDrawMilliseconds += uploadAndDrawMilliseconds;
+        const nowTimestamp = performance.now();
+        if (this.#enabled && nowTimestamp - this.#state.windowStartTimestamp >= 1000) {
+            const elapsedSeconds = (nowTimestamp - this.#state.windowStartTimestamp) / 1000;
+            console.log(`[webgl perf] fps=${(this.#state.frameCount / elapsedSeconds).toFixed(1)} dynVerts=${dynamicVertexCount} stickVerts=${stickVertexCount} build=${(this.#state.geometryBuildMilliseconds / this.#state.frameCount).toFixed(3)}ms upload+draw=${(this.#state.uploadAndDrawMilliseconds / this.#state.frameCount).toFixed(3)}ms`);
+            this.#state = {windowStartTimestamp: nowTimestamp, frameCount: 0, geometryBuildMilliseconds: 0, uploadAndDrawMilliseconds: 0};
         }
     }
 }
 
+// Architecture overview:
+// 1) Static geometry (left dpad border) is built once and uploaded to staticStream.
+// 2) Dynamic button geometry is rebuilt per frame from latest gamepad state.
+// 3) Analog stick geometry is rebuilt per frame from stick offsets/press amounts.
+// 4) Streams are drawn in order: static -> dynamic buttons -> sticks.
+// 5) Rendering is coalesced to requestAnimationFrame, with optional maxFps throttling.
 class WebGLGamepadOverlayRenderer {
     #canvas;
     #gl;
@@ -114,17 +120,17 @@ class WebGLGamepadOverlayRenderer {
     #staticVertexCount;
     #perf;
 
-    #getCircleLut(segments) {
-        let lut = this.#circleLut.get(segments);
-        if (!lut) {
-            lut = [];
-            for (let i = 0; i < segments; i += 1) {
-                const a = (i / segments) * Math.PI * 2;
-                lut.push([Math.cos(a), Math.sin(a)]);
+    #getCircleLut(segmentCount) {
+        let unitCircleLookupTable = this.#circleLut.get(segmentCount);
+        if (!unitCircleLookupTable) {
+            unitCircleLookupTable = [];
+            for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex += 1) {
+                const radians = (segmentIndex / segmentCount) * Math.PI * 2;
+                unitCircleLookupTable.push([Math.cos(radians), Math.sin(radians)]);
             }
-            this.#circleLut.set(segments, lut);
+            this.#circleLut.set(segmentCount, unitCircleLookupTable);
         }
-        return lut;
+        return unitCircleLookupTable;
     }
 
     #pushTri(vertices, colors, ax, ay, bx, by, cx, cy, color) {
@@ -134,53 +140,53 @@ class WebGLGamepadOverlayRenderer {
         }
     }
 
-    #pushPoly(vertices, colors, points, color) {
-        for (let i = 1; i < points.length - 1; i += 1) {
-            const a = points[0];
-            const b = points[i];
-            const c = points[i + 1];
-            this.#pushTri(vertices, colors, a.x, a.y, b.x, b.y, c.x, c.y, color);
+    #pushPoly(vertices, colors, polygonPoints, color) {
+        for (let pointIndex = 1; pointIndex < polygonPoints.length - 1; pointIndex += 1) {
+            const firstPoint = polygonPoints[0];
+            const secondPoint = polygonPoints[pointIndex];
+            const thirdPoint = polygonPoints[pointIndex + 1];
+            this.#pushTri(vertices, colors, firstPoint.x, firstPoint.y, secondPoint.x, secondPoint.y, thirdPoint.x, thirdPoint.y, color);
         }
     }
 
-    #pushEllipse(vertices, colors, region, color, segments = 36) {
-        const c = region.center;
-        const lut = this.#getCircleLut(segments);
-        for (let i = 0; i < segments; i += 1) {
-            const p0 = lut[i];
-            const p1 = lut[(i + 1) % segments];
+    #pushEllipse(vertices, colors, region, color, segmentCount = 36) {
+        const center = region.center;
+        const unitCircleLookupTable = this.#getCircleLut(segmentCount);
+        for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex += 1) {
+            const currentUnitPoint = unitCircleLookupTable[segmentIndex];
+            const nextUnitPoint = unitCircleLookupTable[(segmentIndex + 1) % segmentCount];
             this.#pushTri(
                 vertices,
                 colors,
-                c.x,
-                c.y,
-                c.x + p0[0] * region.halfSize.x,
-                c.y + p0[1] * region.halfSize.y,
-                c.x + p1[0] * region.halfSize.x,
-                c.y + p1[1] * region.halfSize.y,
+                center.x,
+                center.y,
+                center.x + currentUnitPoint[0] * region.halfSize.x,
+                center.y + currentUnitPoint[1] * region.halfSize.y,
+                center.x + nextUnitPoint[0] * region.halfSize.x,
+                center.y + nextUnitPoint[1] * region.halfSize.y,
                 color,
             );
         }
     }
 
-    #pushRoundedRect(vertices, colors, region, radius, color, segments = 6) {
-        const r = Math.max(0, Math.min(radius, region.halfSize.x, region.halfSize.y));
-        if (r < 0.01) {
+    #pushRoundedRect(vertices, colors, region, radius, color, segmentCount = 6) {
+        const cornerRadius = Math.max(0, Math.min(radius, region.halfSize.x, region.halfSize.y));
+        if (cornerRadius < 0.01) {
             this.#pushPoly(vertices, colors, [region.topLeft, region.topRight, region.bottomRight, region.bottomLeft], color);
             return;
         }
-        const pts = [];
-        const arc = (cx, cy, a0, a1) => {
-            for (let i = 0; i <= segments; i += 1) {
-                const a = a0 + (a1 - a0) * (i / segments);
-                pts.push(new Vector2({x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r}));
+        const polygonPoints = [];
+        const appendArcPoints = (centerX, centerY, startRadians, endRadians) => {
+            for (let segmentIndex = 0; segmentIndex <= segmentCount; segmentIndex += 1) {
+                const radians = startRadians + (endRadians - startRadians) * (segmentIndex / segmentCount);
+                polygonPoints.push(new Vector2({x: centerX + Math.cos(radians) * cornerRadius, y: centerY + Math.sin(radians) * cornerRadius}));
             }
         };
-        arc(region.topRight.x - r, region.topRight.y + r, -Math.PI / 2, 0);
-        arc(region.bottomRight.x - r, region.bottomRight.y - r, 0, Math.PI / 2);
-        arc(region.bottomLeft.x + r, region.bottomLeft.y - r, Math.PI / 2, Math.PI);
-        arc(region.topLeft.x + r, region.topLeft.y + r, Math.PI, Math.PI * 1.5);
-        this.#pushPoly(vertices, colors, pts, color);
+        appendArcPoints(region.topRight.x - cornerRadius, region.topRight.y + cornerRadius, -Math.PI / 2, 0);
+        appendArcPoints(region.bottomRight.x - cornerRadius, region.bottomRight.y - cornerRadius, 0, Math.PI / 2);
+        appendArcPoints(region.bottomLeft.x + cornerRadius, region.bottomLeft.y - cornerRadius, Math.PI / 2, Math.PI);
+        appendArcPoints(region.topLeft.x + cornerRadius, region.topLeft.y + cornerRadius, Math.PI, Math.PI * 1.5);
+        this.#pushPoly(vertices, colors, polygonPoints, color);
     }
 
     #roundedRectLoop(region, radius, segments = 6) {
@@ -296,58 +302,37 @@ class WebGLGamepadOverlayRenderer {
     }
 
     #rebuildStaticGeometry() {
-        const model = this.#model;
-        const vertices = this.#staticVertices;
-        const colors = this.#staticColors;
-        vertices.length = 0;
-        colors.length = 0;
+        const overlayModel = this.#model;
+        const staticVertexPositions = this.#staticVertices;
+        const staticVertexColors = this.#staticColors;
+        staticVertexPositions.length = 0;
+        staticVertexColors.length = 0;
 
-        const pushTriNums = (ax, ay, bx, by, cx, cy, color) => {
-            vertices.push(ax, ay, bx, by, cx, cy);
+        const pushTriangle = (ax, ay, bx, by, cx, cy, color) => {
+            staticVertexPositions.push(ax, ay, bx, by, cx, cy);
             for (let i = 0; i < 3; i += 1) {
-                colors.push(color[0], color[1], color[2], color[3]);
+                staticVertexColors.push(color[0], color[1], color[2], color[3]);
             }
         };
-        const pushPoly = (points, color) => {
-            for (let i = 1; i < points.length - 1; i += 1) {
-                const a = points[0];
-                const b = points[i];
-                const c = points[i + 1];
-                pushTriNums(a.x, a.y, b.x, b.y, c.x, c.y, color);
-            }
-        };
-        const getCircleLut = (segments) => {
-            let lut = this.#circleLut.get(segments);
-            if (!lut) {
-                lut = [];
-                for (let i = 0; i < segments; i += 1) {
-                    const a = (i / segments) * Math.PI * 2;
-                    lut.push([Math.cos(a), Math.sin(a)]);
-                }
-                this.#circleLut.set(segments, lut);
-            }
-            return lut;
-        };
-        const pushEllipse = (region, color, segments = 36) => {
-            const c = region.center;
-            const lut = getCircleLut(segments);
-            for (let i = 0; i < segments; i += 1) {
-                const p0 = lut[i];
-                const p1 = lut[(i + 1) % segments];
-                pushTriNums(c.x, c.y, c.x + p0[0] * region.halfSize.x, c.y + p0[1] * region.halfSize.y, c.x + p1[0] * region.halfSize.x, c.y + p1[1] * region.halfSize.y, color);
+        const pushPolygon = (polygonPoints, color) => {
+            for (let pointIndex = 1; pointIndex < polygonPoints.length - 1; pointIndex += 1) {
+                const firstPoint = polygonPoints[0];
+                const secondPoint = polygonPoints[pointIndex];
+                const thirdPoint = polygonPoints[pointIndex + 1];
+                pushTriangle(firstPoint.x, firstPoint.y, secondPoint.x, secondPoint.y, thirdPoint.x, thirdPoint.y, color);
             }
         };
 
-        pushPoly(model.leftLayout.crossPoints, this.#theme.borderOuter);
-        const insetCross = model.leftLayout.crossPoints.map((p) => {
-            const c = model.leftLayout.origin.center;
-            const dx = p.x - c.x;
-            const dy = p.y - c.y;
-            return new Vector2({x: c.x + dx * 0.965, y: c.y + dy * 0.965});
+        pushPolygon(overlayModel.leftLayout.crossPoints, this.#theme.borderOuter);
+        const insetCrossPoints = overlayModel.leftLayout.crossPoints.map((point) => {
+            const center = overlayModel.leftLayout.origin.center;
+            const deltaX = point.x - center.x;
+            const deltaY = point.y - center.y;
+            return new Vector2({x: center.x + deltaX * 0.965, y: center.y + deltaY * 0.965});
         });
-        pushPoly(insetCross, this.#theme.borderInner);
-        this.#staticStream.upload(vertices, colors);
-        this.#staticVertexCount = vertices.length / 2;
+        pushPolygon(insetCrossPoints, this.#theme.borderInner);
+        this.#staticStream.upload(staticVertexPositions, staticVertexColors);
+        this.#staticVertexCount = staticVertexPositions.length / 2;
     }
 
     applyState(state) {
@@ -422,118 +407,118 @@ class WebGLGamepadOverlayRenderer {
     }
 
     #buildDynamicButtons(state) {
-        const model = this.#model;
-        const vertices = this.#vertices;
-        const colors = this.#colors;
-        vertices.length = 0;
-        colors.length = 0;
+        const overlayModel = this.#model;
+        const dynamicVertexPositions = this.#vertices;
+        const dynamicVertexColors = this.#colors;
+        dynamicVertexPositions.length = 0;
+        dynamicVertexColors.length = 0;
         // Keep existing behavior by delegating to previous draw-time logic inline replacement
         // through local composition kept minimal for refactor safety.
-        const drawButton = (button, base, amt, pressedOverride = null) => {
-            if (!button) { return; }
-            const color = this.#mix(base, amt, pressedOverride);
-            const borderPx = Math.max(2.5, this.#model.borderWidth);
-            const drawShape = (shape, region, fillColor, cornerRadiusPercent = 0) => {
-                if (shape === "ellipse") {
-                    this.#pushEllipse(vertices, colors, region, fillColor);
-                } else if (shape === "triDown") {
-                    this.#pushPoly(vertices, colors, [region.bottomCenter, region.topLeft, region.topRight], fillColor);
+        const drawButton = (buttonSpec, baseColor, inputAmount, pressedColorOverride = null) => {
+            if (!buttonSpec) { return; }
+            const blendedFillColor = this.#mix(baseColor, inputAmount, pressedColorOverride);
+            const borderThickness = Math.max(2.5, this.#model.borderWidth);
+            const drawButtonShape = (shapeType, buttonRegion, fillColor, cornerRadiusPercent = 0) => {
+                if (shapeType === "ellipse") {
+                    this.#pushEllipse(dynamicVertexPositions, dynamicVertexColors, buttonRegion, fillColor);
+                } else if (shapeType === "triDown") {
+                    this.#pushPoly(dynamicVertexPositions, dynamicVertexColors, [buttonRegion.bottomCenter, buttonRegion.topLeft, buttonRegion.topRight], fillColor);
                 } else {
-                    const radius = Math.max(0, Math.min(region.halfSize.x, region.halfSize.y) * cornerRadiusPercent);
-                    this.#pushRoundedRect(vertices, colors, region, radius, fillColor);
+                    const cornerRadius = Math.max(0, Math.min(buttonRegion.halfSize.x, buttonRegion.halfSize.y) * cornerRadiusPercent);
+                    this.#pushRoundedRect(dynamicVertexPositions, dynamicVertexColors, buttonRegion, cornerRadius, fillColor);
                 }
             };
-            if (button.shape === "triDown") {
-                const tri = [button.region.bottomCenter, button.region.topLeft, button.region.topRight];
-                this.#drawTriangleStroke(vertices, colors, tri, this.#theme.borderOuter, borderPx * 2);
-                this.#drawTriangleStroke(vertices, colors, tri, this.#theme.borderInner, borderPx);
-                drawShape("triDown", button.region, this.#theme.borderInner);
-                drawShape("triDown", button.region, base);
-                if (button.pressMode === "analog" && amt > 0) {
-                    const t = Math.max(0, Math.min(1, amt));
-                    const pL = new Vector2({x: tri[1].x + (tri[0].x - tri[1].x) * t, y: tri[1].y + (tri[0].y - tri[1].y) * t});
-                    const pR = new Vector2({x: tri[2].x + (tri[0].x - tri[2].x) * t, y: tri[2].y + (tri[0].y - tri[2].y) * t});
-                    this.#pushPoly(vertices, colors, [tri[1], tri[2], pR, pL], this.#theme.pressed);
+            if (buttonSpec.shape === "triDown") {
+                const trianglePoints = [buttonSpec.region.bottomCenter, buttonSpec.region.topLeft, buttonSpec.region.topRight];
+                this.#drawTriangleStroke(dynamicVertexPositions, dynamicVertexColors, trianglePoints, this.#theme.borderOuter, borderThickness * 2);
+                this.#drawTriangleStroke(dynamicVertexPositions, dynamicVertexColors, trianglePoints, this.#theme.borderInner, borderThickness);
+                drawButtonShape("triDown", buttonSpec.region, this.#theme.borderInner);
+                drawButtonShape("triDown", buttonSpec.region, baseColor);
+                if (buttonSpec.pressMode === "analog" && inputAmount > 0) {
+                    const clampedAmount = Math.max(0, Math.min(1, inputAmount));
+                    const leftEdgePoint = new Vector2({x: trianglePoints[1].x + (trianglePoints[0].x - trianglePoints[1].x) * clampedAmount, y: trianglePoints[1].y + (trianglePoints[0].y - trianglePoints[1].y) * clampedAmount});
+                    const rightEdgePoint = new Vector2({x: trianglePoints[2].x + (trianglePoints[0].x - trianglePoints[2].x) * clampedAmount, y: trianglePoints[2].y + (trianglePoints[0].y - trianglePoints[2].y) * clampedAmount});
+                    this.#pushPoly(dynamicVertexPositions, dynamicVertexColors, [trianglePoints[1], trianglePoints[2], rightEdgePoint, leftEdgePoint], this.#theme.pressed);
                 }
-            } else if (button.shape === "rect" && (button.cornerRadiusPercent || 0) > 0) {
-                drawShape(button.shape, this.#expandRegion(button.region, borderPx * 0.5), this.#theme.borderInner, button.cornerRadiusPercent);
-                drawShape(button.shape, button.region, color, button.cornerRadiusPercent);
-                const radius = Math.min(button.region.halfSize.x, button.region.halfSize.y) * button.cornerRadiusPercent;
-                const baseLoop = this.#roundedRectLoop(button.region, radius, 8);
-                const blackLoop = this.#roundedRectLoop(this.#expandRegion(button.region, borderPx * 0.5), radius + borderPx * 0.5, 8);
-                const whiteLoop = this.#roundedRectLoop(this.#expandRegion(button.region, borderPx), radius + borderPx, 8);
-                this.#pushRing(vertices, colors, whiteLoop, blackLoop, this.#theme.borderOuter);
-                this.#pushRing(vertices, colors, blackLoop, baseLoop, this.#theme.borderInner);
+            } else if (buttonSpec.shape === "rect" && (buttonSpec.cornerRadiusPercent || 0) > 0) {
+                drawButtonShape(buttonSpec.shape, this.#expandRegion(buttonSpec.region, borderThickness * 0.5), this.#theme.borderInner, buttonSpec.cornerRadiusPercent);
+                drawButtonShape(buttonSpec.shape, buttonSpec.region, blendedFillColor, buttonSpec.cornerRadiusPercent);
+                const cornerRadius = Math.min(buttonSpec.region.halfSize.x, buttonSpec.region.halfSize.y) * buttonSpec.cornerRadiusPercent;
+                const baseLoop = this.#roundedRectLoop(buttonSpec.region, cornerRadius, 8);
+                const blackBorderLoop = this.#roundedRectLoop(this.#expandRegion(buttonSpec.region, borderThickness * 0.5), cornerRadius + borderThickness * 0.5, 8);
+                const whiteBorderLoop = this.#roundedRectLoop(this.#expandRegion(buttonSpec.region, borderThickness), cornerRadius + borderThickness, 8);
+                this.#pushRing(dynamicVertexPositions, dynamicVertexColors, whiteBorderLoop, blackBorderLoop, this.#theme.borderOuter);
+                this.#pushRing(dynamicVertexPositions, dynamicVertexColors, blackBorderLoop, baseLoop, this.#theme.borderInner);
             } else {
-                drawShape(button.shape, this.#expandRegion(button.region, borderPx), this.#theme.borderOuter, button.cornerRadiusPercent);
-                drawShape(button.shape, this.#expandRegion(button.region, borderPx * 0.5), this.#theme.borderInner, button.cornerRadiusPercent);
-                drawShape(button.shape, button.region, color, button.cornerRadiusPercent);
+                drawButtonShape(buttonSpec.shape, this.#expandRegion(buttonSpec.region, borderThickness), this.#theme.borderOuter, buttonSpec.cornerRadiusPercent);
+                drawButtonShape(buttonSpec.shape, this.#expandRegion(buttonSpec.region, borderThickness * 0.5), this.#theme.borderInner, buttonSpec.cornerRadiusPercent);
+                drawButtonShape(buttonSpec.shape, buttonSpec.region, blendedFillColor, buttonSpec.cornerRadiusPercent);
             }
         };
 
-        drawButton(model.buttons.left.leftBumper, this.#theme.idle, state.LB);
-        drawButton(model.buttons.left.select, this.#theme.idle, state.SELECT);
-        drawButton(model.buttons.left.leftTrigger, this.#theme.idle, state.LT);
-        drawButton(model.buttons.right.start, this.#theme.idle, state.START);
-        drawButton(model.buttons.right.rightBumper, this.#theme.idle, state.RB);
-        drawButton(model.buttons.right.rightTrigger, this.#theme.idle, state.RT);
-        drawButton(model.buttons.left.left, this.#theme.idle, state.DX < 0 ? 1 : 0);
-        drawButton(model.buttons.left.right, this.#theme.idle, state.DX > 0 ? 1 : 0);
-        drawButton(model.buttons.left.up, this.#theme.idle, state.DY < 0 ? 1 : 0);
-        drawButton(model.buttons.left.down, this.#theme.idle, state.DY > 0 ? 1 : 0);
-        drawButton(model.buttons.left.origin, this.#theme.idle, 0);
-        drawButton(model.buttons.right.up, this.#theme.rightFace.up, state.Y, this.#theme.rightFacePressed.up);
-        drawButton(model.buttons.right.right, this.#theme.rightFace.right, state.B, this.#theme.rightFacePressed.right);
-        drawButton(model.buttons.right.left, this.#theme.rightFace.left, state.X, this.#theme.rightFacePressed.left);
-        drawButton(model.buttons.right.down, this.#theme.rightFace.down, state.A, this.#theme.rightFacePressed.down);
-        drawButton(model.buttons.left.analogArea, this.#theme.black, 0);
-        drawButton(model.buttons.right.analogArea, this.#theme.black, 0);
+        drawButton(overlayModel.buttons.left.leftBumper, this.#theme.idle, state.LB);
+        drawButton(overlayModel.buttons.left.select, this.#theme.idle, state.SELECT);
+        drawButton(overlayModel.buttons.left.leftTrigger, this.#theme.idle, state.LT);
+        drawButton(overlayModel.buttons.right.start, this.#theme.idle, state.START);
+        drawButton(overlayModel.buttons.right.rightBumper, this.#theme.idle, state.RB);
+        drawButton(overlayModel.buttons.right.rightTrigger, this.#theme.idle, state.RT);
+        drawButton(overlayModel.buttons.left.left, this.#theme.idle, state.DX < 0 ? 1 : 0);
+        drawButton(overlayModel.buttons.left.right, this.#theme.idle, state.DX > 0 ? 1 : 0);
+        drawButton(overlayModel.buttons.left.up, this.#theme.idle, state.DY < 0 ? 1 : 0);
+        drawButton(overlayModel.buttons.left.down, this.#theme.idle, state.DY > 0 ? 1 : 0);
+        drawButton(overlayModel.buttons.left.origin, this.#theme.idle, 0);
+        drawButton(overlayModel.buttons.right.up, this.#theme.rightFace.up, state.Y, this.#theme.rightFacePressed.up);
+        drawButton(overlayModel.buttons.right.right, this.#theme.rightFace.right, state.B, this.#theme.rightFacePressed.right);
+        drawButton(overlayModel.buttons.right.left, this.#theme.rightFace.left, state.X, this.#theme.rightFacePressed.left);
+        drawButton(overlayModel.buttons.right.down, this.#theme.rightFace.down, state.A, this.#theme.rightFacePressed.down);
+        drawButton(overlayModel.buttons.left.analogArea, this.#theme.black, 0);
+        drawButton(overlayModel.buttons.right.analogArea, this.#theme.black, 0);
     }
 
     #buildSticks(state) {
-        const model = this.#model;
-        const stickVerts = this.#stickVerts;
-        const stickCols = this.#stickColors;
-        stickVerts.length = 0;
-        stickCols.length = 0;
-        const pushStick = (region, color) => {
-            const lut = this.#getCircleLut(36);
-            for (let i = 0; i < 36; i += 1) {
-                const p0 = lut[i];
-                const p1 = lut[(i + 1) % 36];
-                stickVerts.push(region.center.x, region.center.y, region.center.x + p0[0] * region.halfSize.x, region.center.y + p0[1] * region.halfSize.y, region.center.x + p1[0] * region.halfSize.x, region.center.y + p1[1] * region.halfSize.y);
-                for (let j = 0; j < 3; j += 1) {
-                    stickCols.push(color[0], color[1], color[2], color[3]);
+        const overlayModel = this.#model;
+        const stickVertexPositions = this.#stickVerts;
+        const stickVertexColors = this.#stickColors;
+        stickVertexPositions.length = 0;
+        stickVertexColors.length = 0;
+        const pushStick = (stickRegion, fillColor) => {
+            const unitCircleLookupTable = this.#getCircleLut(36);
+            for (let segmentIndex = 0; segmentIndex < 36; segmentIndex += 1) {
+                const currentUnitPoint = unitCircleLookupTable[segmentIndex];
+                const nextUnitPoint = unitCircleLookupTable[(segmentIndex + 1) % 36];
+                stickVertexPositions.push(stickRegion.center.x, stickRegion.center.y, stickRegion.center.x + currentUnitPoint[0] * stickRegion.halfSize.x, stickRegion.center.y + currentUnitPoint[1] * stickRegion.halfSize.y, stickRegion.center.x + nextUnitPoint[0] * stickRegion.halfSize.x, stickRegion.center.y + nextUnitPoint[1] * stickRegion.halfSize.y);
+                for (let colorComponentIndex = 0; colorComponentIndex < 3; colorComponentIndex += 1) {
+                    stickVertexColors.push(fillColor[0], fillColor[1], fillColor[2], fillColor[3]);
                 }
             }
         };
-        const borderPx = Math.max(2.5, this.#model.borderWidth);
-        const leftOffset = clampNormalizedOffsetToEllipse({offset: {x: state.LX, y: state.LY}, halfSize: model.leftLayout.origin.halfSize});
-        const rightOffset = clampNormalizedOffsetToEllipse({offset: {x: state.RX, y: state.RY}, halfSize: model.rightLayout.origin.halfSize});
-        const leftStick = model.buttons.left.analogStick.region.clone().update({topLeft: model.buttons.left.analogStick.region.topLeft.clone().add(leftOffset)});
-        const rightStick = model.buttons.right.analogStick.region.clone().update({topLeft: model.buttons.right.analogStick.region.topLeft.clone().add(rightOffset)});
-        const leftStickRing = model.buttons.left.analogStickRing.region.clone().update({topLeft: model.buttons.left.analogStickRing.region.topLeft.clone().add(leftOffset)});
-        const rightStickRing = model.buttons.right.analogStickRing.region.clone().update({topLeft: model.buttons.right.analogStickRing.region.topLeft.clone().add(rightOffset)});
-        const leftFill = this.#mix(this.#theme.idle, state.LS);
-        const rightFill = this.#mix(this.#theme.idle, state.RS);
-        const drawRing = (ring, fill) => {
-            const whiteOuter = this.#expandRegion(ring, borderPx);
-            const whiteInner = this.#insetRegion(whiteOuter, borderPx * 0.5);
-            const blackOuter = whiteInner;
-            const blackInner = this.#insetRegion(blackOuter, borderPx * 0.5);
-            pushStick(whiteOuter, this.#theme.borderOuter);
-            pushStick(whiteInner, fill);
-            pushStick(blackOuter, this.#theme.borderInner);
-            pushStick(blackInner, fill);
+        const borderThickness = Math.max(2.5, this.#model.borderWidth);
+        const leftStickOffset = clampNormalizedOffsetToEllipse({offset: {x: state.LX, y: state.LY}, halfSize: overlayModel.leftLayout.origin.halfSize});
+        const rightStickOffset = clampNormalizedOffsetToEllipse({offset: {x: state.RX, y: state.RY}, halfSize: overlayModel.rightLayout.origin.halfSize});
+        const leftStickRegion = overlayModel.buttons.left.analogStick.region.clone().update({topLeft: overlayModel.buttons.left.analogStick.region.topLeft.clone().add(leftStickOffset)});
+        const rightStickRegion = overlayModel.buttons.right.analogStick.region.clone().update({topLeft: overlayModel.buttons.right.analogStick.region.topLeft.clone().add(rightStickOffset)});
+        const leftRingRegion = overlayModel.buttons.left.analogStickRing.region.clone().update({topLeft: overlayModel.buttons.left.analogStickRing.region.topLeft.clone().add(leftStickOffset)});
+        const rightRingRegion = overlayModel.buttons.right.analogStickRing.region.clone().update({topLeft: overlayModel.buttons.right.analogStickRing.region.topLeft.clone().add(rightStickOffset)});
+        const leftStickFillColor = this.#mix(this.#theme.idle, state.LS);
+        const rightStickFillColor = this.#mix(this.#theme.idle, state.RS);
+        const drawRing = (ringRegion, ringFillColor) => {
+            const whiteBorderOuterRegion = this.#expandRegion(ringRegion, borderThickness);
+            const whiteBorderInnerRegion = this.#insetRegion(whiteBorderOuterRegion, borderThickness * 0.5);
+            const blackBorderOuterRegion = whiteBorderInnerRegion;
+            const blackBorderInnerRegion = this.#insetRegion(blackBorderOuterRegion, borderThickness * 0.5);
+            pushStick(whiteBorderOuterRegion, this.#theme.borderOuter);
+            pushStick(whiteBorderInnerRegion, ringFillColor);
+            pushStick(blackBorderOuterRegion, this.#theme.borderInner);
+            pushStick(blackBorderInnerRegion, ringFillColor);
         };
-        pushStick(this.#expandRegion(leftStick, borderPx), this.#theme.borderOuter);
-        pushStick(this.#expandRegion(leftStick, borderPx * 0.5), this.#theme.borderInner);
-        pushStick(leftStick, leftFill);
-        drawRing(leftStickRing, leftFill);
-        pushStick(this.#expandRegion(rightStick, borderPx), this.#theme.borderOuter);
-        pushStick(this.#expandRegion(rightStick, borderPx * 0.5), this.#theme.borderInner);
-        pushStick(rightStick, rightFill);
-        drawRing(rightStickRing, rightFill);
+        pushStick(this.#expandRegion(leftStickRegion, borderThickness), this.#theme.borderOuter);
+        pushStick(this.#expandRegion(leftStickRegion, borderThickness * 0.5), this.#theme.borderInner);
+        pushStick(leftStickRegion, leftStickFillColor);
+        drawRing(leftRingRegion, leftStickFillColor);
+        pushStick(this.#expandRegion(rightStickRegion, borderThickness), this.#theme.borderOuter);
+        pushStick(this.#expandRegion(rightStickRegion, borderThickness * 0.5), this.#theme.borderInner);
+        pushStick(rightStickRegion, rightStickFillColor);
+        drawRing(rightRingRegion, rightStickFillColor);
     }
 
     #renderStreams() {
@@ -553,19 +538,19 @@ class WebGLGamepadOverlayRenderer {
     }
 
     draw() {
-        const buildStart = performance.now();
+        const buildStartTimestamp = performance.now();
         this.#buildDynamicButtons(this.#model.state);
-        const uploadStart = performance.now();
+        const uploadStartTimestamp = performance.now();
         this.#dynamicStream.upload(this.#vertices, this.#colors);
         this.#buildSticks(this.#model.state);
         this.#stickStream.upload(this.#stickVerts, this.#stickColors);
         this.#renderStreams();
-        const drawEnd = performance.now();
+        const drawEndTimestamp = performance.now();
         this.#perf.addFrame({
-            buildMs: (uploadStart - buildStart),
-            uploadMs: (drawEnd - uploadStart),
-            dynamicVertices: this.#dynamicStream.vertexCount,
-            stickVertices: this.#stickStream.vertexCount,
+            geometryBuildMilliseconds: (uploadStartTimestamp - buildStartTimestamp),
+            uploadAndDrawMilliseconds: (drawEndTimestamp - uploadStartTimestamp),
+            dynamicVertexCount: this.#dynamicStream.vertexCount,
+            stickVertexCount: this.#stickStream.vertexCount,
         });
     }
 }
