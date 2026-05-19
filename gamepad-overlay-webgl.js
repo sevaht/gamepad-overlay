@@ -288,20 +288,27 @@ class WebGLGamepadOverlayRenderer {
         const borderPx = Math.max(2.5, this.#model.borderWidth);
         const leftStickFill = mix(this.#theme.idle, s.LS);
         const rightStickFill = mix(this.#theme.idle, s.RS);
+        const drawStickRing = (ringRegion, stickFill) => {
+            const whiteOuter = expandRegion(ringRegion, borderPx);
+            const whiteInner = insetRegion(whiteOuter, borderPx * 0.5);
+            const blackOuter = whiteInner;
+            const blackInner = insetRegion(blackOuter, borderPx * 0.5);
+
+            pushStick(whiteOuter, this.#theme.borderOuter);
+            pushStick(whiteInner, stickFill);
+            pushStick(blackOuter, this.#theme.borderInner);
+            pushStick(blackInner, stickFill);
+        };
 
         pushStick(expandRegion(leftStick, borderPx), this.#theme.borderOuter);
         pushStick(expandRegion(leftStick, borderPx * 0.5), this.#theme.borderInner);
         pushStick(leftStick, leftStickFill);
-        pushStick(leftStickRing, this.#theme.borderOuter);
-        pushStick(insetRegion(leftStickRing, borderPx * 0.5), this.#theme.borderInner);
-        pushStick(insetRegion(leftStickRing, borderPx * 0.55), leftStickFill);
+        drawStickRing(leftStickRing, leftStickFill);
 
         pushStick(expandRegion(rightStick, borderPx), this.#theme.borderOuter);
         pushStick(expandRegion(rightStick, borderPx * 0.5), this.#theme.borderInner);
         pushStick(rightStick, rightStickFill);
-        pushStick(rightStickRing, this.#theme.borderOuter);
-        pushStick(insetRegion(rightStickRing, borderPx * 0.5), this.#theme.borderInner);
-        pushStick(insetRegion(rightStickRing, borderPx * 0.55), rightStickFill);
+        drawStickRing(rightStickRing, rightStickFill);
         gl.bindBuffer(gl.ARRAY_BUFFER, this.#posBuffer);
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(stickVerts), gl.DYNAMIC_DRAW);
         gl.vertexAttribPointer(this.#aPos, 2, gl.FLOAT, false, 0, 0);
