@@ -693,6 +693,9 @@ class GamepadEntity {
             }
             if (layer.cutout) {
                 const cutoutSourceId = layer.cutoutSourceId ?? this.element.id;
+                // cutoutSourceId is a mask-only definition source. It may be
+                // distinct from the rendered sourceId and must move with this
+                // entity when translations are applied.
                 setMask(useElement, this.getMaskIdForSource(cutoutSourceId));
                 if (!connectedSourceIds.has(cutoutSourceId)) {
                     const cutoutSourceElement = this.#context.queryChild(cutoutSourceId);
@@ -890,6 +893,19 @@ class GamepadEntity {
         }
         this.#translation = offset;
         this.#applyTransforms();
+        return this;
+    }
+    getConnectedDefinitionElements() {
+        return [...this.#connectedElements];
+    }
+    getPressVisualSourceId() {
+        return this.#pressVisualSourceId;
+    }
+    maskStyleSourceBySourceId(sourceId) {
+        if (this.#styleSourceElement == null) {
+            return this;
+        }
+        setMask(this.#styleSourceElement, this.getMaskIdForSource(sourceId));
         return this;
     }
     get element() {
@@ -1147,6 +1163,25 @@ class GamepadOverlay {
         });
     }
 
+    #expandPointsFromCenter(points, center, amount) {
+        if (!(amount > 0)) {
+            return points;
+        }
+        return points.map((point) => {
+            const deltaX = point.x - center.x;
+            const deltaY = point.y - center.y;
+            const length = Math.hypot(deltaX, deltaY);
+            if (length === 0) {
+                return point.clone();
+            }
+            const scale = (length + amount) / length;
+            return new Vector2({
+                x: center.x + deltaX * scale,
+                y: center.y + deltaY * scale,
+            });
+        });
+    }
+
     #createButton({
         group,
         id,
@@ -1167,6 +1202,24 @@ class GamepadOverlay {
         const expandedRegion = includeBorderStroke
             ? this.#inflateRegion(region, this.#innerBorderSize / 2)
             : region;
+        let expandedCornerRadiusPercent = cornerRadiusPercent;
+        if (includeBorderStroke && shapeType === ShapeType.RECTANGLE) {
+            const innerHalf = this.#innerBorderSize / 2;
+            const originalRadiusX = region.halfSize.x * cornerRadiusPercent.x;
+            const originalRadiusY = region.halfSize.y * cornerRadiusPercent.y;
+            const expandedRadiusX = Math.min(
+                expandedRegion.halfSize.x,
+                Math.max(0, originalRadiusX + innerHalf),
+            );
+            const expandedRadiusY = Math.min(
+                expandedRegion.halfSize.y,
+                Math.max(0, originalRadiusY + innerHalf),
+            );
+            expandedCornerRadiusPercent = new Vector2({
+                x: expandedRegion.halfSize.x === 0 ? 0 : expandedRadiusX / expandedRegion.halfSize.x,
+                y: expandedRegion.halfSize.y === 0 ? 0 : expandedRadiusY / expandedRegion.halfSize.y,
+            });
+        }
         const fillCutoutShapeId = includeBorderStroke
             ? monotonicId(`${id}-cutout-`)
             : null;
@@ -1192,7 +1245,7 @@ class GamepadOverlay {
         const entity = new GamepadEntity({
             context: this.#context,
             element: createSvgShape(
-                {region: expandedRegion, shapeType, cornerRadiusPercent},
+                {region: expandedRegion, shapeType, cornerRadiusPercent: expandedCornerRadiusPercent},
                 {id},
             ),
             layers,
@@ -1227,14 +1280,26 @@ class GamepadOverlay {
     }
 
     #createCrossBorder({group, id, layout}) {
+        const innerCrossId = monotonicId(`${id}-inner-cross-`);
+        this.#context.addDefinition(createSvgPolygon(layout.crossPoints, {id: innerCrossId}));
+        const expandedPoints = this.#expandPointsFromCenter(
+            layout.crossPoints,
+            layout.origin.center,
+            this.#innerBorderSize / 2,
+        );
         return new GamepadEntity({
             context: this.#context,
-            element: createSvgPolygon(layout.crossPoints, {id}),
+            element: createSvgPolygon(expandedPoints, {id}),
             layers: [
-                {classes: "outer-border", cutout: true},
-                {classes: "inner-border", cutout: true},
+                {
+                    classes: "outer-border",
+                    cutout: true,
+                    cutoutSourceId: innerCrossId,
+                },
+                {classes: "black-border-stroke"},
             ],
             parent: group,
+            pressVisualSourceId: innerCrossId,
         });
     }
 
@@ -1581,30 +1646,22 @@ class GamepadOverlay {
                 center: layout.analogRegion.center,
                 size: analogStickSize.clone().multiply(Vector2.splat(0.75)),
             });
-            const analogStickRingCutoutId = monotonicId(`${sidePrefix}AnalogStickRingCutout-`);
-            this.#context.addDefinition(createSvgShape(
-                {region: analogStickRingRegion, shapeType: ShapeType.ELLIPSE},
-                {id: analogStickRingCutoutId},
-            ));
-            const analogStickRingExpandedRegion = this.#inflateRegion(analogStickRingRegion, this.#innerBorderSize / 2);
-            analogStickRing = new GamepadEntity({
-                context: this.#context,
-                element: createSvgShape({
-                    region: analogStickRingExpandedRegion,
-                    shapeType: ShapeType.ELLIPSE,
-                }, {id: `${sidePrefix}AnalogStickRing`} ),
-                layers: [
-                    {
-                        classes: "outer-border",
-                        cutout: true,
-                        cutoutSourceId: analogStickRingCutoutId,
-                    },
-                    {classes: "black-border-stroke"},
-                ],
-                parent: analogStickGroup,
+            analogStickRing = this.#createButton({
+                group: analogStickGroup,
+                id: `${sidePrefix}AnalogStickRing`,
+                region: analogStickRingRegion,
+                shapeType: ShapeType.ELLIPSE,
+                includeBorder: true,
+                buttonClasses: "gamepad-button",
+                semanticClasses: [`side-${sideName}`, "role-analog-stick-ring"],
+                semanticAttributes: {"data-side": sideName, "data-role": "analog-stick-ring"},
+                pressMode: "digital",
+                digitalRenderMode: "class-toggle",
             });
-            analogStick.connect(analogStickRing.element);
-            analogStick.connect(this.#context.queryChild(analogStickRingCutoutId));
+            for (const connectedElement of analogStickRing.getConnectedDefinitionElements()) {
+                analogStick.connect(connectedElement);
+            }
+            analogStick.maskStyleSourceBySourceId(analogStickRing.getPressVisualSourceId());
             setMask(backgroundGroup, analogStick.mask.id);
         }
 
