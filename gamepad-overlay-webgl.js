@@ -14,7 +14,13 @@ class WebGLGamepadOverlayRenderer {
     constructor({canvas, model}) {
         this.#canvas = canvas;
         this.#model = model;
-        this.#gl = canvas.getContext("webgl", {alpha: true, antialias: true, preserveDrawingBuffer: false, stencil: true});
+        this.#gl = canvas.getContext("webgl", {
+            alpha: true,
+            premultipliedAlpha: true,
+            antialias: true,
+            preserveDrawingBuffer: false,
+            stencil: true,
+        });
         if (!this.#gl) {
             throw new Error("WebGL unavailable in this browser");
         }
@@ -125,6 +131,31 @@ class WebGLGamepadOverlayRenderer {
             arc(region.topLeft.x + r, region.topLeft.y + r, Math.PI, Math.PI * 1.5);
             pushPoly(pts, color);
         };
+        const roundedRectLoop = (region, radius, segments = 6) => {
+            const r = Math.max(0, Math.min(radius, region.halfSize.x, region.halfSize.y));
+            if (r < 0.01) {
+                return [region.topLeft, region.topRight, region.bottomRight, region.bottomLeft];
+            }
+            const pts = [];
+            const arc = (cx, cy, a0, a1) => {
+                for (let i = 0; i < segments; i += 1) {
+                    const a = a0 + (a1 - a0) * (i / segments);
+                    pts.push(new Vector2({x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r}));
+                }
+            };
+            arc(region.topRight.x - r, region.topRight.y + r, -Math.PI / 2, 0);
+            arc(region.bottomRight.x - r, region.bottomRight.y - r, 0, Math.PI / 2);
+            arc(region.bottomLeft.x + r, region.bottomLeft.y - r, Math.PI / 2, Math.PI);
+            arc(region.topLeft.x + r, region.topLeft.y + r, Math.PI, Math.PI * 1.5);
+            return pts;
+        };
+        const pushRing = (outer, inner, color) => {
+            const n = Math.min(outer.length, inner.length);
+            for (let i = 0; i < n; i += 1) {
+                const j = (i + 1) % n;
+                pushPoly([outer[i], outer[j], inner[j], inner[i]], color);
+            }
+        };
         const mix = (base, amt) => {
             const p = Math.max(0, Math.min(1, amt));
             return [
@@ -175,24 +206,53 @@ class WebGLGamepadOverlayRenderer {
             const color = mix(base, amt);
             const borderPx = Math.max(2.5, this.#model.borderWidth);
 
-            const drawShape = (shape, region, fillColor) => {
+            const drawShape = (shape, region, fillColor, cornerRadiusPercent = 0) => {
                 if (shape === "ellipse") {
                     pushEllipse(region, fillColor);
                 } else if (shape === "triDown") {
                     pushPoly([region.bottomCenter, region.topLeft, region.topRight], fillColor);
                 } else {
-                    pushRoundedRect(region, borderPx * 0.9, fillColor);
+                    const radius = Math.max(0, Math.min(region.halfSize.x, region.halfSize.y) * cornerRadiusPercent);
+                    pushRoundedRect(region, radius, fillColor);
                 }
             };
-
+            const triScaleByPixels = (points, pixels) => {
+                const c = new Vector2({
+                    x: (points[0].x + points[1].x + points[2].x) / 3,
+                    y: (points[0].y + points[1].y + points[2].y) / 3,
+                });
+                const d0 = Math.hypot(points[0].x - c.x, points[0].y - c.y);
+                const d1 = Math.hypot(points[1].x - c.x, points[1].y - c.y);
+                const d2 = Math.hypot(points[2].x - c.x, points[2].y - c.y);
+                const avg = Math.max(1, (d0 + d1 + d2) / 3);
+                const f = (avg + pixels) / avg;
+                return points.map((p) => new Vector2({x: c.x + (p.x - c.x) * f, y: c.y + (p.y - c.y) * f}));
+            };
             if (button.shape === "triDown") {
-                pushPoly(scaleTri(triDownPoints(button.region), 1.18), this.#theme.borderOuter);
-                pushPoly(scaleTri(triDownPoints(button.region), 1.09), this.#theme.borderInner);
-                pushPoly(triDownPoints(button.region), base);
+                const baseTri = triDownPoints(button.region);
+                const outerTri = triScaleByPixels(baseTri, borderPx * 1.6);
+                const innerTri = triScaleByPixels(baseTri, borderPx * 0.8);
+                pushPoly(outerTri, this.#theme.borderOuter);
+                pushPoly(innerTri, this.#theme.borderInner);
+                pushPoly(baseTri, base);
             } else {
-                drawShape(button.shape, expandRegion(button.region, borderPx), this.#theme.borderOuter);
-                drawShape(button.shape, expandRegion(button.region, borderPx * 0.5), this.#theme.borderInner);
-                drawShape(button.shape, button.region, color);
+                if (button.shape === "rect" && (button.cornerRadiusPercent || 0) > 0) {
+                    const radius = Math.min(button.region.halfSize.x, button.region.halfSize.y) * button.cornerRadiusPercent;
+                    // Keep fill compositing aligned with the normal button path.
+                    drawShape(button.shape, expandRegion(button.region, borderPx * 0.5), this.#theme.borderInner, button.cornerRadiusPercent);
+                    drawShape(button.shape, button.region, color, button.cornerRadiusPercent);
+
+                    // Then apply rounded border bands to preserve correct corner appearance.
+                    const baseLoop = roundedRectLoop(button.region, radius, 8);
+                    const blackLoop = roundedRectLoop(expandRegion(button.region, borderPx * 0.5), radius + borderPx * 0.5, 8);
+                    const whiteLoop = roundedRectLoop(expandRegion(button.region, borderPx), radius + borderPx, 8);
+                    pushRing(whiteLoop, blackLoop, this.#theme.borderOuter);
+                    pushRing(blackLoop, baseLoop, this.#theme.borderInner);
+                } else {
+                    drawShape(button.shape, expandRegion(button.region, borderPx), this.#theme.borderOuter, button.cornerRadiusPercent);
+                    drawShape(button.shape, expandRegion(button.region, borderPx * 0.5), this.#theme.borderInner, button.cornerRadiusPercent);
+                    drawShape(button.shape, button.region, color, button.cornerRadiusPercent);
+                }
             }
 
             if (button.shape === "ellipse") {
