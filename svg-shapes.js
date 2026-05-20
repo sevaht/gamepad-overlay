@@ -652,6 +652,9 @@ class GamepadEntity {
     #cutoutMasksBySourceId;
     #pressVisualSourceId;
     #primaryCutoutSourceId;
+    #styleSourceMaskId;
+    #classToggleFramePending;
+    #pendingClassTogglePressed;
 
     constructor({context, element, parent, layers=[{}], offset=Vector2.ZERO, themeVariables = {}, pressVisualSourceId = null}) {
         // TODO: null validation?
@@ -675,6 +678,9 @@ class GamepadEntity {
         this.#cutoutMasksBySourceId = new Map();
         this.#pressVisualSourceId = pressVisualSourceId ?? this.element.id;
         this.#primaryCutoutSourceId = this.element.id;
+        this.#styleSourceMaskId = null;
+        this.#classToggleFramePending = false;
+        this.#pendingClassTogglePressed = null;
         this.setTranslation(offset);
         this.#context.addDefinition(this.#element);
         const connectedSourceIds = new Set([this.element.id]);
@@ -750,6 +756,9 @@ class GamepadEntity {
 
         }
         this.#applyThemeVariablesToElement(useElement);
+        if (this.#styleSourceMaskId != null) {
+            setMask(useElement, this.#styleSourceMaskId);
+        }
         this.#context.addChild(useElement, {parent: this.#layerParent, prepend});
 
         if (fillDirection === PressFillDirection.OUTWARD) {
@@ -839,8 +848,19 @@ class GamepadEntity {
             if (this.#isPressed === isPressed) {
                 return this;
             }
-            this.#isPressed = isPressed;
-            this.#styleSourceElement?.classList.toggle(this.#pressedClassName, isPressed);
+            this.#pendingClassTogglePressed = isPressed;
+            if (!this.#classToggleFramePending) {
+                this.#classToggleFramePending = true;
+                requestAnimationFrame(() => {
+                    this.#classToggleFramePending = false;
+                    if (this.#pendingClassTogglePressed == null) {
+                        return;
+                    }
+                    this.#isPressed = this.#pendingClassTogglePressed;
+                    this.#pendingClassTogglePressed = null;
+                    this.#styleSourceElement?.classList.toggle(this.#pressedClassName, this.#isPressed);
+                });
+            }
             return this;
         }
         return this.setPressAmount(isPressed ? 1 : 0);
@@ -910,7 +930,8 @@ class GamepadEntity {
         if (this.#styleSourceElement == null) {
             return this;
         }
-        setMask(this.#styleSourceElement, this.getMaskIdForSource(sourceId));
+        this.#styleSourceMaskId = this.getMaskIdForSource(sourceId);
+        setMask(this.#styleSourceElement, this.#styleSourceMaskId);
         return this;
     }
     get element() {
@@ -1758,11 +1779,12 @@ class GamepadOverlay {
                 semanticAttributes: {"data-side": sideName, "data-role": "analog-stick-ring"},
                 pressMode: "digital",
                 digitalRenderMode: "class-toggle",
+                digitalThreshold: 0.01,
             });
             for (const connectedElement of analogStickRing.getConnectedDefinitionElements()) {
                 analogStick.connect(connectedElement);
             }
-            analogStick.maskStyleSourceBySourceId(analogStickRing.getPrimaryCutoutSourceId());
+            analogStick.maskStyleSourceBySourceId(analogStickRing.element.id);
             setMask(backgroundGroup, analogStick.mask.id);
         }
 
