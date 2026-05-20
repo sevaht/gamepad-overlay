@@ -399,6 +399,13 @@ class ShapeModel {
     }
 }
 
+// Terminology glossary:
+// - pressFillShapeId: shape used for press-fill visuals (must match intended fill area).
+// - borderCutoutShapeId: shape used to cut out the white border under black stroke.
+// - LayerSpec: declarative render plan for one SVG <use> layer.
+// - ShapeModel: center-based geometry model for one shape.
+// - BorderModel: border sizing/expansion policy for external stroke-style borders.
+
 class BorderModel {
     #innerSize;
 
