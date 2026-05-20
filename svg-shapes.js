@@ -357,7 +357,6 @@ function snapRegionToStep(region, step = SHAPE_SNAP_STEP) {
 }
 
 function createSvgShape({region, shapeType, cornerRadiusPercent = Vector2.ZERO}, attributes = {}) {
-    region = snapRegionToStep(region);
     let element;
     switch (shapeType) {
         case ShapeType.RECTANGLE:
@@ -652,6 +651,7 @@ class GamepadEntity {
     #themeVariables;
     #cutoutMasksBySourceId;
     #pressVisualSourceId;
+    #primaryCutoutSourceId;
 
     constructor({context, element, parent, layers=[{}], offset=Vector2.ZERO, themeVariables = {}, pressVisualSourceId = null}) {
         // TODO: null validation?
@@ -674,6 +674,7 @@ class GamepadEntity {
         this.#themeVariables = {...themeVariables};
         this.#cutoutMasksBySourceId = new Map();
         this.#pressVisualSourceId = pressVisualSourceId ?? this.element.id;
+        this.#primaryCutoutSourceId = this.element.id;
         this.setTranslation(offset);
         this.#context.addDefinition(this.#element);
         const connectedSourceIds = new Set([this.element.id]);
@@ -693,6 +694,7 @@ class GamepadEntity {
             }
             if (layer.cutout) {
                 const cutoutSourceId = layer.cutoutSourceId ?? this.element.id;
+                this.#primaryCutoutSourceId = cutoutSourceId;
                 // cutoutSourceId is a mask-only definition source. It may be
                 // distinct from the rendered sourceId and must move with this
                 // entity when translations are applied.
@@ -737,7 +739,7 @@ class GamepadEntity {
         useElement.classList.add(className);
         if (this.#styleSourceElement != null) {
             for (const sourceClass of this.#styleSourceElement.classList) {
-                if (sourceClass !== "gamepad-button") {
+                if (sourceClass !== "gamepad-button" && sourceClass !== "gamepad-button-bordered") {
                     useElement.classList.add(sourceClass);
                 }
             }
@@ -900,6 +902,9 @@ class GamepadEntity {
     }
     getPressVisualSourceId() {
         return this.#pressVisualSourceId;
+    }
+    getPrimaryCutoutSourceId() {
+        return this.#primaryCutoutSourceId;
     }
     maskStyleSourceBySourceId(sourceId) {
         if (this.#styleSourceElement == null) {
@@ -1182,6 +1187,92 @@ class GamepadOverlay {
         });
     }
 
+    #trianglePointsForRegion(shapeType, region) {
+        switch (shapeType) {
+            case ShapeType.TRIANGLE_UP:
+                return [region.topCenter, region.bottomLeft, region.bottomRight];
+            case ShapeType.TRIANGLE_DOWN:
+                return [region.bottomCenter, region.topLeft, region.topRight];
+            case ShapeType.TRIANGLE_LEFT:
+                return [region.centerLeft, region.topRight, region.bottomRight];
+            case ShapeType.TRIANGLE_RIGHT:
+                return [region.centerRight, region.topLeft, region.bottomLeft];
+            default:
+                return null;
+        }
+    }
+
+    #polygonSignedArea(points) {
+        let sum = 0;
+        for (let i = 0; i < points.length; i += 1) {
+            const a = points[i];
+            const b = points[(i + 1) % points.length];
+            sum += (a.x * b.y) - (b.x * a.y);
+        }
+        return sum / 2;
+    }
+
+    #lineIntersection(a1, a2, b1, b2) {
+        const x1 = a1.x;
+        const y1 = a1.y;
+        const x2 = a2.x;
+        const y2 = a2.y;
+        const x3 = b1.x;
+        const y3 = b1.y;
+        const x4 = b2.x;
+        const y4 = b2.y;
+
+        const denominator = ((x1 - x2) * (y3 - y4)) - ((y1 - y2) * (x3 - x4));
+        if (Math.abs(denominator) < 1e-9) {
+            return null;
+        }
+
+        const pre = (x1 * y2) - (y1 * x2);
+        const post = (x3 * y4) - (y3 * x4);
+        const x = ((pre * (x3 - x4)) - ((x1 - x2) * post)) / denominator;
+        const y = ((pre * (y3 - y4)) - ((y1 - y2) * post)) / denominator;
+        return new Vector2({x, y});
+    }
+
+    #offsetConvexPolygon(points, distance) {
+        if (!(distance > 0) || points.length < 3) {
+            return points;
+        }
+
+        const area = this.#polygonSignedArea(points);
+        const winding = area >= 0 ? 1 : -1;
+
+        const offsetEdges = points.map((start, index) => {
+            const end = points[(index + 1) % points.length];
+            const edgeX = end.x - start.x;
+            const edgeY = end.y - start.y;
+            const edgeLength = Math.hypot(edgeX, edgeY);
+            if (edgeLength === 0) {
+                return null;
+            }
+
+            const normalScale = winding / edgeLength;
+            const outwardNormalX = edgeY * normalScale;
+            const outwardNormalY = -edgeX * normalScale;
+            const offsetX = outwardNormalX * distance;
+            const offsetY = outwardNormalY * distance;
+
+            return {
+                a: new Vector2({x: start.x + offsetX, y: start.y + offsetY}),
+                b: new Vector2({x: end.x + offsetX, y: end.y + offsetY}),
+            };
+        });
+
+        return points.map((point, index) => {
+            const previousEdge = offsetEdges[(index - 1 + offsetEdges.length) % offsetEdges.length];
+            const nextEdge = offsetEdges[index];
+            if (previousEdge == null || nextEdge == null) {
+                return point.clone();
+            }
+            return this.#lineIntersection(previousEdge.a, previousEdge.b, nextEdge.a, nextEdge.b) ?? point.clone();
+        });
+    }
+
     #createButton({
         group,
         id,
@@ -1199,8 +1290,10 @@ class GamepadOverlay {
         prewarmPressVisual = this.#prewarmPressVisuals && pressMode === "digital" && digitalRenderMode === "fill",
     }) {
         const includeBorderStroke = includeBorder && this.#innerBorderSize > 0;
+        const borderExpandAmount = this.#innerBorderSize / 2;
+        const trianglePoints = this.#trianglePointsForRegion(shapeType, region);
         const expandedRegion = includeBorderStroke
-            ? this.#inflateRegion(region, this.#innerBorderSize / 2)
+            ? this.#inflateRegion(region, borderExpandAmount)
             : region;
         let expandedCornerRadiusPercent = cornerRadiusPercent;
         if (includeBorderStroke && shapeType === ShapeType.RECTANGLE) {
@@ -1242,12 +1335,20 @@ class GamepadOverlay {
                 {id: fillCutoutShapeId},
             ));
         }
-        const entity = new GamepadEntity({
-            context: this.#context,
-            element: createSvgShape(
+        const element = (() => {
+            if (includeBorderStroke && trianglePoints != null) {
+                const expandedTrianglePoints = this.#offsetConvexPolygon(trianglePoints, borderExpandAmount);
+                return createSvgPolygon(expandedTrianglePoints, {id});
+            }
+            return createSvgShape(
                 {region: expandedRegion, shapeType, cornerRadiusPercent: expandedCornerRadiusPercent},
                 {id},
-            ),
+            );
+        })();
+
+        const entity = new GamepadEntity({
+            context: this.#context,
+            element,
             layers,
             parent: group,
             themeVariables,
@@ -1661,7 +1762,7 @@ class GamepadOverlay {
             for (const connectedElement of analogStickRing.getConnectedDefinitionElements()) {
                 analogStick.connect(connectedElement);
             }
-            analogStick.maskStyleSourceBySourceId(analogStickRing.getPressVisualSourceId());
+            analogStick.maskStyleSourceBySourceId(analogStickRing.getPrimaryCutoutSourceId());
             setMask(backgroundGroup, analogStick.mask.id);
         }
 
