@@ -215,35 +215,93 @@
         return {mode: "blend", baseToken, pressedToken, amount: Math.max(0, Math.min(1, Number(amount) || 0))};
     }
 
+    function polygonSignedArea(points) {
+        let area = 0;
+        for (let index = 0; index < points.length; index += 1) {
+            const current = points[index];
+            const next = points[(index + 1) % points.length];
+            area += (current.x * next.y) - (next.x * current.y);
+        }
+        return area / 2;
+    }
+
+    function lineIntersection(a1, a2, b1, b2) {
+        const x1 = a1.x;
+        const y1 = a1.y;
+        const x2 = a2.x;
+        const y2 = a2.y;
+        const x3 = b1.x;
+        const y3 = b1.y;
+        const x4 = b2.x;
+        const y4 = b2.y;
+        const denominator = ((x1 - x2) * (y3 - y4)) - ((y1 - y2) * (x3 - x4));
+        if (Math.abs(denominator) < 1e-9) {
+            return null;
+        }
+        const pre = (x1 * y2) - (y1 * x2);
+        const post = (x3 * y4) - (y3 * x4);
+        const x = ((pre * (x3 - x4)) - ((x1 - x2) * post)) / denominator;
+        const y = ((pre * (y3 - y4)) - ((y1 - y2) * post)) / denominator;
+        return new Vector2({x, y});
+    }
+
+    function offsetConvexPolygon(points, distance) {
+        if (!(distance > 0) || points.length < 3) {
+            return points;
+        }
+        const area = polygonSignedArea(points);
+        const winding = area >= 0 ? 1 : -1;
+        const offsetEdges = points.map((start, index) => {
+            const end = points[(index + 1) % points.length];
+            const edgeX = end.x - start.x;
+            const edgeY = end.y - start.y;
+            const edgeLength = Math.hypot(edgeX, edgeY);
+            if (edgeLength === 0) {
+                return null;
+            }
+            const normalScale = winding / edgeLength;
+            const outwardNormalX = edgeY * normalScale;
+            const outwardNormalY = -edgeX * normalScale;
+            const offsetX = outwardNormalX * distance;
+            const offsetY = outwardNormalY * distance;
+            return {
+                a: new Vector2({x: start.x + offsetX, y: start.y + offsetY}),
+                b: new Vector2({x: end.x + offsetX, y: end.y + offsetY}),
+            };
+        });
+        return points.map((point, index) => {
+            const previousEdge = offsetEdges[(index - 1 + offsetEdges.length) % offsetEdges.length];
+            const nextEdge = offsetEdges[index];
+            if (previousEdge == null || nextEdge == null) {
+                return point.clone();
+            }
+            return lineIntersection(previousEdge.a, previousEdge.b, nextEdge.a, nextEdge.b) ?? point.clone();
+        });
+    }
+
     function buildButtonDrawOps({shapeModel, borderModel, inputAmount = 0, pressMode = "digital", baseColorToken = "idle", pressedColorToken = "pressed"}) {
         const ops = [];
         const blendedFaceColor = blendColor(baseColorToken, pressedColorToken, inputAmount);
-        const isTriangleDown = shapeModel.shapeType === "triDown";
-        const isRoundedRect = shapeModel.shapeType === "rect" && shapeModel.cornerRadiusPercent > 0;
+        const isTriangle = typeof shapeModel.shapeType === "string" && shapeModel.shapeType.startsWith("tri");
 
-        if (isTriangleDown) {
-            ops.push({kind: "triangleStroke", points: shapeModel.trianglePoints(), strokeWidth: borderModel.width * 2, color: solidColor("borderOuter")});
-            ops.push({kind: "triangleStroke", points: shapeModel.trianglePoints(), strokeWidth: borderModel.width, color: solidColor("borderInner")});
-            ops.push({kind: "shapeFill", shapeModel: new OverlayShapeModel({region: shapeModel.region, shapeType: "triDown", cornerRadiusPercent: 0}), color: solidColor("borderInner")});
-            ops.push({kind: "shapeFill", shapeModel, color: solidColor(baseColorToken)});
-            if (pressMode === "analog" && inputAmount > 0) {
-                ops.push({kind: "trianglePressFill", points: shapeModel.trianglePoints(), amount: Math.max(0, Math.min(1, Number(inputAmount) || 0)), color: solidColor(pressedColorToken)});
+        if (isTriangle) {
+            const facePoints = shapeModel.trianglePoints();
+            const blackOuterPoints = offsetConvexPolygon(facePoints, borderModel.halfWidth);
+            const whiteOuterPoints = offsetConvexPolygon(facePoints, borderModel.width);
+            ops.push({kind: "polygonRing", innerPoints: blackOuterPoints, outerPoints: whiteOuterPoints, color: solidColor("borderOuter")});
+            ops.push({kind: "polygonRing", innerPoints: facePoints, outerPoints: blackOuterPoints, color: solidColor("borderInner")});
+            ops.push({kind: "polygonFill", points: facePoints, color: solidColor("borderInner")});
+            ops.push({kind: "polygonFill", points: facePoints, color: solidColor(baseColorToken)});
+            if (pressMode === "analog" && inputAmount > 0.01) {
+                ops.push({kind: "trianglePressFill", points: facePoints, amount: Math.max(0, Math.min(1, Number(inputAmount) || 0)), color: solidColor(pressedColorToken)});
             }
             return ops;
         }
 
-        if (isRoundedRect) {
-            const halfExpanded = shapeModel.expanded(borderModel.halfWidth);
-            const fullExpanded = shapeModel.expanded(borderModel.width);
-            ops.push({kind: "shapeFill", shapeModel: halfExpanded, color: solidColor("borderInner")});
-            ops.push({kind: "shapeFill", shapeModel, color: blendedFaceColor});
-            ops.push({kind: "roundedBorderRing", innerShape: halfExpanded, outerShape: fullExpanded, color: solidColor("borderOuter")});
-            ops.push({kind: "roundedBorderRing", innerShape: shapeModel, outerShape: halfExpanded, color: solidColor("borderInner")});
-            return ops;
-        }
-
-        ops.push({kind: "shapeFill", shapeModel: shapeModel.expanded(borderModel.width), color: solidColor("borderOuter")});
-        ops.push({kind: "shapeFill", shapeModel: shapeModel.expanded(borderModel.halfWidth), color: solidColor("borderInner")});
+        const halfExpanded = shapeModel.expanded(borderModel.halfWidth);
+        const fullExpanded = shapeModel.expanded(borderModel.width);
+        ops.push({kind: "borderRing", innerShape: halfExpanded, outerShape: fullExpanded, color: solidColor("borderOuter")});
+        ops.push({kind: "borderRing", innerShape: shapeModel, outerShape: halfExpanded, color: solidColor("borderInner")});
         ops.push({kind: "shapeFill", shapeModel, color: blendedFaceColor});
         return ops;
     }
@@ -262,12 +320,21 @@
             size: blackOuterRegion.size.clone().add(Vector2.splat(-borderModel.halfWidth * 2)),
         });
 
-        ops.push({kind: "shapeFill", shapeModel: stickShape.expanded(borderModel.width), color: solidColor("borderOuter")});
-        ops.push({kind: "shapeFill", shapeModel: stickShape.expanded(borderModel.halfWidth), color: solidColor("borderInner")});
+        const stickOuterShape = stickShape.expanded(borderModel.width);
+        const ringOuterShape = new OverlayShapeModel({region: whiteOuterRegion, shapeType: "ellipse"});
+
+        ops.push({kind: "cutoutShape", shapeModel: stickOuterShape});
+        ops.push({kind: "borderRing", innerShape: stickShape.expanded(borderModel.halfWidth), outerShape: stickOuterShape, color: solidColor("borderOuter")});
+        ops.push({kind: "borderRing", innerShape: stickShape, outerShape: stickShape.expanded(borderModel.halfWidth), color: solidColor("borderInner")});
+        ops.push({kind: "cutoutShape", shapeModel: stickShape});
         ops.push({kind: "shapeFill", shapeModel: stickShape, color: fillColorSpec});
-        ops.push({kind: "shapeFill", shapeModel: new OverlayShapeModel({region: whiteOuterRegion, shapeType: "ellipse"}), color: solidColor("borderOuter")});
+
+        ops.push({kind: "cutoutShape", shapeModel: ringOuterShape});
+        ops.push({kind: "borderRing", innerShape: new OverlayShapeModel({region: whiteInnerRegion, shapeType: "ellipse"}), outerShape: ringOuterShape, color: solidColor("borderOuter")});
+        ops.push({kind: "cutoutShape", shapeModel: new OverlayShapeModel({region: whiteInnerRegion, shapeType: "ellipse"})});
         ops.push({kind: "shapeFill", shapeModel: new OverlayShapeModel({region: whiteInnerRegion, shapeType: "ellipse"}), color: fillColorSpec});
-        ops.push({kind: "shapeFill", shapeModel: new OverlayShapeModel({region: blackOuterRegion, shapeType: "ellipse"}), color: solidColor("borderInner")});
+        ops.push({kind: "borderRing", innerShape: new OverlayShapeModel({region: blackInnerRegion, shapeType: "ellipse"}), outerShape: new OverlayShapeModel({region: blackOuterRegion, shapeType: "ellipse"}), color: solidColor("borderInner")});
+        ops.push({kind: "cutoutShape", shapeModel: new OverlayShapeModel({region: blackInnerRegion, shapeType: "ellipse"})});
         ops.push({kind: "shapeFill", shapeModel: new OverlayShapeModel({region: blackInnerRegion, shapeType: "ellipse"}), color: fillColorSpec});
         return ops;
     }

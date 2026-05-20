@@ -1,22 +1,29 @@
-const clampToEllipseCanvas = OverlayCore.clampNormalizedOffsetToEllipse;
+const CanvasCore = OverlayCore;
+const buildRasterRenderPlans = OverlayDomain.buildRasterRenderPlans;
+const buildButtonDrawOps = OverlayDomain.buildButtonDrawOps;
+const buildStickDrawOps = OverlayDomain.buildStickDrawOps;
+const CanvasBorderModel = OverlayDomain.BorderModel;
 
 class Canvas2DGamepadOverlayRenderer {
     #canvas;
     #ctx;
     #model;
     #theme;
+    #borderModel;
 
     constructor({canvas, model}) {
         this.#canvas = canvas;
         this.#ctx = canvas.getContext("2d", {alpha: true, desynchronized: true});
         this.#model = model;
         this.#theme = this.#buildTheme();
+        this.#borderModel = new CanvasBorderModel({innerSize: Math.max(2.5, this.#model.borderWidth)});
         this.resize();
     }
 
     resize() {
         this.#canvas.width = Math.ceil(this.#model.width);
         this.#canvas.height = Math.ceil(this.#model.height);
+        this.#borderModel = new CanvasBorderModel({innerSize: Math.max(2.5, this.#model.borderWidth)});
         this.draw();
     }
 
@@ -35,69 +42,197 @@ class Canvas2DGamepadOverlayRenderer {
             black: [0, 0, 0, 1],
             borderOuter: [255, 255, 255, 1],
             borderInner: [0, 0, 0, 1],
-            rightFace: {
-                up: [95, 95, 31, idleAlpha],
-                right: [95, 31, 31, idleAlpha],
-                left: [31, 31, 95, idleAlpha],
-                down: [31, 79, 32, idleAlpha],
-            },
+            rightFaceUp: [95, 95, 31, idleAlpha],
+            rightFaceRight: [95, 31, 31, idleAlpha],
+            rightFaceLeft: [31, 31, 95, idleAlpha],
+            rightFaceDown: [31, 79, 32, idleAlpha],
+            rightFacePressedUp: [255, 255, 51, 1],
+            rightFacePressedRight: [255, 51, 51, 1],
+            rightFacePressedLeft: [51, 119, 255, 1],
+            rightFacePressedDown: [63, 207, 63, 1],
         };
     }
 
-    draw() {
-        const ctx = this.#ctx;
-        const model = this.#model;
-        const s = model.state;
-        ctx.clearRect(0, 0, this.#canvas.width, this.#canvas.height);
-
-        this.#drawCrossBorder(model.leftLayout.crossPoints);
-
-        this.#drawButton(model.buttons.left.analogArea, this.#theme.black, 0);
-        this.#drawButton(model.buttons.right.analogArea, this.#theme.black, 0);
-
-        this.#drawButton(model.buttons.left.leftBumper, this.#theme.idle, s.LB);
-        this.#drawButton(model.buttons.left.select, this.#theme.idle, s.SELECT);
-        this.#drawButton(model.buttons.left.leftTrigger, this.#theme.idle, s.LT);
-        this.#drawButton(model.buttons.right.start, this.#theme.idle, s.START);
-        this.#drawButton(model.buttons.right.rightBumper, this.#theme.idle, s.RB);
-        this.#drawButton(model.buttons.right.rightTrigger, this.#theme.idle, s.RT);
-
-        this.#drawButton(model.buttons.left.left, this.#theme.idle, s.DX < 0 ? 1 : 0);
-        this.#drawButton(model.buttons.left.right, this.#theme.idle, s.DX > 0 ? 1 : 0);
-        this.#drawButton(model.buttons.left.up, this.#theme.idle, s.DY < 0 ? 1 : 0);
-        this.#drawButton(model.buttons.left.down, this.#theme.idle, s.DY > 0 ? 1 : 0);
-        this.#drawButton(model.buttons.left.origin, this.#theme.idle, 0);
-
-        this.#drawButton(model.buttons.right.up, this.#theme.rightFace.up, s.Y);
-        this.#drawButton(model.buttons.right.right, this.#theme.rightFace.right, s.B);
-        this.#drawButton(model.buttons.right.left, this.#theme.rightFace.left, s.X);
-        this.#drawButton(model.buttons.right.down, this.#theme.rightFace.down, s.A);
-        if (model.buttons.right.origin) {
-            this.#drawButton(model.buttons.right.origin, this.#theme.idle, 0);
+    #resolveColor(colorSpec) {
+        if (!colorSpec || colorSpec.mode === "solid") {
+            return this.#theme[colorSpec?.token || "idle"];
         }
+        if (colorSpec.mode === "blend") {
+            return mixColor(this.#theme[colorSpec.baseToken], this.#theme[colorSpec.pressedToken], colorSpec.amount);
+        }
+        return this.#theme.idle;
+    }
 
-        this.#cutoutShape(model.buttons.left.analogArea);
-        this.#cutoutShape(model.buttons.right.analogArea);
+    #shapePath(shapeModel, {append = false} = {}) {
+        const region = shapeModel.region;
+        const shapeType = shapeModel.shapeType;
+        const ctx = this.#ctx;
+        if (!append) {
+            ctx.beginPath();
+        }
+        if (shapeType === "ellipse") {
+            ctx.ellipse(region.center.x, region.center.y, region.halfSize.x, region.halfSize.y, 0, 0, Math.PI * 2);
+            return;
+        }
+        if (shapeType === "triDown") {
+            ctx.moveTo(region.bottomCenter.x, region.bottomCenter.y);
+            ctx.lineTo(region.topLeft.x, region.topLeft.y);
+            ctx.lineTo(region.topRight.x, region.topRight.y);
+            ctx.closePath();
+            return;
+        }
+        const percent = shapeModel.cornerRadiusPercent;
+        const px = Number(percent?.x);
+        const py = Number(percent?.y);
+        const radius = (Number.isFinite(px) && Number.isFinite(py))
+            ? Math.max(0, Math.min(region.halfSize.x * px, region.halfSize.y * py))
+            : 0;
+        ctx.roundRect(region.topLeft.x, region.topLeft.y, region.size.x, region.size.y, radius);
+    }
 
-        const leftOffset = clampToEllipseCanvas({offset: {x: s.LX, y: s.LY}, halfSize: model.leftLayout.origin.halfSize});
-        const rightOffset = clampToEllipseCanvas({offset: {x: s.RX, y: s.RY}, halfSize: model.rightLayout.origin.halfSize});
-        const leftStick = model.buttons.left.analogStick.region.clone().update({topLeft: model.buttons.left.analogStick.region.topLeft.clone().add(leftOffset)});
-        const rightStick = model.buttons.right.analogStick.region.clone().update({topLeft: model.buttons.right.analogStick.region.topLeft.clone().add(rightOffset)});
-        this.#drawButton({region: leftStick, shape: "ellipse"}, this.#theme.idle, s.LS);
-        this.#drawButton({region: rightStick, shape: "ellipse"}, this.#theme.idle, s.RS);
+    #drawShapeFill(shapeModel, color) {
+        const ctx = this.#ctx;
+        this.#shapePath(shapeModel);
+        ctx.fillStyle = colorToCss(color);
+        ctx.fill();
+    }
+
+    #drawTriangleStroke(points, strokeColor, strokeWidth) {
+        const ctx = this.#ctx;
+        ctx.beginPath();
+        ctx.moveTo(points[0].x, points[0].y);
+        ctx.lineTo(points[1].x, points[1].y);
+        ctx.lineTo(points[2].x, points[2].y);
+        ctx.closePath();
+        ctx.strokeStyle = colorToCss(strokeColor);
+        ctx.lineWidth = strokeWidth;
+        ctx.lineJoin = "miter";
+        ctx.lineCap = "butt";
+        ctx.miterLimit = 2;
+        ctx.stroke();
+    }
+
+    #drawRoundedRing(innerShape, outerShape, color) {
+        const ctx = this.#ctx;
+        ctx.beginPath();
+        const outerRegion = outerShape.region;
+        const outerPercent = outerShape.cornerRadiusPercent;
+        const outerRadius = Math.max(0, Math.min(outerRegion.halfSize.x * outerPercent.x, outerRegion.halfSize.y * outerPercent.y));
+        ctx.roundRect(outerRegion.topLeft.x, outerRegion.topLeft.y, outerRegion.size.x, outerRegion.size.y, outerRadius);
+        const innerRegion = innerShape.region;
+        const innerPercent = innerShape.cornerRadiusPercent;
+        const innerRadius = Math.max(0, Math.min(innerRegion.halfSize.x * innerPercent.x, innerRegion.halfSize.y * innerPercent.y));
+        ctx.roundRect(innerRegion.topLeft.x, innerRegion.topLeft.y, innerRegion.size.x, innerRegion.size.y, innerRadius);
+        ctx.fillStyle = colorToCss(color);
+        ctx.fill("evenodd");
+    }
+
+    #executeDrawOps(ops) {
+        for (let index = 0; index < ops.length; index += 1) {
+            const op = ops[index];
+            const nextOp = ops[index + 1] ?? null;
+
+            const isSolidToken = (colorSpec, token) =>
+                colorSpec != null && colorSpec.mode === "solid" && colorSpec.token === token;
+
+            const isTriangleUnderfillPair = op.kind === "polygonFill"
+                && nextOp?.kind === "polygonFill"
+                && isSolidToken(op.color, "borderInner")
+                && nextOp.points === op.points;
+
+            if (isTriangleUnderfillPair) {
+                continue;
+            }
+
+            if (op.kind === "shapeFill") {
+                this.#drawShapeFill(op.shapeModel, this.#resolveColor(op.color));
+                continue;
+            }
+            if (op.kind === "triangleStroke") {
+                this.#drawTriangleStroke(op.points, this.#resolveColor(op.color), op.strokeWidth);
+                continue;
+            }
+            if (op.kind === "polygonFill") {
+                const ctx = this.#ctx;
+                ctx.beginPath();
+                ctx.moveTo(op.points[0].x, op.points[0].y);
+                for (let index = 1; index < op.points.length; index += 1) {
+                    ctx.lineTo(op.points[index].x, op.points[index].y);
+                }
+                ctx.closePath();
+                ctx.fillStyle = colorToCss(this.#resolveColor(op.color));
+                ctx.fill();
+                continue;
+            }
+            if (op.kind === "polygonRing") {
+                const ctx = this.#ctx;
+                ctx.beginPath();
+                ctx.moveTo(op.outerPoints[0].x, op.outerPoints[0].y);
+                for (let index = 1; index < op.outerPoints.length; index += 1) {
+                    ctx.lineTo(op.outerPoints[index].x, op.outerPoints[index].y);
+                }
+                ctx.closePath();
+                ctx.moveTo(op.innerPoints[0].x, op.innerPoints[0].y);
+                for (let index = 1; index < op.innerPoints.length; index += 1) {
+                    ctx.lineTo(op.innerPoints[index].x, op.innerPoints[index].y);
+                }
+                ctx.closePath();
+                ctx.fillStyle = colorToCss(this.#resolveColor(op.color));
+                ctx.fill("evenodd");
+                continue;
+            }
+            if (op.kind === "trianglePressFill") {
+                const points = op.points;
+                const leftEdgePoint = new CanvasCore.Vector2({x: points[1].x + (points[0].x - points[1].x) * op.amount, y: points[1].y + (points[0].y - points[1].y) * op.amount});
+                const rightEdgePoint = new CanvasCore.Vector2({x: points[2].x + (points[0].x - points[2].x) * op.amount, y: points[2].y + (points[0].y - points[2].y) * op.amount});
+                const ctx = this.#ctx;
+                ctx.beginPath();
+                ctx.moveTo(points[1].x, points[1].y);
+                ctx.lineTo(points[2].x, points[2].y);
+                ctx.lineTo(rightEdgePoint.x, rightEdgePoint.y);
+                ctx.lineTo(leftEdgePoint.x, leftEdgePoint.y);
+                ctx.closePath();
+                ctx.fillStyle = colorToCss(this.#resolveColor(op.color));
+                ctx.fill();
+                continue;
+            }
+            if (op.kind === "borderRing" || op.kind === "roundedBorderRing") {
+                this.#drawRingBetween(op.innerShape, op.outerShape, this.#resolveColor(op.color));
+                continue;
+            }
+            if (op.kind === "cutoutShape") {
+                const ctx = this.#ctx;
+                ctx.save();
+                ctx.globalCompositeOperation = "destination-out";
+                this.#shapePath(op.shapeModel);
+                ctx.fillStyle = "rgba(0,0,0,1)";
+                ctx.fill();
+                ctx.restore();
+                continue;
+            }
+        }
+    }
+
+    #drawRingBetween(innerShape, outerShape, color) {
+        const ctx = this.#ctx;
+        ctx.beginPath();
+        this.#shapePath(outerShape, {append: true});
+        this.#shapePath(innerShape, {append: true});
+        ctx.fillStyle = colorToCss(color);
+        ctx.fill("evenodd");
     }
 
     #drawCrossBorder(points) {
         const ctx = this.#ctx;
-        const draw = (color, w) => {
+        const draw = (color, width) => {
             ctx.beginPath();
             ctx.moveTo(points[0].x, points[0].y);
-            for (let i = 1; i < points.length; i += 1) {
-                ctx.lineTo(points[i].x, points[i].y);
+            for (let index = 1; index < points.length; index += 1) {
+                ctx.lineTo(points[index].x, points[index].y);
             }
             ctx.closePath();
             ctx.strokeStyle = colorToCss(color);
-            ctx.lineWidth = w;
+            ctx.lineWidth = width;
             ctx.lineJoin = "round";
             ctx.lineCap = "round";
             ctx.stroke();
@@ -106,71 +241,61 @@ class Canvas2DGamepadOverlayRenderer {
         draw(this.#theme.borderInner, this.#model.borderWidth);
     }
 
-    #drawButton(button, baseColor, amount) {
-        if (!button) {
-            return;
-        }
-        const color = mixColor(baseColor, this.#theme.pressed, amount);
-        const region = button.region;
-        const ctx = this.#ctx;
-        this.#shapePath(button);
-        ctx.fillStyle = colorToCss(color);
-        ctx.fill();
-
-        if (button.pressMode === "analog" && button.shape === "triDown" && amount > 0) {
-            ctx.save();
-            this.#shapePath(button);
-            ctx.clip();
-            ctx.beginPath();
-            const h = region.size.y * Math.max(0, Math.min(1, amount));
-            ctx.rect(region.topLeft.x, region.topLeft.y, region.size.x, h);
-            ctx.fillStyle = colorToCss(this.#theme.pressed);
-            ctx.fill();
-            ctx.restore();
-        }
-
-        this.#strokeButtonBorder(button);
-    }
-
-    #shapePath(button) {
-        const region = button.region;
-        const ctx = this.#ctx;
-        ctx.beginPath();
-        if (button.shape === "rect") {
-            ctx.roundRect(region.topLeft.x, region.topLeft.y, region.size.x, region.size.y, 4);
-        } else if (button.shape === "ellipse") {
-            ctx.ellipse(region.center.x, region.center.y, region.halfSize.x, region.halfSize.y, 0, 0, Math.PI * 2);
-        } else {
-            ctx.moveTo(region.bottomCenter.x, region.bottomCenter.y);
-            ctx.lineTo(region.topLeft.x, region.topLeft.y);
-            ctx.lineTo(region.topRight.x, region.topRight.y);
-            ctx.closePath();
-        }
-    }
-
-    #strokeButtonBorder(button) {
-        const ctx = this.#ctx;
-        this.#shapePath(button);
-        ctx.strokeStyle = colorToCss(this.#theme.borderOuter);
-        ctx.lineWidth = this.#model.borderWidth * 2;
-        ctx.lineJoin = "round";
-        ctx.lineCap = "round";
-        ctx.stroke();
-        this.#shapePath(button);
-        ctx.strokeStyle = colorToCss(this.#theme.borderInner);
-        ctx.lineWidth = this.#model.borderWidth;
-        ctx.lineJoin = "round";
-        ctx.lineCap = "round";
-        ctx.stroke();
-    }
-
-    #cutoutShape(button) {
+    #cutoutCrossUnderDpadButtons() {
+        const buttons = this.#model.buttons.left;
         const ctx = this.#ctx;
         ctx.save();
         ctx.globalCompositeOperation = "destination-out";
-        this.#shapePath(button);
-        ctx.fillStyle = "rgba(0,0,0,1)";
-        ctx.fill();
+        for (const key of ["left", "right", "up", "down", "origin"]) {
+            const button = buttons[key];
+            if (!button) {
+                continue;
+            }
+            this.#shapePath({
+                shapeType: button.shape,
+                region: button.region,
+                cornerRadiusPercent: button.cornerRadiusPercent ?? 0,
+            });
+            ctx.fillStyle = "rgba(0,0,0,1)";
+            ctx.fill();
+        }
         ctx.restore();
+    }
+
+    draw() {
+        const ctx = this.#ctx;
+        const state = this.#model.state;
+        ctx.clearRect(0, 0, this.#canvas.width, this.#canvas.height);
+
+        this.#drawCrossBorder(this.#model.leftLayout.crossPoints);
+        this.#cutoutCrossUnderDpadButtons();
+
+        const plans = buildRasterRenderPlans({
+            model: this.#model,
+            state,
+            clampOffset: ({offset, halfSize}) => CanvasCore.clampNormalizedOffsetToEllipse({offset, halfSize}),
+        });
+
+        for (const plan of plans.buttonPlans) {
+            const ops = buildButtonDrawOps({
+                shapeModel: plan.shapeModel,
+                borderModel: this.#borderModel,
+                inputAmount: plan.inputAmount,
+                pressMode: plan.pressMode,
+                baseColorToken: plan.baseColorToken,
+                pressedColorToken: plan.pressedColorToken,
+            });
+            this.#executeDrawOps(ops);
+        }
+
+        for (const plan of plans.stickPlans) {
+            const ops = buildStickDrawOps({
+                stickShape: plan.stickShape,
+                ringShape: plan.ringShape,
+                borderModel: this.#borderModel,
+                fillColorSpec: plan.fillColorSpec,
+            });
+            this.#executeDrawOps(ops);
+        }
     }
 }

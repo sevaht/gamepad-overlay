@@ -262,6 +262,7 @@ class WebGLGamepadOverlayRenderer {
     #program;
     #dynamicStream;
     #stickStream;
+    #cutoutStream;
     #staticStream;
     #aPos;
     #aColor;
@@ -276,6 +277,8 @@ class WebGLGamepadOverlayRenderer {
     #colors;
     #stickVerts;
     #stickColors;
+    #cutoutVerts;
+    #cutoutColors;
     #staticVertices;
     #staticColors;
     #staticVertexCount;
@@ -344,7 +347,20 @@ class WebGLGamepadOverlayRenderer {
         return this.#theme.idle;
     }
 
-    #executeDrawOps(vertices, colors, ops) {
+    #shapeLoop(shapeModel) {
+        const region = shapeModel.region;
+        if (shapeModel.shapeType === "ellipse") {
+            const unitLut = this.#geometryBuilder.getCircleLookupTable(48);
+            return unitLut.map(([ux, uy]) => new WebglCore.Vector2({
+                x: region.center.x + ux * region.halfSize.x,
+                y: region.center.y + uy * region.halfSize.y,
+            }));
+        }
+        const radius = this.#cornerRadiusPixels(shapeModel);
+        return this.#geometryBuilder.roundedRectLoop(region, radius, 8);
+    }
+
+    #executeDrawOps(vertices, colors, ops, cutoutVertices = null, cutoutColors = null) {
         for (const op of ops) {
             if (op.kind === "shapeFill") {
                 this.#drawShape(vertices, colors, op.shapeModel, this.#resolveColor(op.color));
@@ -354,6 +370,14 @@ class WebGLGamepadOverlayRenderer {
                 this.#geometryBuilder.drawTriangleStroke(vertices, colors, op.points, this.#resolveColor(op.color), op.strokeWidth);
                 continue;
             }
+            if (op.kind === "polygonFill") {
+                this.#geometryBuilder.pushPoly(vertices, colors, op.points, this.#resolveColor(op.color));
+                continue;
+            }
+            if (op.kind === "polygonRing") {
+                this.#geometryBuilder.pushRing(vertices, colors, op.outerPoints, op.innerPoints, this.#resolveColor(op.color));
+                continue;
+            }
             if (op.kind === "trianglePressFill") {
                 const points = op.points;
                 const leftEdgePoint = new WebglCore.Vector2({x: points[1].x + (points[0].x - points[1].x) * op.amount, y: points[1].y + (points[0].y - points[1].y) * op.amount});
@@ -361,13 +385,19 @@ class WebGLGamepadOverlayRenderer {
                 this.#geometryBuilder.pushPoly(vertices, colors, [points[1], points[2], rightEdgePoint, leftEdgePoint], this.#resolveColor(op.color));
                 continue;
             }
+            if (op.kind === "borderRing") {
+                this.#drawShape(vertices, colors, op.outerShape, this.#resolveColor(op.color));
+                continue;
+            }
+            if (op.kind === "cutoutShape") {
+                if (cutoutVertices != null && cutoutColors != null) {
+                    this.#drawShape(cutoutVertices, cutoutColors, op.shapeModel, [0, 0, 0, 1]);
+                }
+                continue;
+            }
             if (op.kind === "roundedBorderRing") {
-                const innerShape = op.innerShape;
-                const outerShape = op.outerShape;
-                const innerRadius = this.#cornerRadiusPixels(innerShape);
-                const outerRadius = this.#cornerRadiusPixels(outerShape);
-                const innerLoop = this.#geometryBuilder.roundedRectLoop(innerShape.region, innerRadius, 8);
-                const outerLoop = this.#geometryBuilder.roundedRectLoop(outerShape.region, outerRadius, 8);
+                const innerLoop = this.#shapeLoop(op.innerShape);
+                const outerLoop = this.#shapeLoop(op.outerShape);
                 this.#geometryBuilder.pushRing(vertices, colors, outerLoop, innerLoop, this.#resolveColor(op.color));
             }
         }
@@ -400,6 +430,8 @@ class WebGLGamepadOverlayRenderer {
         this.#colors = [];
         this.#stickVerts = [];
         this.#stickColors = [];
+        this.#cutoutVerts = [];
+        this.#cutoutColors = [];
         this.#staticVertices = [];
         this.#staticColors = [];
         this.#staticVertexCount = 0;
@@ -520,6 +552,7 @@ class WebGLGamepadOverlayRenderer {
         this.#uResolution = gl.getUniformLocation(this.#program, "u_resolution");
         this.#dynamicStream = new WebglBufferStream(gl);
         this.#stickStream = new WebglBufferStream(gl);
+        this.#cutoutStream = new WebglBufferStream(gl);
         this.#staticStream = new WebglBufferStream(gl);
     }
 
@@ -538,10 +571,20 @@ class WebGLGamepadOverlayRenderer {
     #buildSticks(stickPlans) {
         const stickVertexPositions = this.#stickVerts;
         const stickVertexColors = this.#stickColors;
+        const cutoutVertexPositions = this.#cutoutVerts;
+        const cutoutVertexColors = this.#cutoutColors;
         stickVertexPositions.length = 0;
         stickVertexColors.length = 0;
+        cutoutVertexPositions.length = 0;
+        cutoutVertexColors.length = 0;
         for (const stickPlan of stickPlans) {
-            this.#drawStickPlan(stickVertexPositions, stickVertexColors, stickPlan);
+            const ops = buildStickDrawOps({
+                stickShape: stickPlan.stickShape,
+                ringShape: stickPlan.ringShape,
+                borderModel: this.#borderModel,
+                fillColorSpec: stickPlan.fillColorSpec,
+            });
+            this.#executeDrawOps(stickVertexPositions, stickVertexColors, ops, cutoutVertexPositions, cutoutVertexColors);
         }
     }
 
@@ -559,6 +602,10 @@ class WebGLGamepadOverlayRenderer {
         this.#staticStream.draw();
         this.#dynamicStream.bind(this.#aPos, this.#aColor);
         this.#dynamicStream.draw();
+        this.#cutoutStream.bind(this.#aPos, this.#aColor);
+        gl.blendFunc(gl.ZERO, gl.ONE_MINUS_SRC_ALPHA);
+        this.#cutoutStream.draw();
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
         this.#stickStream.bind(this.#aPos, this.#aColor);
         this.#stickStream.draw();
     }
@@ -574,6 +621,7 @@ class WebGLGamepadOverlayRenderer {
         const uploadStartTimestamp = performance.now();
         this.#dynamicStream.upload(this.#vertices, this.#colors);
         this.#buildSticks(plans.stickPlans);
+        this.#cutoutStream.upload(this.#cutoutVerts, this.#cutoutColors);
         this.#stickStream.upload(this.#stickVerts, this.#stickColors);
         this.#renderStreams();
         const drawEndTimestamp = performance.now();
