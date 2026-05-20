@@ -352,12 +352,16 @@ class GamepadOverlayRenderer {
 
         this.leftStick = overlay.entities.left.entities.analogStick;
         this.rightStick = overlay.entities.right.entities.analogStick;
+        this.leftStickControl = overlay.entities.left.entities.analogStickControl ?? this.leftStick;
+        this.rightStickControl = overlay.entities.right.entities.analogStickControl ?? this.rightStick;
         this.leftStickRing = overlay.entities.left.entities.analogStickRing;
         this.rightStickRing = overlay.entities.right.entities.analogStickRing;
         this.leftTrigger = overlay.entities.left.entities.leftTrigger;
         this.rightTrigger = overlay.entities.right.entities.rightTrigger;
 
         this.#digitalBindings = [
+            // Only triggers (LT/RT) and stick movement axes are analog.
+            // All button-like inputs, including LS/RS press states, are digital.
             [overlay.entities.right.entities.downButton, (state) => state.A],
             [overlay.entities.right.entities.rightButton, (state) => state.B],
             [overlay.entities.right.entities.leftButton, (state) => state.X],
@@ -366,18 +370,16 @@ class GamepadOverlayRenderer {
             [overlay.entities.right.entities.start, (state) => state.START],
             [overlay.entities.left.entities.leftBumper, (state) => state.LB],
             [overlay.entities.right.entities.rightBumper, (state) => state.RB],
-            [this.leftStick, (state) => state.LS],
-            [this.rightStick, (state) => state.RS],
-            [this.leftStickRing, (state) => state.LS],
-            [this.rightStickRing, (state) => state.RS],
+            [this.leftStickControl, (state) => state.LS],
+            [this.rightStickControl, (state) => state.RS],
             [overlay.entities.left.entities.leftButton, (state) => (state.DX < 0 ? 1 : 0)],
             [overlay.entities.left.entities.rightButton, (state) => (state.DX > 0 ? 1 : 0)],
             [overlay.entities.left.entities.upButton, (state) => (state.DY < 0 ? 1 : 0)],
             [overlay.entities.left.entities.downButton, (state) => (state.DY > 0 ? 1 : 0)],
         ];
 
-        this.leftStickRing.bringLayersToFront();
-        this.rightStickRing.bringLayersToFront();
+        this.leftStickControl.bringLayersToFront?.();
+        this.rightStickControl.bringLayersToFront?.();
 
         this.applyNormalizedState(normalizeGamepadState(createEmptyGamepadState(), this.#deadzone));
     }

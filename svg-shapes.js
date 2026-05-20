@@ -334,26 +334,94 @@ function createSvgPolygon(points, attributes = {}) {
     });
 }
 
-const SHAPE_SNAP_STEP = 0.5;
+class ShapeModel {
+    #region;
+    #shapeType;
+    #cornerRadiusPercent;
 
-function snapNumberToStep(value, step = SHAPE_SNAP_STEP) {
-    if (!Number.isFinite(value) || step <= 0) {
-        return value;
+    constructor({region, shapeType, cornerRadiusPercent = Vector2.ZERO}) {
+        this.#region = region;
+        this.#shapeType = shapeType;
+        this.#cornerRadiusPercent = cornerRadiusPercent;
     }
-    return Math.round(value / step) * step;
+
+    get region() { return this.#region; }
+    get shapeType() { return this.#shapeType; }
+    get cornerRadiusPercent() { return this.#cornerRadiusPercent; }
+
+    expanded(amount) {
+        if (!(amount > 0)) {
+            return this;
+        }
+        const expandedRegion = Region.fromCenter({
+            center: this.#region.center,
+            size: this.#region.size.clone().add(Vector2.splat(amount * 2)),
+        });
+        let cornerRadiusPercent = this.#cornerRadiusPercent;
+        if (this.#shapeType === ShapeType.RECTANGLE) {
+            const originalRadiusX = this.#region.halfSize.x * this.#cornerRadiusPercent.x;
+            const originalRadiusY = this.#region.halfSize.y * this.#cornerRadiusPercent.y;
+            const expandedRadiusX = Math.min(expandedRegion.halfSize.x, Math.max(0, originalRadiusX + amount));
+            const expandedRadiusY = Math.min(expandedRegion.halfSize.y, Math.max(0, originalRadiusY + amount));
+            cornerRadiusPercent = new Vector2({
+                x: expandedRegion.halfSize.x === 0 ? 0 : expandedRadiusX / expandedRegion.halfSize.x,
+                y: expandedRegion.halfSize.y === 0 ? 0 : expandedRadiusY / expandedRegion.halfSize.y,
+            });
+        }
+        return new ShapeModel({
+            region: expandedRegion,
+            shapeType: this.#shapeType,
+            cornerRadiusPercent,
+        });
+    }
+
+    trianglePoints() {
+        switch (this.#shapeType) {
+            case ShapeType.TRIANGLE_UP:
+                return [this.#region.topCenter, this.#region.bottomLeft, this.#region.bottomRight];
+            case ShapeType.TRIANGLE_DOWN:
+                return [this.#region.bottomCenter, this.#region.topLeft, this.#region.topRight];
+            case ShapeType.TRIANGLE_LEFT:
+                return [this.#region.centerLeft, this.#region.topRight, this.#region.bottomRight];
+            case ShapeType.TRIANGLE_RIGHT:
+                return [this.#region.centerRight, this.#region.topLeft, this.#region.bottomLeft];
+            default:
+                return null;
+        }
+    }
+
+    createElement(attributes = {}) {
+        return createSvgShape({
+            region: this.#region,
+            shapeType: this.#shapeType,
+            cornerRadiusPercent: this.#cornerRadiusPercent,
+        }, attributes);
+    }
 }
 
-function snapRegionToStep(region, step = SHAPE_SNAP_STEP) {
-    return new Region({
-        topLeft: new Vector2({
-            x: snapNumberToStep(region.topLeft.x, step),
-            y: snapNumberToStep(region.topLeft.y, step),
-        }),
-        size: new Vector2({
-            x: Math.max(step, snapNumberToStep(region.size.x, step)),
-            y: Math.max(step, snapNumberToStep(region.size.y, step)),
-        }),
-    });
+class BorderModel {
+    #innerSize;
+
+    constructor({innerSize = 0} = {}) {
+        this.#innerSize = Math.max(0, Number(innerSize) || 0);
+    }
+
+    get innerSize() { return this.#innerSize; }
+
+    appliesToBordered(includeBorder) {
+        return Boolean(includeBorder) && this.#innerSize > 0;
+    }
+
+    expandAmount() {
+        return this.#innerSize / 2;
+    }
+
+    expandedShape(shapeModel, includeBorder) {
+        if (!this.appliesToBordered(includeBorder)) {
+            return shapeModel;
+        }
+        return shapeModel.expanded(this.expandAmount());
+    }
 }
 
 function createSvgShape({region, shapeType, cornerRadiusPercent = Vector2.ZERO}, attributes = {}) {
@@ -1011,6 +1079,66 @@ class GamepadEntity {
     }
 }
 
+class RenderableControl {
+    #entity;
+
+    constructor(entity) {
+        this.#entity = entity;
+    }
+
+    get entity() { return this.#entity; }
+    get element() { return this.#entity.element; }
+
+    setInputAmount(value) { this.#entity.setInputAmount(value); return this; }
+    setTranslation(offset) { this.#entity.setTranslation(offset); return this; }
+    setPressFillDirection(direction) { this.#entity.setPressFillDirection(direction); return this; }
+    enablePressVisual(options) { this.#entity.enablePressVisual(options); return this; }
+    bringLayersToFront() { this.#entity.bringLayersToFront(); return this; }
+    maskStyleSourceBySourceId(sourceId) { this.#entity.maskStyleSourceBySourceId(sourceId); return this; }
+    connect(element, options) { this.#entity.connect(element, options); return this; }
+    getConnectedDefinitionElements() { return this.#entity.getConnectedDefinitionElements(); }
+    getPrimaryCutoutSourceId() { return this.#entity.getPrimaryCutoutSourceId(); }
+}
+
+class CompositeControl {
+    #translationTarget;
+    #pressTargets;
+    #layerTargets;
+
+    constructor({translationTarget, pressTargets = [], layerTargets = []}) {
+        this.#translationTarget = translationTarget;
+        this.#pressTargets = pressTargets;
+        this.#layerTargets = layerTargets;
+    }
+
+    get element() { return this.#translationTarget.element; }
+    setTranslation(offset) { this.#translationTarget.setTranslation(offset); return this; }
+    setInputAmount(value) {
+        for (const target of this.#pressTargets) {
+            target.setInputAmount(value);
+        }
+        return this;
+    }
+    setPressFillDirection(direction) {
+        for (const target of this.#pressTargets) {
+            target.setPressFillDirection(direction);
+        }
+        return this;
+    }
+    enablePressVisual(options) {
+        for (const target of this.#pressTargets) {
+            target.enablePressVisual(options);
+        }
+        return this;
+    }
+    bringLayersToFront() {
+        for (const target of this.#layerTargets) {
+            target.bringLayersToFront();
+        }
+        return this;
+    }
+}
+
 
 //function clampToUnitCircle(x, y) {
 //    const len = Math.hypot(x, y);
@@ -1179,16 +1307,6 @@ class GamepadOverlay {
         return this.#rightLayout.origin.halfSize;
     }
 
-    #inflateRegion(region, amount) {
-        if (amount <= 0) {
-            return region;
-        }
-        return Region.fromCenter({
-            center: region.center,
-            size: region.size.clone().add(Vector2.splat(amount * 2)),
-        });
-    }
-
     #expandPointsFromCenter(points, center, amount) {
         if (!(amount > 0)) {
             return points;
@@ -1206,21 +1324,6 @@ class GamepadOverlay {
                 y: center.y + deltaY * scale,
             });
         });
-    }
-
-    #trianglePointsForRegion(shapeType, region) {
-        switch (shapeType) {
-            case ShapeType.TRIANGLE_UP:
-                return [region.topCenter, region.bottomLeft, region.bottomRight];
-            case ShapeType.TRIANGLE_DOWN:
-                return [region.bottomCenter, region.topLeft, region.topRight];
-            case ShapeType.TRIANGLE_LEFT:
-                return [region.centerLeft, region.topRight, region.bottomRight];
-            case ShapeType.TRIANGLE_RIGHT:
-                return [region.centerRight, region.topLeft, region.bottomLeft];
-            default:
-                return null;
-        }
     }
 
     #polygonSignedArea(points) {
@@ -1310,30 +1413,12 @@ class GamepadOverlay {
         themeVariables = this.#resolveThemeVariables(semanticAttributes),
         prewarmPressVisual = this.#prewarmPressVisuals && pressMode === "digital" && digitalRenderMode === "fill",
     }) {
-        const includeBorderStroke = includeBorder && this.#innerBorderSize > 0;
-        const borderExpandAmount = this.#innerBorderSize / 2;
-        const trianglePoints = this.#trianglePointsForRegion(shapeType, region);
-        const expandedRegion = includeBorderStroke
-            ? this.#inflateRegion(region, borderExpandAmount)
-            : region;
-        let expandedCornerRadiusPercent = cornerRadiusPercent;
-        if (includeBorderStroke && shapeType === ShapeType.RECTANGLE) {
-            const innerHalf = this.#innerBorderSize / 2;
-            const originalRadiusX = region.halfSize.x * cornerRadiusPercent.x;
-            const originalRadiusY = region.halfSize.y * cornerRadiusPercent.y;
-            const expandedRadiusX = Math.min(
-                expandedRegion.halfSize.x,
-                Math.max(0, originalRadiusX + innerHalf),
-            );
-            const expandedRadiusY = Math.min(
-                expandedRegion.halfSize.y,
-                Math.max(0, originalRadiusY + innerHalf),
-            );
-            expandedCornerRadiusPercent = new Vector2({
-                x: expandedRegion.halfSize.x === 0 ? 0 : expandedRadiusX / expandedRegion.halfSize.x,
-                y: expandedRegion.halfSize.y === 0 ? 0 : expandedRadiusY / expandedRegion.halfSize.y,
-            });
-        }
+        const shapeModel = new ShapeModel({region, shapeType, cornerRadiusPercent});
+        const borderModel = new BorderModel({innerSize: this.#innerBorderSize});
+        const includeBorderStroke = borderModel.appliesToBordered(includeBorder);
+        const borderExpandAmount = borderModel.expandAmount();
+        const trianglePoints = shapeModel.trianglePoints();
+        const expandedShapeModel = borderModel.expandedShape(shapeModel, includeBorder);
         const fillCutoutShapeId = includeBorderStroke
             ? monotonicId(`${id}-cutout-`)
             : null;
@@ -1351,20 +1436,14 @@ class GamepadOverlay {
             styleSource: true,
         });
         if (fillCutoutShapeId != null) {
-            this.#context.addDefinition(createSvgShape(
-                {region, shapeType, cornerRadiusPercent},
-                {id: fillCutoutShapeId},
-            ));
+            this.#context.addDefinition(shapeModel.createElement({id: fillCutoutShapeId}));
         }
         const element = (() => {
             if (includeBorderStroke && trianglePoints != null) {
                 const expandedTrianglePoints = this.#offsetConvexPolygon(trianglePoints, borderExpandAmount);
                 return createSvgPolygon(expandedTrianglePoints, {id});
             }
-            return createSvgShape(
-                {region: expandedRegion, shapeType, cornerRadiusPercent: expandedCornerRadiusPercent},
-                {id},
-            );
+            return expandedShapeModel.createElement({id});
         })();
 
         const entity = new GamepadEntity({
@@ -1722,6 +1801,7 @@ class GamepadOverlay {
         let analogStickGroup = null;
         let analogStick = null;
         let analogStickRing = null;
+        let analogStickControl = null;
 
         if (hasAnalogStick) {
             analogAreaGroup = this.#context.addChild(
@@ -1786,6 +1866,11 @@ class GamepadOverlay {
                 analogStick.connect(connectedElement);
             }
             analogStick.maskStyleSourceBySourceId(analogStickRing.element.id);
+            analogStickControl = new CompositeControl({
+                translationTarget: new RenderableControl(analogStick),
+                pressTargets: [new RenderableControl(analogStick), new RenderableControl(analogStickRing)],
+                layerTargets: [new RenderableControl(analogStickRing)],
+            });
             setMask(backgroundGroup, analogStick.mask.id);
         }
 
@@ -1811,6 +1896,7 @@ class GamepadOverlay {
                 analogArea,
                 analogStick,
                 analogStickRing,
+                analogStickControl,
             },
         };
     }
