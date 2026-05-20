@@ -93,7 +93,7 @@
 
             const theme = (QUERY.get("theme") || "xbox").toLowerCase();
             const digitalRenderMode = QUERY.get("digitalRenderMode") === "class" ? "class-toggle" : "fill";
-            const prewarmPressVisuals = QUERY.get("prewarmPressVisuals") !== "0";
+            const prewarmPressFillVisuals = QUERY.get("prewarmPressVisuals") !== "0";
             const themeVariables = THEME_PRESETS[theme] || THEME_PRESETS.xbox;
             const overlay = new GamepadOverlay({
                 context,
@@ -104,7 +104,7 @@
                 betweenHalvesGap: 0,
                 digitalThreshold: 0.55,
                 digitalRenderMode,
-                prewarmPressVisuals,
+                prewarmPressFillVisuals,
                 themeVariables,
                 hasAnalogStick: true,
                 /*leftSide: {cornerButtons: {leftTrigger: {pressMode: "digital"}}},

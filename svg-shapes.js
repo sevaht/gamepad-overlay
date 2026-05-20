@@ -734,7 +734,7 @@ class GamepadEntity {
     #translation;
     #mask;
     #layerParent;
-    #pressVisual;
+    #pressFillVisual;
     #pressFillDirection;
     #styleSourceElement;
     #layerElements;
@@ -746,13 +746,13 @@ class GamepadEntity {
     #isPressed;
     #themeVariables;
     #cutoutMasksBySourceId;
-    #pressVisualSourceId;
-    #primaryCutoutSourceId;
+    #pressFillShapeId;
+    #borderCutoutShapeId;
     #styleSourceMaskId;
     #classToggleFramePending;
     #pendingClassTogglePressed;
 
-    constructor({context, element, parent, layers=[{}], offset=Vector2.ZERO, themeVariables = {}, pressVisualSourceId = null}) {
+    constructor({context, element, parent, layers=[{}], offset=Vector2.ZERO, themeVariables = {}, pressFillShapeId = null}) {
         // TODO: null validation?
         this.#context = context;
         this.#element = element;
@@ -760,7 +760,7 @@ class GamepadEntity {
         this.#connectionTransforms = new WeakMap();
         this.#translation = Vector2.ZERO;
         this.#layerParent = parent;
-        this.#pressVisual = null;
+        this.#pressFillVisual = null;
         this.#pressFillDirection = PressFillDirection.OUTWARD;
         this.#styleSourceElement = null;
         this.#layerElements = [];
@@ -772,8 +772,8 @@ class GamepadEntity {
         this.#isPressed = false;
         this.#themeVariables = {...themeVariables};
         this.#cutoutMasksBySourceId = new Map();
-        this.#pressVisualSourceId = pressVisualSourceId ?? this.element.id;
-        this.#primaryCutoutSourceId = this.element.id;
+        this.#pressFillShapeId = pressFillShapeId ?? this.element.id;
+        this.#borderCutoutShapeId = this.element.id;
         this.#styleSourceMaskId = null;
         this.#classToggleFramePending = false;
         this.#pendingClassTogglePressed = null;
@@ -799,7 +799,7 @@ class GamepadEntity {
             }
             if (layer.cutout) {
                 const cutoutSourceId = layer.cutoutSourceId ?? this.element.id;
-                this.#primaryCutoutSourceId = cutoutSourceId;
+                this.#borderCutoutShapeId = cutoutSourceId;
                 // cutoutSourceId is a mask-only definition source. It may be
                 // distinct from the rendered sourceId and must move with this
                 // entity when translations are applied.
@@ -834,13 +834,13 @@ class GamepadEntity {
         fillDirection = this.#pressFillDirection,
         prepend = false,
     } = {}) {
-        if (this.#pressVisual != null) {
+        if (this.#pressFillVisual != null) {
             return this;
         }
         this.#resolvePressFillAttributes(0.5, fillDirection);
         this.#pressFillDirection = fillDirection;
 
-        const useElement = createSvgUse(this.#pressVisualSourceId);
+        const useElement = createSvgUse(this.#pressFillShapeId);
         useElement.classList.add(className);
         if (this.#styleSourceElement != null) {
             for (const sourceClass of this.#styleSourceElement.classList) {
@@ -862,10 +862,10 @@ class GamepadEntity {
 
         if (fillDirection === PressFillDirection.OUTWARD) {
             this.connect(useElement, {
-                extraTransform: () => this.#resolveOutwardTransform(this.#pressVisual?.amount ?? 0),
+                extraTransform: () => this.#resolveOutwardTransform(this.#pressFillVisual?.amount ?? 0),
                 includeTranslation: false,
             });
-            this.#pressVisual = {
+            this.#pressFillVisual = {
                 mode: "outward",
                 amount: 0,
             };
@@ -885,7 +885,7 @@ class GamepadEntity {
             setAttributes(useElement, {
                 "clip-path": `url(#${clipPath.id})`,
             });
-            this.#pressVisual = {
+            this.#pressFillVisual = {
                 mode: "directional",
                 clipRect,
                 amount: 0,
@@ -899,20 +899,20 @@ class GamepadEntity {
     setPressAmount(amount) {
         this.enablePressVisual();
         amount = Math.max(0, Math.min(1, assertFiniteNumber(amount, "amount")));
-        if (amount === this.#pressVisual.amount) {
+        if (amount === this.#pressFillVisual.amount) {
             return this;
         }
-        this.#pressVisual.amount = amount;
-        if (this.#pressVisual.mode === "outward") {
+        this.#pressFillVisual.amount = amount;
+        if (this.#pressFillVisual.mode === "outward") {
             this.#applyTransforms();
         } else {
-            const attributes = this.#resolvePressFillAttributes(amount, this.#pressVisual.fillDirection);
-            setAttributes(this.#pressVisual.clipRect, attributes);
+            const attributes = this.#resolvePressFillAttributes(amount, this.#pressFillVisual.fillDirection);
+            setAttributes(this.#pressFillVisual.clipRect, attributes);
         }
         return this;
     }
     setPressFillDirection(fillDirection) {
-        if (this.#pressVisual != null) {
+        if (this.#pressFillVisual != null) {
             throw new Error("setPressFillDirection must be called before setPressAmount/enablePressVisual");
         }
         this.#resolvePressFillAttributes(0.5, fillDirection);
@@ -1019,11 +1019,11 @@ class GamepadEntity {
     getConnectedDefinitionElements() {
         return [...this.#connectedElements];
     }
-    getPressVisualSourceId() {
-        return this.#pressVisualSourceId;
+    getPressFillShapeId() {
+        return this.#pressFillShapeId;
     }
-    getPrimaryCutoutSourceId() {
-        return this.#primaryCutoutSourceId;
+    getBorderCutoutShapeId() {
+        return this.#borderCutoutShapeId;
     }
     maskStyleSourceBySourceId(sourceId) {
         if (this.#styleSourceElement == null) {
@@ -1128,7 +1128,7 @@ class RenderableControl {
     maskStyleSourceBySourceId(sourceId) { this.#entity.maskStyleSourceBySourceId(sourceId); return this; }
     connect(element, options) { this.#entity.connect(element, options); return this; }
     getConnectedDefinitionElements() { return this.#entity.getConnectedDefinitionElements(); }
-    getPrimaryCutoutSourceId() { return this.#entity.getPrimaryCutoutSourceId(); }
+    getBorderCutoutShapeId() { return this.#entity.getBorderCutoutShapeId(); }
 }
 
 class CompositeControl {
@@ -1193,7 +1193,7 @@ class GamepadOverlay {
     #digitalThreshold;
     #digitalRenderMode;
     #themeVariables;
-    #prewarmPressVisuals;
+    #prewarmPressFillVisuals;
 
     static #DEFAULT_SIDE_OPTIONS = Object.freeze({
         left: Object.freeze({
@@ -1274,7 +1274,7 @@ class GamepadOverlay {
         digitalThreshold = 0.5,
         digitalRenderMode = "fill",
         themeVariables = {},
-        prewarmPressVisuals = true,
+        prewarmPressFillVisuals = true,
         hasAnalogStick = true,
         leftSide = {},
         rightSide = {},
@@ -1288,7 +1288,7 @@ class GamepadOverlay {
         this.#digitalThreshold = digitalThreshold;
         this.#digitalRenderMode = digitalRenderMode;
         this.#themeVariables = {...themeVariables};
-        this.#prewarmPressVisuals = Boolean(prewarmPressVisuals);
+        this.#prewarmPressFillVisuals = Boolean(prewarmPressFillVisuals);
         this.#cornerCompensation = gapPixels + borderWidth * 2;
         const leftLayoutPosition = topLeft.clone()
             .add(Vector2.splat(borderWidth));
@@ -1459,7 +1459,7 @@ class GamepadOverlay {
         digitalThreshold = this.#digitalThreshold,
         digitalRenderMode = this.#digitalRenderMode,
         themeVariables = this.#resolveThemeVariables(semanticAttributes),
-        prewarmPressVisual = this.#prewarmPressVisuals && pressMode === "digital" && digitalRenderMode === "fill",
+        prewarmPressFillVisual = this.#prewarmPressFillVisuals && pressMode === "digital" && digitalRenderMode === "fill",
     }) {
         const shapeModel = new ShapeModel({region, shapeType, cornerRadiusPercent});
         const borderModel = new BorderModel({innerSize: this.#innerBorderSize});
@@ -1493,14 +1493,14 @@ class GamepadOverlay {
             layers,
             parent: group,
             themeVariables,
-            pressVisualSourceId: fillCutoutShapeId ?? id,
+            pressFillShapeId: fillCutoutShapeId ?? id,
         });
         entity.setPressBehavior({
             mode: pressMode,
             threshold: digitalThreshold,
             digitalRenderMode,
         });
-        if (prewarmPressVisual) {
+        if (prewarmPressFillVisual) {
             entity.enablePressVisual();
         }
         return entity;
@@ -1539,7 +1539,7 @@ class GamepadOverlay {
                 semanticAttributes: null,
             }),
             parent: group,
-            pressVisualSourceId: innerCrossId,
+            pressFillShapeId: innerCrossId,
         });
     }
 
@@ -1584,11 +1584,11 @@ class GamepadOverlay {
             semanticAttributes: {"data-side": sideName, "data-role": roleName},
             pressMode,
             digitalThreshold,
-            prewarmPressVisual: pressFillDirection == null,
+            prewarmPressFillVisual: pressFillDirection == null,
         });
         if (pressFillDirection != null) {
             button.setPressFillDirection(pressFillDirection);
-            if (this.#prewarmPressVisuals && pressMode === "digital" && this.#digitalRenderMode === "fill") {
+            if (this.#prewarmPressFillVisuals && pressMode === "digital" && this.#digitalRenderMode === "fill") {
                 button.enablePressVisual();
             }
         }
