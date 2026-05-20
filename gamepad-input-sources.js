@@ -1,3 +1,5 @@
+const clampToEllipseInput = OverlayCore.clampNormalizedOffsetToEllipse;
+
 function createEmptyGamepadState() {
     return {
         A: 0, B: 0, X: 0, Y: 0,
@@ -413,11 +415,11 @@ class GamepadOverlayRenderer {
     }
 
     #applyStickPositions(state) {
-        this.leftStick.setTranslation(clampNormalizedOffsetToEllipse({
+        this.leftStick.setTranslation(clampToEllipseInput({
             offset: {x: state.LX, y: state.LY},
             halfSize: this.#overlay.leftAnalogClampHalfSize,
         }));
-        this.rightStick.setTranslation(clampNormalizedOffsetToEllipse({
+        this.rightStick.setTranslation(clampToEllipseInput({
             offset: {x: state.RX, y: state.RY},
             halfSize: this.#overlay.rightAnalogClampHalfSize,
         }));

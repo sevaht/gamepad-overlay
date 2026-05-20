@@ -50,265 +50,11 @@ function setTranslation(element, offset) {
     });
 }
 
-function clampNormalizedOffsetToEllipse({offset, halfSize}) {
-    const x = assertFiniteNumber(offset.x, "offset.x");
-    const y = assertFiniteNumber(offset.y, "offset.y");
-    const halfWidth = Math.max(0, assertFiniteNumber(halfSize.x, "halfSize.x"));
-    const halfHeight = Math.max(0, assertFiniteNumber(halfSize.y, "halfSize.y"));
-    if (halfWidth === 0 || halfHeight === 0) {
-        return Vector2.ZERO;
-    }
-
-    const scaledX = x;
-    const scaledY = y;
-    const unitDistance = (scaledX * scaledX) + (scaledY * scaledY);
-    if (unitDistance <= 1) {
-        return new Vector2({x: x * halfWidth, y: y * halfHeight});
-    }
-    const scale = 1 / Math.sqrt(unitDistance);
-    return new Vector2({
-        x: x * scale * halfWidth,
-        y: y * scale * halfHeight,
-    });
-}
-
-///////////////////////////////////////////////
-const OVERLAY_ASSERTION_ENABLE = true; // flip to false for production
-
-function requireFiniteNumber(value, name) {
-    if (Number.isFinite(value)) {
-        return value;
-    }
-    const type = typeof value;
-    const got = value?.constructor?.name ?? type;
-    if (type !== "number") {
-        throw new TypeError(`${name} must be a number; got ${got}`);
-    }
-    throw new RangeError(`${name} must be a finite number; got ${value}`);
-}
-function assertFiniteNumber(value, name) {
-    if (!OVERLAY_ASSERTION_ENABLE) {
-        return value;
-    }
-    return requireFiniteNumber(value, name);
-}
-
-function requireInstanceOf(value, ctor, name) {
-    if (value instanceof ctor) {
-        return value;
-    }
-    const got = value?.constructor?.name ?? typeof value;
-    throw new TypeError(`${name} must be an instance of ${ctor.name}; got ${got}`);
-}
-function assertInstanceOf(value, ctor, name) {
-    if (!OVERLAY_ASSERTION_ENABLE) {
-        return value;
-    }
-    return requireInstanceOf(value, ctor, name);
-}
-
-
-function unreachable(message = "Unreachable") {
-    const error = new Error(message);
-    error.name = "AssertionError";
-    throw error;
-}
-
-class Vector2 {
-    // common numbers
-    static ZERO = Object.freeze(this.splat(0));
-    static ONE = Object.freeze(this.splat(1));
-    static TWO = Object.freeze(this.splat(2));
-    static THREE = Object.freeze(this.splat(3));
-
-    static #ADD = 0;
-    static #SUBTRACT = 1;
-    static #MULTIPLY = 2;
-    static #DIVIDE = 3;
-
-    static require(value, name) {
-        return requireInstanceOf(value, this, name);
-    }
-
-    static assert(value, name) {
-        return assertInstanceOf(value, this, name);
-    }
-    static splat(value) {
-        return new this({x: value, y: value});
-    }
-
-    #x;
-    #y;
-    constructor({ x, y } = {}) {
-        this.set({x, y});
-    }
-    set x(value) { this.#x = assertFiniteNumber(value, "x"); }
-    set y(value) { this.#y = assertFiniteNumber(value, "y"); }
-    set({ x, y } = {}) {
-        this.x = x;
-        this.y = y;
-        return this;
-    }
-    update({ x, y } = {}) {
-        if (x != null) { this.x = x; }
-        if (y != null) { this.y = y; }
-        return this;
-    }
-    add({ x, y } = {}) {
-        this.#applyComponent(Vector2.#ADD, true, x, 0);
-        this.#applyComponent(Vector2.#ADD, false, y, 0);
-        return this;
-    }
-    subtract({ x, y } = {}) {
-        this.#applyComponent(Vector2.#SUBTRACT, true, x, 0);
-        this.#applyComponent(Vector2.#SUBTRACT, false, y, 0);
-        return this;
-    }
-    multiply({ x, y } = {}) {
-        this.#applyComponent(Vector2.#MULTIPLY, true, x, 1);
-        this.#applyComponent(Vector2.#MULTIPLY, false, y, 1);
-        return this;
-    }
-    divide({ x, y } = {}) {
-        this.#applyComponent(Vector2.#DIVIDE, true, x, 1);
-        this.#applyComponent(Vector2.#DIVIDE, false, y, 1);
-        return this;
-    }
-
-    get x() { return this.#x; }
-    get y() { return this.#y; }
-
-    clone() { return new this.constructor(this); }
-    toString() { return `${this.x},${this.y}`; }
-    toObject() { return {x: this.x, y: this.y}; }
-    equals(other) {
-        return other instanceof Vector2
-            && this.x == other.x
-            && this.y == other.y;
-    }
-
-    #applyComponent(operation, isX, operand, skipValue) {
-        if (operand == null || operand === skipValue) { return; }
-        const name = isX ? "x" : "y";
-        assertFiniteNumber(operand, name);
-        let result = isX ? this.#x : this.#y;
-        switch (operation) {
-            case Vector2.#ADD:
-                result += operand;
-                break;
-            case Vector2.#SUBTRACT:
-                result -= operand;
-                break;
-            case Vector2.#MULTIPLY:
-                result *= operand;
-                break;
-            case Vector2.#DIVIDE:
-                if (operand === 0) { throw new RangeError(`${name} divisor must not be 0`); }
-                result /= operand;
-                break;
-            default:
-                unreachable("Invalid operation");
-        }
-        assertFiniteNumber(result, name);
-        if (isX) { this.#x = result; }
-        else { this.#y = result; }
-    }
-}
-
-class Region {
-    static fromCenter({ center, size }) {
-        const topLeft = center.clone().subtract(size.clone().divide(Vector2.TWO));
-        return new this({topLeft, size});
-    }
-    #topLeft;
-    #size;
-    #cache = Object.create(null);
-    constructor({ topLeft, size }) {
-        // using these directly to prevent unnecessary cach clear from set()
-        this.#setTopLeft(topLeft);
-        this.#setSize(size);
-    }
-    set topLeft(value) {
-        this.#setTopLeft(value);
-        this.#clearCache();
-    }
-    set size(value) {
-        this.#setSize(value);
-        this.#clearCache();
-    }
-    set({ topLeft, size }) {
-        this.#setTopLeft(topLeft);
-        this.#setSize(size);
-        this.#clearCache();
-        return this;
-    }
-    update({ topLeft, size } = {}) {
-        let changed = false;
-        if (topLeft != null) { this.#setTopLeft(topLeft); changed=true; }
-        if (size != null) { this.#setSize(size); changed=true; }
-        if (changed) {
-            this.#clearCache();
-        }
-        return this;
-    }
-    scale(factor) {
-        return this.update(Region.fromCenter({
-            center: this.center,
-            size: new Vector2({x: this.size.x * factor.x, y: this.size.y * factor.y}),
-        }));
-    }
-    get topLeft() { return this.#topLeft; }
-    get size() { return this.#size; }
-    get halfSize() {
-        return this.#cache.halfSize ??=
-            Object.freeze(this.#size.clone().divide(Vector2.TWO));
-    }
-    get topCenter() {
-        return this.#cache.topCenter ??=
-            Object.freeze(this.#topLeft.clone().add({x: this.halfSize.x}));
-    }
-    get topRight() {
-        return this.#cache.topRight ??=
-            Object.freeze(this.#topLeft.clone().add({x: this.#size.x}));
-    }
-    get centerLeft() {
-        return this.#cache.centerLeft ??=
-            Object.freeze(this.#topLeft.clone().add({y: this.halfSize.y}));
-    }
-    get center() {
-        return this.#cache.center ??=
-            Object.freeze(this.#topLeft.clone().add(this.halfSize));
-    }
-    get centerRight() {
-        return this.#cache.centerRight ??=
-            Object.freeze(this.#topLeft.clone().add({x: this.#size.x, y: this.halfSize.y}));
-    }
-    get bottomLeft() {
-        return this.#cache.bottomLeft ??=
-            Object.freeze(this.#topLeft.clone().add({y: this.#size.y}));
-    }
-    get bottomCenter() {
-        return this.#cache.bottomCenter ??=
-            Object.freeze(this.#topLeft.clone().add({x: this.halfSize.x, y: this.#size.y}));
-    }
-    get bottomRight() {
-        return this.#cache.bottomRight ??=
-            Object.freeze(this.#topLeft.clone().add(this.#size));
-    }
-
-    clone() { return new this.constructor(this); }
-    toString() { return `${this.topLeft} ${this.size.x}x${this.size.y}`; }
-
-    #clearCache() {
-        this.#cache = Object.create(null);
-    }
-    #setTopLeft(topLeft) {
-        this.#topLeft = Object.freeze(Vector2.assert(topLeft, "topLeft").clone());
-    }
-    #setSize(size) {
-        this.#size = Object.freeze(Vector2.assert(size, "size").clone());
-    }
-}
+const assertFiniteNumber = OverlayCore.assertFiniteNumber;
+const Vector2 = OverlayCore.Vector2;
+const Region = OverlayCore.Region;
+const DpadLayout = OverlayCore.DpadLayout;
+const clampNormalizedOffsetToEllipse = OverlayCore.clampNormalizedOffsetToEllipse;
 
 const ShapeType = Object.freeze({
     RECTANGLE: Symbol("RECTANGLE"),
@@ -327,76 +73,14 @@ const PressFillDirection = Object.freeze({
     OUTWARD: Symbol("OUTWARD"),
 });
 
+const DomainShapeModel = OverlayDomain.ShapeModel;
+const DomainBorderModel = OverlayDomain.BorderModel;
+
 function createSvgPolygon(points, attributes = {}) {
     return createSvgElement("polygon", {
         points: Array.isArray(points) ? points.map(String).join(" ") : String(points),
         ...attributes,
     });
-}
-
-class ShapeModel {
-    #region;
-    #shapeType;
-    #cornerRadiusPercent;
-
-    constructor({region, shapeType, cornerRadiusPercent = Vector2.ZERO}) {
-        this.#region = region;
-        this.#shapeType = shapeType;
-        this.#cornerRadiusPercent = cornerRadiusPercent;
-    }
-
-    get region() { return this.#region; }
-    get shapeType() { return this.#shapeType; }
-    get cornerRadiusPercent() { return this.#cornerRadiusPercent; }
-
-    expanded(amount) {
-        if (!(amount > 0)) {
-            return this;
-        }
-        const expandedRegion = Region.fromCenter({
-            center: this.#region.center,
-            size: this.#region.size.clone().add(Vector2.splat(amount * 2)),
-        });
-        let cornerRadiusPercent = this.#cornerRadiusPercent;
-        if (this.#shapeType === ShapeType.RECTANGLE) {
-            const originalRadiusX = this.#region.halfSize.x * this.#cornerRadiusPercent.x;
-            const originalRadiusY = this.#region.halfSize.y * this.#cornerRadiusPercent.y;
-            const expandedRadiusX = Math.min(expandedRegion.halfSize.x, Math.max(0, originalRadiusX + amount));
-            const expandedRadiusY = Math.min(expandedRegion.halfSize.y, Math.max(0, originalRadiusY + amount));
-            cornerRadiusPercent = new Vector2({
-                x: expandedRegion.halfSize.x === 0 ? 0 : expandedRadiusX / expandedRegion.halfSize.x,
-                y: expandedRegion.halfSize.y === 0 ? 0 : expandedRadiusY / expandedRegion.halfSize.y,
-            });
-        }
-        return new ShapeModel({
-            region: expandedRegion,
-            shapeType: this.#shapeType,
-            cornerRadiusPercent,
-        });
-    }
-
-    trianglePoints() {
-        switch (this.#shapeType) {
-            case ShapeType.TRIANGLE_UP:
-                return [this.#region.topCenter, this.#region.bottomLeft, this.#region.bottomRight];
-            case ShapeType.TRIANGLE_DOWN:
-                return [this.#region.bottomCenter, this.#region.topLeft, this.#region.topRight];
-            case ShapeType.TRIANGLE_LEFT:
-                return [this.#region.centerLeft, this.#region.topRight, this.#region.bottomRight];
-            case ShapeType.TRIANGLE_RIGHT:
-                return [this.#region.centerRight, this.#region.topLeft, this.#region.bottomLeft];
-            default:
-                return null;
-        }
-    }
-
-    createElement(attributes = {}) {
-        return createSvgShape({
-            region: this.#region,
-            shapeType: this.#shapeType,
-            cornerRadiusPercent: this.#cornerRadiusPercent,
-        }, attributes);
-    }
 }
 
 // Terminology glossary:
@@ -405,31 +89,6 @@ class ShapeModel {
 // - LayerSpec: declarative render plan for one SVG <use> layer.
 // - ShapeModel: center-based geometry model for one shape.
 // - BorderModel: border sizing/expansion policy for external stroke-style borders.
-
-class BorderModel {
-    #innerSize;
-
-    constructor({innerSize = 0} = {}) {
-        this.#innerSize = Math.max(0, Number(innerSize) || 0);
-    }
-
-    get innerSize() { return this.#innerSize; }
-
-    appliesToBordered(includeBorder) {
-        return Boolean(includeBorder) && this.#innerSize > 0;
-    }
-
-    expandAmount() {
-        return this.#innerSize / 2;
-    }
-
-    expandedShape(shapeModel, includeBorder) {
-        if (!this.appliesToBordered(includeBorder)) {
-            return shapeModel;
-        }
-        return shapeModel.expanded(this.expandAmount());
-    }
-}
 
 class LayerSpec {
     #sourceId;
@@ -516,120 +175,6 @@ function createSvgShape({region, shapeType, cornerRadiusPercent = Vector2.ZERO},
             throw new Error(`Unknown shape type: ${String(shapeType)}`);
     }
     return setAttributes(element, attributes);
-}
-
-class DpadLayout {
-    static fromCenter({ buttonLength, buttonWidth, center }) {
-        return new this({
-            buttonLength,
-            buttonWidth,
-            topLeft: center.clone().subtract(
-                Vector2.splat(buttonLength + buttonWidth / 2)
-            ),
-        });
-    }
-    // TODO: diagonal special buttons not handled; could return a cell
-    // but would need to know a padding offset (at LEAST to allocate
-    // for the cross borders + some spacing).  Centered most likely.
-    #size;
-    #buttonCentersRegion;
-    #horizontalButtonSize;
-    #verticalButtonSize;
-    #cornerButtonSize;
-    #originSize;
-    #topLeft;
-    #cache = Object.create(null);
-
-    constructor({buttonLength, buttonWidth, topLeft}) {
-        this.#size = Object.freeze(Vector2.splat(buttonLength * 2 + buttonWidth));
-        // all points on this region will be the centers of inputs/buttons
-        this.#buttonCentersRegion = new Region({
-            topLeft: topLeft.clone().add(Vector2.splat(buttonLength / 2)),
-            size: Vector2.splat(buttonWidth + buttonLength),
-        });
-        this.#horizontalButtonSize = new Vector2({x: buttonLength, y: buttonWidth});
-        this.#verticalButtonSize = new Vector2({x: buttonWidth, y: buttonLength});
-        this.#cornerButtonSize = Vector2.splat(buttonLength);
-        this.#originSize = Vector2.splat(buttonWidth);
-    }
-    get size() { return this.#size; }
-    get origin() {
-        return this.#cache.origin ??= Object.freeze(Region.fromCenter({
-            center: this.#buttonCentersRegion.center,
-            size: this.#originSize,
-        }));
-    }
-    get left() {
-        return this.#cache.left ??= Object.freeze(Region.fromCenter({
-            center: this.#buttonCentersRegion.centerLeft,
-            size: this.#horizontalButtonSize,
-        }));
-    }
-    get right() {
-        return this.#cache.right ??= Object.freeze(Region.fromCenter({
-            center: this.#buttonCentersRegion.centerRight,
-            size: this.#horizontalButtonSize,
-        }));
-    }
-    get up() {
-        return this.#cache.up ??= Object.freeze(Region.fromCenter({
-            center: this.#buttonCentersRegion.topCenter,
-            size: this.#verticalButtonSize,
-        }));
-    }
-    get down() {
-        return this.#cache.down ??= Object.freeze(Region.fromCenter({
-            center: this.#buttonCentersRegion.bottomCenter,
-            size: this.#verticalButtonSize,
-        }));
-    }
-    get topLeft() {
-        return this.#cache.topLeft ??= Object.freeze(Region.fromCenter({
-            center: this.#buttonCentersRegion.topLeft,
-            size: this.#cornerButtonSize,
-        }));
-    }
-    get bottomLeft() {
-        return this.#cache.bottomLeft ??= Object.freeze(Region.fromCenter({
-            center: this.#buttonCentersRegion.bottomLeft,
-            size: this.#cornerButtonSize,
-        }));
-    }
-    get topRight() {
-        return this.#cache.topRight ??= Object.freeze(Region.fromCenter({
-            center: this.#buttonCentersRegion.topRight,
-            size: this.#cornerButtonSize,
-        }));
-    }
-    get bottomRight() {
-        return this.#cache.bottomRight ??= Object.freeze(Region.fromCenter({
-            center: this.#buttonCentersRegion.bottomRight,
-            size: this.#cornerButtonSize,
-        }));
-    }
-
-    get crossPoints() {  // TODO: rename?
-        return this.#cache.crossPoints ??= Object.freeze([
-            this.left.bottomRight,
-            this.left.bottomLeft,
-            this.left.topLeft,
-            this.up.bottomLeft,
-            this.up.topLeft,
-            this.up.topRight,
-            this.right.topLeft,
-            this.right.topRight,
-            this.right.bottomRight,
-            this.down.topRight,
-            this.down.bottomRight,
-            this.down.bottomLeft,
-        ]);
-    }
-    get analogRegion() {
-        return this.#cache.analogRegion ??= Object.freeze(Region.fromCenter({
-            center: this.origin.center,
-            size: Vector2.splat(Math.hypot(this.origin.size.x, this.origin.size.y)),
-        }));
-    }
 }
 
 class SvgContext {
@@ -1468,8 +1013,8 @@ class GamepadOverlay {
         themeVariables = this.#resolveThemeVariables(semanticAttributes),
         prewarmPressFillVisual = this.#prewarmPressFillVisuals && pressMode === "digital" && digitalRenderMode === "fill",
     }) {
-        const shapeModel = new ShapeModel({region, shapeType, cornerRadiusPercent});
-        const borderModel = new BorderModel({innerSize: this.#innerBorderSize});
+        const shapeModel = new DomainShapeModel({region, shapeType, cornerRadiusPercent});
+        const borderModel = new DomainBorderModel({innerSize: this.#innerBorderSize});
         const includeBorderStroke = borderModel.appliesToBordered(includeBorder);
         const borderExpandAmount = borderModel.expandAmount();
         const trianglePoints = shapeModel.trianglePoints();
@@ -1484,14 +1029,22 @@ class GamepadOverlay {
             semanticAttributes,
         });
         if (fillCutoutShapeId != null) {
-            this.#context.addDefinition(shapeModel.createElement({id: fillCutoutShapeId}));
+            this.#context.addDefinition(createSvgShape({
+                region: shapeModel.region,
+                shapeType: shapeModel.shapeType,
+                cornerRadiusPercent: shapeModel.cornerRadiusPercent,
+            }, {id: fillCutoutShapeId}));
         }
         const element = (() => {
             if (includeBorderStroke && trianglePoints != null) {
                 const expandedTrianglePoints = this.#offsetConvexPolygon(trianglePoints, borderExpandAmount);
                 return createSvgPolygon(expandedTrianglePoints, {id});
             }
-            return expandedShapeModel.createElement({id});
+            return createSvgShape({
+                region: expandedShapeModel.region,
+                shapeType: expandedShapeModel.shapeType,
+                cornerRadiusPercent: expandedShapeModel.cornerRadiusPercent,
+            }, {id});
         })();
 
         const entity = new GamepadEntity({

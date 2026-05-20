@@ -1,3 +1,9 @@
+const WebglCore = OverlayCore;
+const DomainBorderModel = OverlayDomain.BorderModel;
+const buildRasterRenderPlans = OverlayDomain.buildRasterRenderPlans;
+const buildButtonDrawOps = OverlayDomain.buildButtonDrawOps;
+const buildStickDrawOps = OverlayDomain.buildStickDrawOps;
+
 class WebglBufferStream {
     #gl;
     #posBuffer;
@@ -125,16 +131,16 @@ class WebglGeometryBuilder {
     }
 
     expandRegion(region, amount) {
-        return Region.fromCenter({
+        return WebglCore.Region.fromCenter({
             center: region.center,
-            size: new Vector2({x: region.size.x + amount * 2, y: region.size.y + amount * 2}),
+            size: new WebglCore.Vector2({x: region.size.x + amount * 2, y: region.size.y + amount * 2}),
         });
     }
 
     insetRegion(region, inset) {
         const width = Math.max(2, region.size.x - inset * 2);
         const height = Math.max(2, region.size.y - inset * 2);
-        return Region.fromCenter({center: region.center, size: new Vector2({x: width, y: height})});
+        return WebglCore.Region.fromCenter({center: region.center, size: new WebglCore.Vector2({x: width, y: height})});
     }
 
     pushTri(vertices, colors, ax, ay, bx, by, cx, cy, color) {
@@ -183,7 +189,7 @@ class WebglGeometryBuilder {
         const appendArcPoints = (centerX, centerY, startRadians, endRadians) => {
             for (let segmentIndex = 0; segmentIndex <= segmentCount; segmentIndex += 1) {
                 const radians = startRadians + (endRadians - startRadians) * (segmentIndex / segmentCount);
-                polygonPoints.push(new Vector2({x: centerX + Math.cos(radians) * cornerRadius, y: centerY + Math.sin(radians) * cornerRadius}));
+                polygonPoints.push(new WebglCore.Vector2({x: centerX + Math.cos(radians) * cornerRadius, y: centerY + Math.sin(radians) * cornerRadius}));
             }
         };
         appendArcPoints(region.topRight.x - cornerRadius, region.topRight.y + cornerRadius, -Math.PI / 2, 0);
@@ -202,7 +208,7 @@ class WebglGeometryBuilder {
         const appendArcPoints = (centerX, centerY, startRadians, endRadians) => {
             for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex += 1) {
                 const radians = startRadians + (endRadians - startRadians) * (segmentIndex / segmentCount);
-                polygonPoints.push(new Vector2({x: centerX + Math.cos(radians) * cornerRadius, y: centerY + Math.sin(radians) * cornerRadius}));
+                polygonPoints.push(new WebglCore.Vector2({x: centerX + Math.cos(radians) * cornerRadius, y: centerY + Math.sin(radians) * cornerRadius}));
             }
         };
         appendArcPoints(region.topRight.x - cornerRadius, region.topRight.y + cornerRadius, -Math.PI / 2, 0);
@@ -230,89 +236,16 @@ class WebglGeometryBuilder {
             const edgeLength = Math.max(1e-6, Math.hypot(deltaX, deltaY));
             const normalX = -deltaY / edgeLength;
             const normalY = deltaX / edgeLength;
-            const offsetStartPositive = new Vector2({x: startPoint.x + normalX * halfStrokeWidth, y: startPoint.y + normalY * halfStrokeWidth});
-            const offsetEndPositive = new Vector2({x: endPoint.x + normalX * halfStrokeWidth, y: endPoint.y + normalY * halfStrokeWidth});
-            const offsetEndNegative = new Vector2({x: endPoint.x - normalX * halfStrokeWidth, y: endPoint.y - normalY * halfStrokeWidth});
-            const offsetStartNegative = new Vector2({x: startPoint.x - normalX * halfStrokeWidth, y: startPoint.y - normalY * halfStrokeWidth});
+            const offsetStartPositive = new WebglCore.Vector2({x: startPoint.x + normalX * halfStrokeWidth, y: startPoint.y + normalY * halfStrokeWidth});
+            const offsetEndPositive = new WebglCore.Vector2({x: endPoint.x + normalX * halfStrokeWidth, y: endPoint.y + normalY * halfStrokeWidth});
+            const offsetEndNegative = new WebglCore.Vector2({x: endPoint.x - normalX * halfStrokeWidth, y: endPoint.y - normalY * halfStrokeWidth});
+            const offsetStartNegative = new WebglCore.Vector2({x: startPoint.x - normalX * halfStrokeWidth, y: startPoint.y - normalY * halfStrokeWidth});
             this.pushPoly(vertices, colors, [offsetStartPositive, offsetEndPositive, offsetEndNegative, offsetStartNegative], strokeColor);
         }
-        this.pushEllipse(vertices, colors, Region.fromCenter({center: points[0], size: Vector2.splat(strokeWidth)}), strokeColor, 28);
-        this.pushEllipse(vertices, colors, Region.fromCenter({center: points[1], size: Vector2.splat(strokeWidth)}), strokeColor, 28);
-        this.pushEllipse(vertices, colors, Region.fromCenter({center: points[2], size: Vector2.splat(strokeWidth)}), strokeColor, 28);
+        this.pushEllipse(vertices, colors, WebglCore.Region.fromCenter({center: points[0], size: WebglCore.Vector2.splat(strokeWidth)}), strokeColor, 28);
+        this.pushEllipse(vertices, colors, WebglCore.Region.fromCenter({center: points[1], size: WebglCore.Vector2.splat(strokeWidth)}), strokeColor, 28);
+        this.pushEllipse(vertices, colors, WebglCore.Region.fromCenter({center: points[2], size: WebglCore.Vector2.splat(strokeWidth)}), strokeColor, 28);
     }
-}
-
-class WebglBorderModel {
-    #borderWidth;
-    constructor(borderWidth) {
-        this.#borderWidth = Math.max(0, Number(borderWidth) || 0);
-    }
-    get width() { return this.#borderWidth; }
-    get halfWidth() { return this.#borderWidth * 0.5; }
-    expandedRegion(builder, region) { return builder.expandRegion(region, this.#borderWidth); }
-    expandedRegionHalf(builder, region) { return builder.expandRegion(region, this.halfWidth); }
-}
-
-class WebglShapeModel {
-    #region;
-    #shape;
-    #cornerRadiusPercent;
-
-    constructor({region, shape, cornerRadiusPercent = 0}) {
-        this.#region = region;
-        this.#shape = shape;
-        this.#cornerRadiusPercent = cornerRadiusPercent;
-    }
-
-    get region() { return this.#region; }
-    get shape() { return this.#shape; }
-    get cornerRadiusPercent() { return this.#cornerRadiusPercent; }
-
-    expanded(builder, amount) {
-        return new WebglShapeModel({
-            region: builder.expandRegion(this.#region, amount),
-            shape: this.#shape,
-            cornerRadiusPercent: this.#cornerRadiusPercent,
-        });
-    }
-}
-
-class WebglControlRenderPlan {
-    #shapeModel;
-    #baseColor;
-    #pressedColor;
-    #inputAmount;
-    #pressMode;
-
-    constructor({shapeModel, baseColor, pressedColor, inputAmount, pressMode}) {
-        this.#shapeModel = shapeModel;
-        this.#baseColor = baseColor;
-        this.#pressedColor = pressedColor;
-        this.#inputAmount = inputAmount;
-        this.#pressMode = pressMode;
-    }
-
-    get shapeModel() { return this.#shapeModel; }
-    get baseColor() { return this.#baseColor; }
-    get pressedColor() { return this.#pressedColor; }
-    get inputAmount() { return this.#inputAmount; }
-    get pressMode() { return this.#pressMode; }
-}
-
-class WebglStickRenderPlan {
-    #stickShape;
-    #ringShape;
-    #fillColor;
-
-    constructor({stickShape, ringShape, fillColor}) {
-        this.#stickShape = stickShape;
-        this.#ringShape = ringShape;
-        this.#fillColor = fillColor;
-    }
-
-    get stickShape() { return this.#stickShape; }
-    get ringShape() { return this.#ringShape; }
-    get fillColor() { return this.#fillColor; }
 }
 
 // Architecture overview:
@@ -350,8 +283,22 @@ class WebGLGamepadOverlayRenderer {
     #geometryBuilder;
     #borderModel;
 
+    #cornerRadiusPixels(shapeModel) {
+        const shapeRegion = shapeModel.region;
+        const percent = shapeModel.cornerRadiusPercent;
+        if (typeof percent === "number") {
+            return Math.max(0, Math.min(shapeRegion.halfSize.x, shapeRegion.halfSize.y) * percent);
+        }
+        const px = Number(percent?.x);
+        const py = Number(percent?.y);
+        if (Number.isFinite(px) && Number.isFinite(py)) {
+            return Math.max(0, Math.min(shapeRegion.halfSize.x * px, shapeRegion.halfSize.y * py));
+        }
+        return 0;
+    }
+
     #drawShape(vertices, colors, shapeModel, fillColor) {
-        const shapeType = shapeModel.shape;
+        const shapeType = shapeModel.shapeType;
         const shapeRegion = shapeModel.region;
         if (shapeType === "ellipse") {
             this.#geometryBuilder.pushEllipse(vertices, colors, shapeRegion, fillColor);
@@ -361,72 +308,69 @@ class WebGLGamepadOverlayRenderer {
             this.#geometryBuilder.pushPoly(vertices, colors, [shapeRegion.bottomCenter, shapeRegion.topLeft, shapeRegion.topRight], fillColor);
             return;
         }
-        const cornerRadius = Math.max(0, Math.min(shapeRegion.halfSize.x, shapeRegion.halfSize.y) * shapeModel.cornerRadiusPercent);
+        const cornerRadius = this.#cornerRadiusPixels(shapeModel);
         this.#geometryBuilder.pushRoundedRect(vertices, colors, shapeRegion, cornerRadius, fillColor);
     }
 
     #drawButtonPlan(vertices, colors, plan) {
-        const shapeModel = plan.shapeModel;
-        const shapeRegion = shapeModel.region;
-        const blendedFillColor = this.#geometryBuilder.mixColor(plan.baseColor, plan.inputAmount, plan.pressedColor);
-        if (shapeModel.shape === "triDown") {
-            const trianglePoints = [shapeRegion.bottomCenter, shapeRegion.topLeft, shapeRegion.topRight];
-            this.#geometryBuilder.drawTriangleStroke(vertices, colors, trianglePoints, this.#theme.borderOuter, this.#borderModel.width * 2);
-            this.#geometryBuilder.drawTriangleStroke(vertices, colors, trianglePoints, this.#theme.borderInner, this.#borderModel.width);
-            this.#drawShape(vertices, colors, new WebglShapeModel({region: shapeRegion, shape: "triDown", cornerRadiusPercent: 0}), this.#theme.borderInner);
-            this.#drawShape(vertices, colors, shapeModel, plan.baseColor);
-            if (plan.pressMode === "analog" && plan.inputAmount > 0) {
-                const clampedAmount = Math.max(0, Math.min(1, plan.inputAmount));
-                const leftEdgePoint = new Vector2({x: trianglePoints[1].x + (trianglePoints[0].x - trianglePoints[1].x) * clampedAmount, y: trianglePoints[1].y + (trianglePoints[0].y - trianglePoints[1].y) * clampedAmount});
-                const rightEdgePoint = new Vector2({x: trianglePoints[2].x + (trianglePoints[0].x - trianglePoints[2].x) * clampedAmount, y: trianglePoints[2].y + (trianglePoints[0].y - trianglePoints[2].y) * clampedAmount});
-                this.#geometryBuilder.pushPoly(vertices, colors, [trianglePoints[1], trianglePoints[2], rightEdgePoint, leftEdgePoint], this.#theme.pressed);
-            }
-            return;
-        }
-
-        if (shapeModel.shape === "rect" && shapeModel.cornerRadiusPercent > 0) {
-            const halfExpandedShape = shapeModel.expanded(this.#geometryBuilder, this.#borderModel.halfWidth);
-            this.#drawShape(vertices, colors, halfExpandedShape, this.#theme.borderInner);
-            this.#drawShape(vertices, colors, shapeModel, blendedFillColor);
-            const cornerRadius = Math.min(shapeRegion.halfSize.x, shapeRegion.halfSize.y) * shapeModel.cornerRadiusPercent;
-            const baseLoop = this.#geometryBuilder.roundedRectLoop(shapeRegion, cornerRadius, 8);
-            const blackBorderLoop = this.#geometryBuilder.roundedRectLoop(halfExpandedShape.region, cornerRadius + this.#borderModel.halfWidth, 8);
-            const fullExpandedShape = shapeModel.expanded(this.#geometryBuilder, this.#borderModel.width);
-            const whiteBorderLoop = this.#geometryBuilder.roundedRectLoop(fullExpandedShape.region, cornerRadius + this.#borderModel.width, 8);
-            this.#geometryBuilder.pushRing(vertices, colors, whiteBorderLoop, blackBorderLoop, this.#theme.borderOuter);
-            this.#geometryBuilder.pushRing(vertices, colors, blackBorderLoop, baseLoop, this.#theme.borderInner);
-            return;
-        }
-
-        this.#drawShape(vertices, colors, shapeModel.expanded(this.#geometryBuilder, this.#borderModel.width), this.#theme.borderOuter);
-        this.#drawShape(vertices, colors, shapeModel.expanded(this.#geometryBuilder, this.#borderModel.halfWidth), this.#theme.borderInner);
-        this.#drawShape(vertices, colors, shapeModel, blendedFillColor);
+        const ops = buildButtonDrawOps({
+            shapeModel: plan.shapeModel,
+            borderModel: this.#borderModel,
+            inputAmount: plan.inputAmount,
+            pressMode: plan.pressMode,
+            baseColorToken: plan.baseColorToken,
+            pressedColorToken: plan.pressedColorToken,
+        });
+        this.#executeDrawOps(vertices, colors, ops);
     }
 
     #drawStickPlan(vertices, colors, plan) {
-        const pushStick = (shapeModel, fillColor) => {
-            this.#drawShape(vertices, colors, shapeModel, fillColor);
-        };
+        const ops = buildStickDrawOps({
+            stickShape: plan.stickShape,
+            ringShape: plan.ringShape,
+            borderModel: this.#borderModel,
+            fillColorSpec: plan.fillColorSpec,
+        });
+        this.#executeDrawOps(vertices, colors, ops);
+    }
 
-        const stickShape = plan.stickShape;
-        const ringShape = plan.ringShape;
-        const ringRegion = ringShape.region;
-        const stickRegion = stickShape.region;
-        const ringFillColor = plan.fillColor;
+    #resolveColor(colorSpec) {
+        if (!colorSpec || colorSpec.mode === "solid") {
+            return this.#theme[colorSpec?.token || "idle"];
+        }
+        if (colorSpec.mode === "blend") {
+            return this.#geometryBuilder.mixColor(this.#theme[colorSpec.baseToken], colorSpec.amount, this.#theme[colorSpec.pressedToken]);
+        }
+        return this.#theme.idle;
+    }
 
-        const whiteBorderOuterRegion = this.#borderModel.expandedRegion(this.#geometryBuilder, ringRegion);
-        const whiteBorderInnerRegion = this.#geometryBuilder.insetRegion(whiteBorderOuterRegion, this.#borderModel.halfWidth);
-        const blackBorderOuterRegion = whiteBorderInnerRegion;
-        const blackBorderInnerRegion = this.#geometryBuilder.insetRegion(blackBorderOuterRegion, this.#borderModel.halfWidth);
-
-        pushStick(new WebglShapeModel({region: this.#borderModel.expandedRegion(this.#geometryBuilder, stickRegion), shape: "ellipse"}), this.#theme.borderOuter);
-        pushStick(new WebglShapeModel({region: this.#borderModel.expandedRegionHalf(this.#geometryBuilder, stickRegion), shape: "ellipse"}), this.#theme.borderInner);
-        pushStick(stickShape, ringFillColor);
-
-        pushStick(new WebglShapeModel({region: whiteBorderOuterRegion, shape: "ellipse"}), this.#theme.borderOuter);
-        pushStick(new WebglShapeModel({region: whiteBorderInnerRegion, shape: "ellipse"}), ringFillColor);
-        pushStick(new WebglShapeModel({region: blackBorderOuterRegion, shape: "ellipse"}), this.#theme.borderInner);
-        pushStick(new WebglShapeModel({region: blackBorderInnerRegion, shape: "ellipse"}), ringFillColor);
+    #executeDrawOps(vertices, colors, ops) {
+        for (const op of ops) {
+            if (op.kind === "shapeFill") {
+                this.#drawShape(vertices, colors, op.shapeModel, this.#resolveColor(op.color));
+                continue;
+            }
+            if (op.kind === "triangleStroke") {
+                this.#geometryBuilder.drawTriangleStroke(vertices, colors, op.points, this.#resolveColor(op.color), op.strokeWidth);
+                continue;
+            }
+            if (op.kind === "trianglePressFill") {
+                const points = op.points;
+                const leftEdgePoint = new WebglCore.Vector2({x: points[1].x + (points[0].x - points[1].x) * op.amount, y: points[1].y + (points[0].y - points[1].y) * op.amount});
+                const rightEdgePoint = new WebglCore.Vector2({x: points[2].x + (points[0].x - points[2].x) * op.amount, y: points[2].y + (points[0].y - points[2].y) * op.amount});
+                this.#geometryBuilder.pushPoly(vertices, colors, [points[1], points[2], rightEdgePoint, leftEdgePoint], this.#resolveColor(op.color));
+                continue;
+            }
+            if (op.kind === "roundedBorderRing") {
+                const innerShape = op.innerShape;
+                const outerShape = op.outerShape;
+                const innerRadius = this.#cornerRadiusPixels(innerShape);
+                const outerRadius = this.#cornerRadiusPixels(outerShape);
+                const innerLoop = this.#geometryBuilder.roundedRectLoop(innerShape.region, innerRadius, 8);
+                const outerLoop = this.#geometryBuilder.roundedRectLoop(outerShape.region, outerRadius, 8);
+                this.#geometryBuilder.pushRing(vertices, colors, outerLoop, innerLoop, this.#resolveColor(op.color));
+            }
+        }
     }
 
     // ---------- Geometry and color helpers ----------
@@ -460,7 +404,7 @@ class WebGLGamepadOverlayRenderer {
         this.#staticColors = [];
         this.#staticVertexCount = 0;
         this.#perf = new PerfTracker(!!debugPerf);
-        this.#borderModel = new WebglBorderModel(Math.max(2.5, this.#model.borderWidth));
+        this.#borderModel = new DomainBorderModel({innerSize: Math.max(2.5, this.#model.borderWidth)});
         this.#initProgram();
         this.resize();
     }
@@ -471,7 +415,7 @@ class WebGLGamepadOverlayRenderer {
         this.#canvas.width = Math.ceil(this.#model.width);
         this.#canvas.height = Math.ceil(this.#model.height);
         this.#gl.viewport(0, 0, this.#canvas.width, this.#canvas.height);
-        this.#borderModel = new WebglBorderModel(Math.max(2.5, this.#model.borderWidth));
+        this.#borderModel = new DomainBorderModel({innerSize: Math.max(2.5, this.#model.borderWidth)});
         this.#rebuildStaticGeometry();
         this.draw();
     }
@@ -503,7 +447,7 @@ class WebGLGamepadOverlayRenderer {
             const center = overlayModel.leftLayout.origin.center;
             const deltaX = point.x - center.x;
             const deltaY = point.y - center.y;
-            return new Vector2({x: center.x + deltaX * 0.965, y: center.y + deltaY * 0.965});
+            return new WebglCore.Vector2({x: center.x + deltaX * 0.965, y: center.y + deltaY * 0.965});
         });
         pushPolygon(insetCrossPoints, this.#theme.borderInner);
         this.#staticStream.upload(staticVertexPositions, staticVertexColors);
@@ -544,18 +488,14 @@ class WebGLGamepadOverlayRenderer {
             black: [0, 0, 0, 1],
             borderOuter: [1, 1, 1, 1],
             borderInner: [0, 0, 0, 1],
-            rightFace: {
-                up: [95 / 255, 95 / 255, 31 / 255, idleAlpha],
-                right: [95 / 255, 31 / 255, 31 / 255, idleAlpha],
-                left: [31 / 255, 31 / 255, 95 / 255, idleAlpha],
-                down: [31 / 255, 79 / 255, 32 / 255, idleAlpha],
-            },
-            rightFacePressed: {
-                up: [1, 1, 51 / 255, 1],
-                right: [1, 51 / 255, 51 / 255, 1],
-                left: [51 / 255, 119 / 255, 1, 1],
-                down: [63 / 255, 207 / 255, 63 / 255, 1],
-            },
+            rightFaceUp: [95 / 255, 95 / 255, 31 / 255, idleAlpha],
+            rightFaceRight: [95 / 255, 31 / 255, 31 / 255, idleAlpha],
+            rightFaceLeft: [31 / 255, 31 / 255, 95 / 255, idleAlpha],
+            rightFaceDown: [31 / 255, 79 / 255, 32 / 255, idleAlpha],
+            rightFacePressedUp: [1, 1, 51 / 255, 1],
+            rightFacePressedRight: [1, 51 / 255, 51 / 255, 1],
+            rightFacePressedLeft: [51 / 255, 119 / 255, 1, 1],
+            rightFacePressedDown: [63 / 255, 207 / 255, 63 / 255, 1],
         };
     }
 
@@ -583,77 +523,23 @@ class WebGLGamepadOverlayRenderer {
         this.#staticStream = new WebglBufferStream(gl);
     }
 
-    #buildDynamicButtons(state) {
-        const overlayModel = this.#model;
+    #buildDynamicButtons(buttonPlans) {
         const dynamicVertexPositions = this.#vertices;
         const dynamicVertexColors = this.#colors;
         dynamicVertexPositions.length = 0;
         dynamicVertexColors.length = 0;
-        const plans = [];
-        const queuePlan = (buttonSpec, baseColor, inputAmount, pressedColorOverride = null) => {
-            if (!buttonSpec) {
-                return;
-            }
-            plans.push(new WebglControlRenderPlan({
-                shapeModel: new WebglShapeModel({region: buttonSpec.region, shape: buttonSpec.shape, cornerRadiusPercent: buttonSpec.cornerRadiusPercent || 0}),
-                baseColor,
-                pressedColor: pressedColorOverride ?? this.#theme.pressed,
-                inputAmount,
-                pressMode: buttonSpec.pressMode || "digital",
-            }));
-        };
-
-        queuePlan(overlayModel.buttons.left.leftBumper, this.#theme.idle, state.LB);
-        queuePlan(overlayModel.buttons.left.select, this.#theme.idle, state.SELECT);
-        queuePlan(overlayModel.buttons.left.leftTrigger, this.#theme.idle, state.LT);
-        queuePlan(overlayModel.buttons.right.start, this.#theme.idle, state.START);
-        queuePlan(overlayModel.buttons.right.rightBumper, this.#theme.idle, state.RB);
-        queuePlan(overlayModel.buttons.right.rightTrigger, this.#theme.idle, state.RT);
-        queuePlan(overlayModel.buttons.left.left, this.#theme.idle, state.DX < 0 ? 1 : 0);
-        queuePlan(overlayModel.buttons.left.right, this.#theme.idle, state.DX > 0 ? 1 : 0);
-        queuePlan(overlayModel.buttons.left.up, this.#theme.idle, state.DY < 0 ? 1 : 0);
-        queuePlan(overlayModel.buttons.left.down, this.#theme.idle, state.DY > 0 ? 1 : 0);
-        queuePlan(overlayModel.buttons.left.origin, this.#theme.idle, 0);
-        queuePlan(overlayModel.buttons.right.up, this.#theme.rightFace.up, state.Y, this.#theme.rightFacePressed.up);
-        queuePlan(overlayModel.buttons.right.right, this.#theme.rightFace.right, state.B, this.#theme.rightFacePressed.right);
-        queuePlan(overlayModel.buttons.right.left, this.#theme.rightFace.left, state.X, this.#theme.rightFacePressed.left);
-        queuePlan(overlayModel.buttons.right.down, this.#theme.rightFace.down, state.A, this.#theme.rightFacePressed.down);
-        queuePlan(overlayModel.buttons.left.analogArea, this.#theme.black, 0);
-        queuePlan(overlayModel.buttons.right.analogArea, this.#theme.black, 0);
-
-        for (const plan of plans) {
+        for (const plan of buttonPlans) {
             this.#drawButtonPlan(dynamicVertexPositions, dynamicVertexColors, plan);
         }
     }
 
     // ---------- Dynamic geometry builders ----------
 
-    #buildSticks(state) {
-        const overlayModel = this.#model;
+    #buildSticks(stickPlans) {
         const stickVertexPositions = this.#stickVerts;
         const stickVertexColors = this.#stickColors;
         stickVertexPositions.length = 0;
         stickVertexColors.length = 0;
-        const leftStickOffset = clampNormalizedOffsetToEllipse({offset: {x: state.LX, y: state.LY}, halfSize: overlayModel.leftLayout.origin.halfSize});
-        const rightStickOffset = clampNormalizedOffsetToEllipse({offset: {x: state.RX, y: state.RY}, halfSize: overlayModel.rightLayout.origin.halfSize});
-        const leftStickRegion = overlayModel.buttons.left.analogStick.region.clone().update({topLeft: overlayModel.buttons.left.analogStick.region.topLeft.clone().add(leftStickOffset)});
-        const rightStickRegion = overlayModel.buttons.right.analogStick.region.clone().update({topLeft: overlayModel.buttons.right.analogStick.region.topLeft.clone().add(rightStickOffset)});
-        const leftRingRegion = overlayModel.buttons.left.analogStickRing.region.clone().update({topLeft: overlayModel.buttons.left.analogStickRing.region.topLeft.clone().add(leftStickOffset)});
-        const rightRingRegion = overlayModel.buttons.right.analogStickRing.region.clone().update({topLeft: overlayModel.buttons.right.analogStickRing.region.topLeft.clone().add(rightStickOffset)});
-        const leftStickFillColor = this.#geometryBuilder.mixColor(this.#theme.idle, state.LS, this.#theme.pressed);
-        const rightStickFillColor = this.#geometryBuilder.mixColor(this.#theme.idle, state.RS, this.#theme.pressed);
-        const stickPlans = [
-            new WebglStickRenderPlan({
-                stickShape: new WebglShapeModel({region: leftStickRegion, shape: "ellipse"}),
-                ringShape: new WebglShapeModel({region: leftRingRegion, shape: "ellipse"}),
-                fillColor: leftStickFillColor,
-            }),
-            new WebglStickRenderPlan({
-                stickShape: new WebglShapeModel({region: rightStickRegion, shape: "ellipse"}),
-                ringShape: new WebglShapeModel({region: rightRingRegion, shape: "ellipse"}),
-                fillColor: rightStickFillColor,
-            }),
-        ];
         for (const stickPlan of stickPlans) {
             this.#drawStickPlan(stickVertexPositions, stickVertexColors, stickPlan);
         }
@@ -679,10 +565,15 @@ class WebGLGamepadOverlayRenderer {
 
     draw() {
         const buildStartTimestamp = performance.now();
-        this.#buildDynamicButtons(this.#model.state);
+        const plans = buildRasterRenderPlans({
+            model: this.#model,
+            state: this.#model.state,
+            clampOffset: ({offset, halfSize}) => WebglCore.clampNormalizedOffsetToEllipse({offset, halfSize}),
+        });
+        this.#buildDynamicButtons(plans.buttonPlans);
         const uploadStartTimestamp = performance.now();
         this.#dynamicStream.upload(this.#vertices, this.#colors);
-        this.#buildSticks(this.#model.state);
+        this.#buildSticks(plans.stickPlans);
         this.#stickStream.upload(this.#stickVerts, this.#stickColors);
         this.#renderStreams();
         const drawEndTimestamp = performance.now();

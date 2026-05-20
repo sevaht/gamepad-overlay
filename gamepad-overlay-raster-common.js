@@ -1,3 +1,5 @@
+const RasterCore = OverlayCore;
+
 function parseCssRgbTriplet(value, fallback) {
     const parts = String(value || "").split(",").map((p) => Number.parseFloat(p.trim()));
     if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) {
@@ -21,15 +23,15 @@ function mixColor(a, b, t) {
 }
 
 function createRasterOverlayModel({buttonLength = 132, buttonWidth = 132, borderWidth = 8, gap = 1, betweenHalvesGap = 0}) {
-    const topLeft = new Vector2({x: 0, y: 0});
+    const topLeft = new RasterCore.Vector2({x: 0, y: 0});
     const gapPixels = gap * borderWidth;
     const betweenHalvesGapPixels = betweenHalvesGap * borderWidth;
-    const leftTopLeft = topLeft.clone().add(Vector2.splat(borderWidth));
-    const leftLayout = new DpadLayout({buttonLength, buttonWidth, topLeft: leftTopLeft});
-    const rightLayout = new DpadLayout({
+    const leftTopLeft = topLeft.clone().add(RasterCore.Vector2.splat(borderWidth));
+    const leftLayout = new RasterCore.DpadLayout({buttonLength, buttonWidth, topLeft: leftTopLeft});
+    const rightLayout = new RasterCore.DpadLayout({
         buttonLength,
         buttonWidth,
-        topLeft: leftTopLeft.clone().add(new Vector2({
+        topLeft: leftTopLeft.clone().add(new RasterCore.Vector2({
             x: leftLayout.size.x + borderWidth * 2 + gapPixels + betweenHalvesGapPixels,
             y: 0,
         })),
@@ -38,7 +40,7 @@ function createRasterOverlayModel({buttonLength = 132, buttonWidth = 132, border
     const width = rightLayout.topRight.bottomRight.x - topLeft.x + borderWidth;
     const height = leftLayout.bottomLeft.bottomRight.y - topLeft.y + borderWidth;
 
-    const half = (r, sx, sy) => Region.fromCenter({center: r.center, size: new Vector2({x: r.size.x * sx, y: r.size.y * sy})});
+    const half = (r, sx, sy) => RasterCore.Region.fromCenter({center: r.center, size: new RasterCore.Vector2({x: r.size.x * sx, y: r.size.y * sy})});
     const cornerCompensation = gapPixels + borderWidth * 2;
     const applyCornerCompensation = (region, regionName, compensation, compensateOuterEdges = true) => {
         const x = Math.max(0, compensation.x);
@@ -68,9 +70,9 @@ function createRasterOverlayModel({buttonLength = 132, buttonWidth = 132, border
             default:
                 break;
         }
-        return new Region({
+        return new RasterCore.Region({
             topLeft: region.topLeft.clone().add({x: insets.left, y: insets.top}),
-            size: new Vector2({
+            size: new RasterCore.Vector2({
                 x: Math.max(0, region.size.x - insets.left - insets.right),
                 y: Math.max(0, region.size.y - insets.top - insets.bottom),
             }),
@@ -80,7 +82,7 @@ function createRasterOverlayModel({buttonLength = 132, buttonWidth = 132, border
         const compensated = applyCornerCompensation(
             layout[regionName],
             regionName,
-            Vector2.splat(cornerCompensation),
+            RasterCore.Vector2.splat(cornerCompensation),
             true
         );
         return half(compensated, sx, sy);
@@ -96,19 +98,19 @@ function createRasterOverlayModel({buttonLength = 132, buttonWidth = 132, border
             leftBumper: {region: cornerButtonRegion(leftLayout, "topLeft", 0.9, 0.6), shape: "rect", pressMode: "digital", cornerRadiusPercent: 0.25},
             select: {region: cornerButtonRegion(leftLayout, "topRight", 0.7, 0.7), shape: "ellipse", pressMode: "digital"},
             leftTrigger: {region: cornerButtonRegion(leftLayout, "bottomLeft", 1.0, 1.0), shape: "triDown", pressMode: "analog"},
-            analogArea: {region: Region.fromCenter({center: leftLayout.analogRegion.center, size: leftLayout.analogRegion.size.clone()}), shape: "ellipse", pressMode: "none"},
+            analogArea: {region: RasterCore.Region.fromCenter({center: leftLayout.analogRegion.center, size: leftLayout.analogRegion.size.clone()}), shape: "ellipse", pressMode: "none"},
             analogStick: {
-                region: Region.fromCenter({
+                region: RasterCore.Region.fromCenter({
                     center: leftLayout.analogRegion.center,
-                    size: leftLayout.analogRegion.size.clone().multiply(Vector2.splat(0.65)),
+                    size: leftLayout.analogRegion.size.clone().multiply(RasterCore.Vector2.splat(0.65)),
                 }),
                 shape: "ellipse",
                 pressMode: "digital",
             },
             analogStickRing: {
-                region: Region.fromCenter({
+                region: RasterCore.Region.fromCenter({
                     center: leftLayout.analogRegion.center,
-                    size: leftLayout.analogRegion.size.clone().multiply(Vector2.splat(0.65 * 0.75)),
+                    size: leftLayout.analogRegion.size.clone().multiply(RasterCore.Vector2.splat(0.65 * 0.75)),
                 }),
                 shape: "ellipse",
                 pressMode: "none",
@@ -123,19 +125,19 @@ function createRasterOverlayModel({buttonLength = 132, buttonWidth = 132, border
             start: {region: cornerButtonRegion(rightLayout, "topLeft", 0.7, 0.7), shape: "ellipse", pressMode: "digital"},
             rightBumper: {region: cornerButtonRegion(rightLayout, "topRight", 0.9, 0.6), shape: "rect", pressMode: "digital", cornerRadiusPercent: 0.25},
             rightTrigger: {region: cornerButtonRegion(rightLayout, "bottomRight", 1.0, 1.0), shape: "triDown", pressMode: "analog"},
-            analogArea: {region: Region.fromCenter({center: rightLayout.analogRegion.center, size: rightLayout.analogRegion.size.clone()}), shape: "ellipse", pressMode: "none"},
+            analogArea: {region: RasterCore.Region.fromCenter({center: rightLayout.analogRegion.center, size: rightLayout.analogRegion.size.clone()}), shape: "ellipse", pressMode: "none"},
             analogStick: {
-                region: Region.fromCenter({
+                region: RasterCore.Region.fromCenter({
                     center: rightLayout.analogRegion.center,
-                    size: rightLayout.analogRegion.size.clone().multiply(Vector2.splat(0.65)),
+                    size: rightLayout.analogRegion.size.clone().multiply(RasterCore.Vector2.splat(0.65)),
                 }),
                 shape: "ellipse",
                 pressMode: "digital",
             },
             analogStickRing: {
-                region: Region.fromCenter({
+                region: RasterCore.Region.fromCenter({
                     center: rightLayout.analogRegion.center,
-                    size: rightLayout.analogRegion.size.clone().multiply(Vector2.splat(0.65 * 0.75)),
+                    size: rightLayout.analogRegion.size.clone().multiply(RasterCore.Vector2.splat(0.65 * 0.75)),
                 }),
                 shape: "ellipse",
                 pressMode: "none",

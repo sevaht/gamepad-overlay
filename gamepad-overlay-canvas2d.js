@@ -1,3 +1,5 @@
+const clampToEllipseCanvas = OverlayCore.clampNormalizedOffsetToEllipse;
+
 class Canvas2DGamepadOverlayRenderer {
     #canvas;
     #ctx;
@@ -77,8 +79,8 @@ class Canvas2DGamepadOverlayRenderer {
         this.#cutoutShape(model.buttons.left.analogArea);
         this.#cutoutShape(model.buttons.right.analogArea);
 
-        const leftOffset = clampNormalizedOffsetToEllipse({offset: {x: s.LX, y: s.LY}, halfSize: model.leftLayout.origin.halfSize});
-        const rightOffset = clampNormalizedOffsetToEllipse({offset: {x: s.RX, y: s.RY}, halfSize: model.rightLayout.origin.halfSize});
+        const leftOffset = clampToEllipseCanvas({offset: {x: s.LX, y: s.LY}, halfSize: model.leftLayout.origin.halfSize});
+        const rightOffset = clampToEllipseCanvas({offset: {x: s.RX, y: s.RY}, halfSize: model.rightLayout.origin.halfSize});
         const leftStick = model.buttons.left.analogStick.region.clone().update({topLeft: model.buttons.left.analogStick.region.topLeft.clone().add(leftOffset)});
         const rightStick = model.buttons.right.analogStick.region.clone().update({topLeft: model.buttons.right.analogStick.region.topLeft.clone().add(rightOffset)});
         this.#drawButton({region: leftStick, shape: "ellipse"}, this.#theme.idle, s.LS);
