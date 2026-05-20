@@ -424,6 +424,34 @@ class BorderModel {
     }
 }
 
+class LayerSpec {
+    #sourceId;
+    #classes;
+    #cutout;
+    #cutoutSourceId;
+    #styleSource;
+    #attributes;
+    #id;
+
+    constructor({sourceId = null, classes = [], cutout = false, cutoutSourceId = null, styleSource = false, attributes = null, id = null} = {}) {
+        this.#sourceId = sourceId;
+        this.#classes = classes == null ? [] : [].concat(classes);
+        this.#cutout = Boolean(cutout);
+        this.#cutoutSourceId = cutoutSourceId;
+        this.#styleSource = Boolean(styleSource);
+        this.#attributes = attributes;
+        this.#id = id;
+    }
+
+    get sourceId() { return this.#sourceId; }
+    get classes() { return this.#classes; }
+    get cutout() { return this.#cutout; }
+    get cutoutSourceId() { return this.#cutoutSourceId; }
+    get styleSource() { return this.#styleSource; }
+    get attributes() { return this.#attributes; }
+    get id() { return this.#id; }
+}
+
 function createSvgShape({region, shapeType, cornerRadiusPercent = Vector2.ZERO}, attributes = {}) {
     let element;
     switch (shapeType) {
@@ -753,10 +781,13 @@ class GamepadEntity {
         this.#context.addDefinition(this.#element);
         const connectedSourceIds = new Set([this.element.id]);
 
-        for (const layer of layers) {
+        for (const rawLayer of layers) {
+            const layer = rawLayer instanceof LayerSpec
+                ? rawLayer
+                : new LayerSpec(rawLayer);
             const sourceId = layer.sourceId ?? this.element.id;
             const useElement = createSvgUse(sourceId);
-            const classList = layer.classes == null ? [] : [].concat(layer.classes);
+            const classList = layer.classes;
             for (const className of classList) {
                 useElement.classList.add(className);
             }
@@ -1397,6 +1428,23 @@ class GamepadOverlay {
         });
     }
 
+    #createBorderedLayerSpecs({fillShapeId, includeBorderStroke, faceClasses, semanticAttributes}) {
+        const layers = [];
+        if (includeBorderStroke) {
+            layers.push(new LayerSpec({
+                classes: "outer-border",
+                cutout: true,
+                cutoutSourceId: fillShapeId,
+            }));
+        }
+        layers.push(new LayerSpec({
+            classes: faceClasses,
+            attributes: semanticAttributes,
+            styleSource: true,
+        }));
+        return layers;
+    }
+
     #createButton({
         group,
         id,
@@ -1422,18 +1470,11 @@ class GamepadOverlay {
         const fillCutoutShapeId = includeBorderStroke
             ? monotonicId(`${id}-cutout-`)
             : null;
-        const layers = [];
-        if (includeBorder) {
-            layers.push({
-                classes: "outer-border",
-                cutout: true,
-                cutoutSourceId: fillCutoutShapeId ?? id,
-            });
-        }
-        layers.push({
-            classes: [].concat(buttonClasses, semanticClasses, includeBorderStroke ? ["gamepad-button-bordered"] : []),
-            attributes: semanticAttributes,
-            styleSource: true,
+        const layers = this.#createBorderedLayerSpecs({
+            fillShapeId: fillCutoutShapeId ?? id,
+            includeBorderStroke,
+            faceClasses: [].concat(buttonClasses, semanticClasses, includeBorderStroke ? ["gamepad-button-bordered"] : []),
+            semanticAttributes,
         });
         if (fillCutoutShapeId != null) {
             this.#context.addDefinition(shapeModel.createElement({id: fillCutoutShapeId}));
@@ -1491,14 +1532,12 @@ class GamepadOverlay {
         return new GamepadEntity({
             context: this.#context,
             element: createSvgPolygon(expandedPoints, {id}),
-            layers: [
-                {
-                    classes: "outer-border",
-                    cutout: true,
-                    cutoutSourceId: innerCrossId,
-                },
-                {classes: "black-border-stroke"},
-            ],
+            layers: this.#createBorderedLayerSpecs({
+                fillShapeId: innerCrossId,
+                includeBorderStroke: true,
+                faceClasses: "black-border-stroke",
+                semanticAttributes: null,
+            }),
             parent: group,
             pressVisualSourceId: innerCrossId,
         });
@@ -1842,6 +1881,7 @@ class GamepadOverlay {
                 includeBorder: true,
                 semanticClasses: [`side-${sideName}`, "role-analog-stick"],
                 semanticAttributes: {"data-side": sideName, "data-role": "analog-stick"},
+                // Stick movement is analog; stick click state (LS/RS) is digital.
                 pressMode: "digital",
                 digitalRenderMode: "class-toggle",
             });
