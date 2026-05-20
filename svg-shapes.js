@@ -1084,11 +1084,7 @@ class GamepadOverlay {
     #createCrossBorder({group, id, layout}) {
         const innerCrossId = monotonicId(`${id}-inner-cross-`);
         this.#context.addDefinition(createSvgPolygon(layout.crossPoints, {id: innerCrossId}));
-        const expandedPoints = this.#expandPointsFromCenter(
-            layout.crossPoints,
-            layout.origin.center,
-            this.#innerBorderSize / 2,
-        );
+        const expandedPoints = this.#offsetConvexPolygon(layout.crossPoints, this.#innerBorderSize / 2);
         return new GamepadEntity({
             context: this.#context,
             element: createSvgPolygon(expandedPoints, {id}),
