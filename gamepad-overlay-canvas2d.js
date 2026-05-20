@@ -10,13 +10,22 @@ class Canvas2DGamepadOverlayRenderer {
     #model;
     #theme;
     #borderModel;
+    #queuedState;
+    #renderScheduled;
+    #lastRenderMs;
+    #minFrameMs;
 
-    constructor({canvas, model}) {
+    constructor({canvas, model, maxFps = 0}) {
         this.#canvas = canvas;
         this.#ctx = canvas.getContext("2d", {alpha: true, desynchronized: true});
         this.#model = model;
         this.#theme = this.#buildTheme();
         this.#borderModel = new CanvasBorderModel({innerSize: Math.max(2.5, this.#model.borderWidth)});
+        this.#queuedState = null;
+        this.#renderScheduled = false;
+        this.#lastRenderMs = 0;
+        const parsedMaxFps = Number(maxFps) || 0;
+        this.#minFrameMs = parsedMaxFps > 0 ? (1000 / Math.max(1, parsedMaxFps)) : 0;
         this.resize();
     }
 
@@ -28,7 +37,26 @@ class Canvas2DGamepadOverlayRenderer {
     }
 
     applyState(state) {
-        applyGamepadStateToModel(this.#model, state);
+        this.#queuedState = state;
+        if (!this.#renderScheduled) {
+            this.#renderScheduled = true;
+            requestAnimationFrame((now) => this.#onAnimationFrame(now));
+        }
+    }
+
+    #onAnimationFrame(now) {
+        this.#renderScheduled = false;
+        if (!this.#queuedState) {
+            return;
+        }
+        if (now - this.#lastRenderMs < this.#minFrameMs) {
+            this.#renderScheduled = true;
+            requestAnimationFrame((nextNow) => this.#onAnimationFrame(nextNow));
+            return;
+        }
+        applyGamepadStateToModel(this.#model, this.#queuedState);
+        this.#queuedState = null;
+        this.#lastRenderMs = now;
         this.draw();
     }
 
