@@ -368,14 +368,14 @@ class GamepadOverlayRenderer {
             [overlay.entities.right.entities.rightBumper, (state) => state.RB],
             [this.leftStick, (state) => state.LS],
             [this.rightStick, (state) => state.RS],
+            [this.leftStickRing, (state) => state.LS],
+            [this.rightStickRing, (state) => state.RS],
             [overlay.entities.left.entities.leftButton, (state) => (state.DX < 0 ? 1 : 0)],
             [overlay.entities.left.entities.rightButton, (state) => (state.DX > 0 ? 1 : 0)],
             [overlay.entities.left.entities.upButton, (state) => (state.DY < 0 ? 1 : 0)],
             [overlay.entities.left.entities.downButton, (state) => (state.DY > 0 ? 1 : 0)],
         ];
 
-        this.leftStick.setPressFillDirection(PressFillDirection.OUTWARD).enablePressVisual();
-        this.rightStick.setPressFillDirection(PressFillDirection.OUTWARD).enablePressVisual();
         this.leftStickRing.bringLayersToFront();
         this.rightStickRing.bringLayersToFront();
 
@@ -424,8 +424,6 @@ class GamepadOverlayRenderer {
     #applyAnalogPressAmounts(state) {
         this.leftTrigger.setInputAmount(state.LT);
         this.rightTrigger.setInputAmount(state.RT);
-        this.leftStickRing.setInputAmount(state.LS);
-        this.rightStickRing.setInputAmount(state.RS);
     }
 
     #applyDigitalInputs(state) {

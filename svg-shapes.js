@@ -1762,7 +1762,8 @@ class GamepadOverlay {
                 includeBorder: true,
                 semanticClasses: [`side-${sideName}`, "role-analog-stick"],
                 semanticAttributes: {"data-side": sideName, "data-role": "analog-stick"},
-                pressMode: "analog",
+                pressMode: "digital",
+                digitalRenderMode: "class-toggle",
             });
             const analogStickRingRegion = Region.fromCenter({
                 center: layout.analogRegion.center,
@@ -1787,6 +1788,8 @@ class GamepadOverlay {
             analogStick.maskStyleSourceBySourceId(analogStickRing.element.id);
             setMask(backgroundGroup, analogStick.mask.id);
         }
+
+        dpadBorder?.bringLayersToFront();
 
         return {
             groups: {backgroundGroup, dpadGroup, analogAreaGroup, analogStickGroup},
