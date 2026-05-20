@@ -253,6 +253,68 @@ class WebglBorderModel {
     expandedRegionHalf(builder, region) { return builder.expandRegion(region, this.halfWidth); }
 }
 
+class WebglShapeModel {
+    #region;
+    #shape;
+    #cornerRadiusPercent;
+
+    constructor({region, shape, cornerRadiusPercent = 0}) {
+        this.#region = region;
+        this.#shape = shape;
+        this.#cornerRadiusPercent = cornerRadiusPercent;
+    }
+
+    get region() { return this.#region; }
+    get shape() { return this.#shape; }
+    get cornerRadiusPercent() { return this.#cornerRadiusPercent; }
+
+    expanded(builder, amount) {
+        return new WebglShapeModel({
+            region: builder.expandRegion(this.#region, amount),
+            shape: this.#shape,
+            cornerRadiusPercent: this.#cornerRadiusPercent,
+        });
+    }
+}
+
+class WebglControlRenderPlan {
+    #shapeModel;
+    #baseColor;
+    #pressedColor;
+    #inputAmount;
+    #pressMode;
+
+    constructor({shapeModel, baseColor, pressedColor, inputAmount, pressMode}) {
+        this.#shapeModel = shapeModel;
+        this.#baseColor = baseColor;
+        this.#pressedColor = pressedColor;
+        this.#inputAmount = inputAmount;
+        this.#pressMode = pressMode;
+    }
+
+    get shapeModel() { return this.#shapeModel; }
+    get baseColor() { return this.#baseColor; }
+    get pressedColor() { return this.#pressedColor; }
+    get inputAmount() { return this.#inputAmount; }
+    get pressMode() { return this.#pressMode; }
+}
+
+class WebglStickRenderPlan {
+    #stickShape;
+    #ringShape;
+    #fillColor;
+
+    constructor({stickShape, ringShape, fillColor}) {
+        this.#stickShape = stickShape;
+        this.#ringShape = ringShape;
+        this.#fillColor = fillColor;
+    }
+
+    get stickShape() { return this.#stickShape; }
+    get ringShape() { return this.#ringShape; }
+    get fillColor() { return this.#fillColor; }
+}
+
 // Architecture overview:
 // 1) Static geometry (left dpad border) is built once and uploaded to staticStream.
 // 2) Dynamic button geometry is rebuilt per frame from latest gamepad state.
@@ -287,6 +349,85 @@ class WebGLGamepadOverlayRenderer {
     #perf;
     #geometryBuilder;
     #borderModel;
+
+    #drawShape(vertices, colors, shapeModel, fillColor) {
+        const shapeType = shapeModel.shape;
+        const shapeRegion = shapeModel.region;
+        if (shapeType === "ellipse") {
+            this.#geometryBuilder.pushEllipse(vertices, colors, shapeRegion, fillColor);
+            return;
+        }
+        if (shapeType === "triDown") {
+            this.#geometryBuilder.pushPoly(vertices, colors, [shapeRegion.bottomCenter, shapeRegion.topLeft, shapeRegion.topRight], fillColor);
+            return;
+        }
+        const cornerRadius = Math.max(0, Math.min(shapeRegion.halfSize.x, shapeRegion.halfSize.y) * shapeModel.cornerRadiusPercent);
+        this.#geometryBuilder.pushRoundedRect(vertices, colors, shapeRegion, cornerRadius, fillColor);
+    }
+
+    #drawButtonPlan(vertices, colors, plan) {
+        const shapeModel = plan.shapeModel;
+        const shapeRegion = shapeModel.region;
+        const blendedFillColor = this.#geometryBuilder.mixColor(plan.baseColor, plan.inputAmount, plan.pressedColor);
+        if (shapeModel.shape === "triDown") {
+            const trianglePoints = [shapeRegion.bottomCenter, shapeRegion.topLeft, shapeRegion.topRight];
+            this.#geometryBuilder.drawTriangleStroke(vertices, colors, trianglePoints, this.#theme.borderOuter, this.#borderModel.width * 2);
+            this.#geometryBuilder.drawTriangleStroke(vertices, colors, trianglePoints, this.#theme.borderInner, this.#borderModel.width);
+            this.#drawShape(vertices, colors, new WebglShapeModel({region: shapeRegion, shape: "triDown", cornerRadiusPercent: 0}), this.#theme.borderInner);
+            this.#drawShape(vertices, colors, shapeModel, plan.baseColor);
+            if (plan.pressMode === "analog" && plan.inputAmount > 0) {
+                const clampedAmount = Math.max(0, Math.min(1, plan.inputAmount));
+                const leftEdgePoint = new Vector2({x: trianglePoints[1].x + (trianglePoints[0].x - trianglePoints[1].x) * clampedAmount, y: trianglePoints[1].y + (trianglePoints[0].y - trianglePoints[1].y) * clampedAmount});
+                const rightEdgePoint = new Vector2({x: trianglePoints[2].x + (trianglePoints[0].x - trianglePoints[2].x) * clampedAmount, y: trianglePoints[2].y + (trianglePoints[0].y - trianglePoints[2].y) * clampedAmount});
+                this.#geometryBuilder.pushPoly(vertices, colors, [trianglePoints[1], trianglePoints[2], rightEdgePoint, leftEdgePoint], this.#theme.pressed);
+            }
+            return;
+        }
+
+        if (shapeModel.shape === "rect" && shapeModel.cornerRadiusPercent > 0) {
+            const halfExpandedShape = shapeModel.expanded(this.#geometryBuilder, this.#borderModel.halfWidth);
+            this.#drawShape(vertices, colors, halfExpandedShape, this.#theme.borderInner);
+            this.#drawShape(vertices, colors, shapeModel, blendedFillColor);
+            const cornerRadius = Math.min(shapeRegion.halfSize.x, shapeRegion.halfSize.y) * shapeModel.cornerRadiusPercent;
+            const baseLoop = this.#geometryBuilder.roundedRectLoop(shapeRegion, cornerRadius, 8);
+            const blackBorderLoop = this.#geometryBuilder.roundedRectLoop(halfExpandedShape.region, cornerRadius + this.#borderModel.halfWidth, 8);
+            const fullExpandedShape = shapeModel.expanded(this.#geometryBuilder, this.#borderModel.width);
+            const whiteBorderLoop = this.#geometryBuilder.roundedRectLoop(fullExpandedShape.region, cornerRadius + this.#borderModel.width, 8);
+            this.#geometryBuilder.pushRing(vertices, colors, whiteBorderLoop, blackBorderLoop, this.#theme.borderOuter);
+            this.#geometryBuilder.pushRing(vertices, colors, blackBorderLoop, baseLoop, this.#theme.borderInner);
+            return;
+        }
+
+        this.#drawShape(vertices, colors, shapeModel.expanded(this.#geometryBuilder, this.#borderModel.width), this.#theme.borderOuter);
+        this.#drawShape(vertices, colors, shapeModel.expanded(this.#geometryBuilder, this.#borderModel.halfWidth), this.#theme.borderInner);
+        this.#drawShape(vertices, colors, shapeModel, blendedFillColor);
+    }
+
+    #drawStickPlan(vertices, colors, plan) {
+        const pushStick = (shapeModel, fillColor) => {
+            this.#drawShape(vertices, colors, shapeModel, fillColor);
+        };
+
+        const stickShape = plan.stickShape;
+        const ringShape = plan.ringShape;
+        const ringRegion = ringShape.region;
+        const stickRegion = stickShape.region;
+        const ringFillColor = plan.fillColor;
+
+        const whiteBorderOuterRegion = this.#borderModel.expandedRegion(this.#geometryBuilder, ringRegion);
+        const whiteBorderInnerRegion = this.#geometryBuilder.insetRegion(whiteBorderOuterRegion, this.#borderModel.halfWidth);
+        const blackBorderOuterRegion = whiteBorderInnerRegion;
+        const blackBorderInnerRegion = this.#geometryBuilder.insetRegion(blackBorderOuterRegion, this.#borderModel.halfWidth);
+
+        pushStick(new WebglShapeModel({region: this.#borderModel.expandedRegion(this.#geometryBuilder, stickRegion), shape: "ellipse"}), this.#theme.borderOuter);
+        pushStick(new WebglShapeModel({region: this.#borderModel.expandedRegionHalf(this.#geometryBuilder, stickRegion), shape: "ellipse"}), this.#theme.borderInner);
+        pushStick(stickShape, ringFillColor);
+
+        pushStick(new WebglShapeModel({region: whiteBorderOuterRegion, shape: "ellipse"}), this.#theme.borderOuter);
+        pushStick(new WebglShapeModel({region: whiteBorderInnerRegion, shape: "ellipse"}), ringFillColor);
+        pushStick(new WebglShapeModel({region: blackBorderOuterRegion, shape: "ellipse"}), this.#theme.borderInner);
+        pushStick(new WebglShapeModel({region: blackBorderInnerRegion, shape: "ellipse"}), ringFillColor);
+    }
 
     // ---------- Geometry and color helpers ----------
 
@@ -448,64 +589,41 @@ class WebGLGamepadOverlayRenderer {
         const dynamicVertexColors = this.#colors;
         dynamicVertexPositions.length = 0;
         dynamicVertexColors.length = 0;
-        const drawButton = (buttonSpec, baseColor, inputAmount, pressedColorOverride = null) => {
-            if (!buttonSpec) { return; }
-            const blendedFillColor = this.#geometryBuilder.mixColor(baseColor, inputAmount, pressedColorOverride ?? this.#theme.pressed);
-            const drawButtonShape = (shapeType, buttonRegion, fillColor, cornerRadiusPercent = 0) => {
-                if (shapeType === "ellipse") {
-                    this.#geometryBuilder.pushEllipse(dynamicVertexPositions, dynamicVertexColors, buttonRegion, fillColor);
-                } else if (shapeType === "triDown") {
-                    this.#geometryBuilder.pushPoly(dynamicVertexPositions, dynamicVertexColors, [buttonRegion.bottomCenter, buttonRegion.topLeft, buttonRegion.topRight], fillColor);
-                } else {
-                    const cornerRadius = Math.max(0, Math.min(buttonRegion.halfSize.x, buttonRegion.halfSize.y) * cornerRadiusPercent);
-                    this.#geometryBuilder.pushRoundedRect(dynamicVertexPositions, dynamicVertexColors, buttonRegion, cornerRadius, fillColor);
-                }
-            };
-            if (buttonSpec.shape === "triDown") {
-                const trianglePoints = [buttonSpec.region.bottomCenter, buttonSpec.region.topLeft, buttonSpec.region.topRight];
-                this.#geometryBuilder.drawTriangleStroke(dynamicVertexPositions, dynamicVertexColors, trianglePoints, this.#theme.borderOuter, this.#borderModel.width * 2);
-                this.#geometryBuilder.drawTriangleStroke(dynamicVertexPositions, dynamicVertexColors, trianglePoints, this.#theme.borderInner, this.#borderModel.width);
-                drawButtonShape("triDown", buttonSpec.region, this.#theme.borderInner);
-                drawButtonShape("triDown", buttonSpec.region, baseColor);
-                if (buttonSpec.pressMode === "analog" && inputAmount > 0) {
-                    const clampedAmount = Math.max(0, Math.min(1, inputAmount));
-                    const leftEdgePoint = new Vector2({x: trianglePoints[1].x + (trianglePoints[0].x - trianglePoints[1].x) * clampedAmount, y: trianglePoints[1].y + (trianglePoints[0].y - trianglePoints[1].y) * clampedAmount});
-                    const rightEdgePoint = new Vector2({x: trianglePoints[2].x + (trianglePoints[0].x - trianglePoints[2].x) * clampedAmount, y: trianglePoints[2].y + (trianglePoints[0].y - trianglePoints[2].y) * clampedAmount});
-                    this.#geometryBuilder.pushPoly(dynamicVertexPositions, dynamicVertexColors, [trianglePoints[1], trianglePoints[2], rightEdgePoint, leftEdgePoint], this.#theme.pressed);
-                }
-            } else if (buttonSpec.shape === "rect" && (buttonSpec.cornerRadiusPercent || 0) > 0) {
-                drawButtonShape(buttonSpec.shape, this.#borderModel.expandedRegionHalf(this.#geometryBuilder, buttonSpec.region), this.#theme.borderInner, buttonSpec.cornerRadiusPercent);
-                drawButtonShape(buttonSpec.shape, buttonSpec.region, blendedFillColor, buttonSpec.cornerRadiusPercent);
-                const cornerRadius = Math.min(buttonSpec.region.halfSize.x, buttonSpec.region.halfSize.y) * buttonSpec.cornerRadiusPercent;
-                const baseLoop = this.#geometryBuilder.roundedRectLoop(buttonSpec.region, cornerRadius, 8);
-                const blackBorderLoop = this.#geometryBuilder.roundedRectLoop(this.#borderModel.expandedRegionHalf(this.#geometryBuilder, buttonSpec.region), cornerRadius + this.#borderModel.halfWidth, 8);
-                const whiteBorderLoop = this.#geometryBuilder.roundedRectLoop(this.#borderModel.expandedRegion(this.#geometryBuilder, buttonSpec.region), cornerRadius + this.#borderModel.width, 8);
-                this.#geometryBuilder.pushRing(dynamicVertexPositions, dynamicVertexColors, whiteBorderLoop, blackBorderLoop, this.#theme.borderOuter);
-                this.#geometryBuilder.pushRing(dynamicVertexPositions, dynamicVertexColors, blackBorderLoop, baseLoop, this.#theme.borderInner);
-            } else {
-                drawButtonShape(buttonSpec.shape, this.#borderModel.expandedRegion(this.#geometryBuilder, buttonSpec.region), this.#theme.borderOuter, buttonSpec.cornerRadiusPercent);
-                drawButtonShape(buttonSpec.shape, this.#borderModel.expandedRegionHalf(this.#geometryBuilder, buttonSpec.region), this.#theme.borderInner, buttonSpec.cornerRadiusPercent);
-                drawButtonShape(buttonSpec.shape, buttonSpec.region, blendedFillColor, buttonSpec.cornerRadiusPercent);
+        const plans = [];
+        const queuePlan = (buttonSpec, baseColor, inputAmount, pressedColorOverride = null) => {
+            if (!buttonSpec) {
+                return;
             }
+            plans.push(new WebglControlRenderPlan({
+                shapeModel: new WebglShapeModel({region: buttonSpec.region, shape: buttonSpec.shape, cornerRadiusPercent: buttonSpec.cornerRadiusPercent || 0}),
+                baseColor,
+                pressedColor: pressedColorOverride ?? this.#theme.pressed,
+                inputAmount,
+                pressMode: buttonSpec.pressMode || "digital",
+            }));
         };
 
-        drawButton(overlayModel.buttons.left.leftBumper, this.#theme.idle, state.LB);
-        drawButton(overlayModel.buttons.left.select, this.#theme.idle, state.SELECT);
-        drawButton(overlayModel.buttons.left.leftTrigger, this.#theme.idle, state.LT);
-        drawButton(overlayModel.buttons.right.start, this.#theme.idle, state.START);
-        drawButton(overlayModel.buttons.right.rightBumper, this.#theme.idle, state.RB);
-        drawButton(overlayModel.buttons.right.rightTrigger, this.#theme.idle, state.RT);
-        drawButton(overlayModel.buttons.left.left, this.#theme.idle, state.DX < 0 ? 1 : 0);
-        drawButton(overlayModel.buttons.left.right, this.#theme.idle, state.DX > 0 ? 1 : 0);
-        drawButton(overlayModel.buttons.left.up, this.#theme.idle, state.DY < 0 ? 1 : 0);
-        drawButton(overlayModel.buttons.left.down, this.#theme.idle, state.DY > 0 ? 1 : 0);
-        drawButton(overlayModel.buttons.left.origin, this.#theme.idle, 0);
-        drawButton(overlayModel.buttons.right.up, this.#theme.rightFace.up, state.Y, this.#theme.rightFacePressed.up);
-        drawButton(overlayModel.buttons.right.right, this.#theme.rightFace.right, state.B, this.#theme.rightFacePressed.right);
-        drawButton(overlayModel.buttons.right.left, this.#theme.rightFace.left, state.X, this.#theme.rightFacePressed.left);
-        drawButton(overlayModel.buttons.right.down, this.#theme.rightFace.down, state.A, this.#theme.rightFacePressed.down);
-        drawButton(overlayModel.buttons.left.analogArea, this.#theme.black, 0);
-        drawButton(overlayModel.buttons.right.analogArea, this.#theme.black, 0);
+        queuePlan(overlayModel.buttons.left.leftBumper, this.#theme.idle, state.LB);
+        queuePlan(overlayModel.buttons.left.select, this.#theme.idle, state.SELECT);
+        queuePlan(overlayModel.buttons.left.leftTrigger, this.#theme.idle, state.LT);
+        queuePlan(overlayModel.buttons.right.start, this.#theme.idle, state.START);
+        queuePlan(overlayModel.buttons.right.rightBumper, this.#theme.idle, state.RB);
+        queuePlan(overlayModel.buttons.right.rightTrigger, this.#theme.idle, state.RT);
+        queuePlan(overlayModel.buttons.left.left, this.#theme.idle, state.DX < 0 ? 1 : 0);
+        queuePlan(overlayModel.buttons.left.right, this.#theme.idle, state.DX > 0 ? 1 : 0);
+        queuePlan(overlayModel.buttons.left.up, this.#theme.idle, state.DY < 0 ? 1 : 0);
+        queuePlan(overlayModel.buttons.left.down, this.#theme.idle, state.DY > 0 ? 1 : 0);
+        queuePlan(overlayModel.buttons.left.origin, this.#theme.idle, 0);
+        queuePlan(overlayModel.buttons.right.up, this.#theme.rightFace.up, state.Y, this.#theme.rightFacePressed.up);
+        queuePlan(overlayModel.buttons.right.right, this.#theme.rightFace.right, state.B, this.#theme.rightFacePressed.right);
+        queuePlan(overlayModel.buttons.right.left, this.#theme.rightFace.left, state.X, this.#theme.rightFacePressed.left);
+        queuePlan(overlayModel.buttons.right.down, this.#theme.rightFace.down, state.A, this.#theme.rightFacePressed.down);
+        queuePlan(overlayModel.buttons.left.analogArea, this.#theme.black, 0);
+        queuePlan(overlayModel.buttons.right.analogArea, this.#theme.black, 0);
+
+        for (const plan of plans) {
+            this.#drawButtonPlan(dynamicVertexPositions, dynamicVertexColors, plan);
+        }
     }
 
     // ---------- Dynamic geometry builders ----------
@@ -516,17 +634,6 @@ class WebGLGamepadOverlayRenderer {
         const stickVertexColors = this.#stickColors;
         stickVertexPositions.length = 0;
         stickVertexColors.length = 0;
-        const pushStick = (stickRegion, fillColor) => {
-            const unitCircleLookupTable = this.#geometryBuilder.getCircleLookupTable(36);
-            for (let segmentIndex = 0; segmentIndex < 36; segmentIndex += 1) {
-                const currentUnitPoint = unitCircleLookupTable[segmentIndex];
-                const nextUnitPoint = unitCircleLookupTable[(segmentIndex + 1) % 36];
-                stickVertexPositions.push(stickRegion.center.x, stickRegion.center.y, stickRegion.center.x + currentUnitPoint[0] * stickRegion.halfSize.x, stickRegion.center.y + currentUnitPoint[1] * stickRegion.halfSize.y, stickRegion.center.x + nextUnitPoint[0] * stickRegion.halfSize.x, stickRegion.center.y + nextUnitPoint[1] * stickRegion.halfSize.y);
-                for (let colorComponentIndex = 0; colorComponentIndex < 3; colorComponentIndex += 1) {
-                    stickVertexColors.push(fillColor[0], fillColor[1], fillColor[2], fillColor[3]);
-                }
-            }
-        };
         const leftStickOffset = clampNormalizedOffsetToEllipse({offset: {x: state.LX, y: state.LY}, halfSize: overlayModel.leftLayout.origin.halfSize});
         const rightStickOffset = clampNormalizedOffsetToEllipse({offset: {x: state.RX, y: state.RY}, halfSize: overlayModel.rightLayout.origin.halfSize});
         const leftStickRegion = overlayModel.buttons.left.analogStick.region.clone().update({topLeft: overlayModel.buttons.left.analogStick.region.topLeft.clone().add(leftStickOffset)});
@@ -535,24 +642,21 @@ class WebGLGamepadOverlayRenderer {
         const rightRingRegion = overlayModel.buttons.right.analogStickRing.region.clone().update({topLeft: overlayModel.buttons.right.analogStickRing.region.topLeft.clone().add(rightStickOffset)});
         const leftStickFillColor = this.#geometryBuilder.mixColor(this.#theme.idle, state.LS, this.#theme.pressed);
         const rightStickFillColor = this.#geometryBuilder.mixColor(this.#theme.idle, state.RS, this.#theme.pressed);
-        const drawRing = (ringRegion, ringFillColor) => {
-            const whiteBorderOuterRegion = this.#borderModel.expandedRegion(this.#geometryBuilder, ringRegion);
-            const whiteBorderInnerRegion = this.#geometryBuilder.insetRegion(whiteBorderOuterRegion, this.#borderModel.halfWidth);
-            const blackBorderOuterRegion = whiteBorderInnerRegion;
-            const blackBorderInnerRegion = this.#geometryBuilder.insetRegion(blackBorderOuterRegion, this.#borderModel.halfWidth);
-            pushStick(whiteBorderOuterRegion, this.#theme.borderOuter);
-            pushStick(whiteBorderInnerRegion, ringFillColor);
-            pushStick(blackBorderOuterRegion, this.#theme.borderInner);
-            pushStick(blackBorderInnerRegion, ringFillColor);
-        };
-        pushStick(this.#borderModel.expandedRegion(this.#geometryBuilder, leftStickRegion), this.#theme.borderOuter);
-        pushStick(this.#borderModel.expandedRegionHalf(this.#geometryBuilder, leftStickRegion), this.#theme.borderInner);
-        pushStick(leftStickRegion, leftStickFillColor);
-        drawRing(leftRingRegion, leftStickFillColor);
-        pushStick(this.#borderModel.expandedRegion(this.#geometryBuilder, rightStickRegion), this.#theme.borderOuter);
-        pushStick(this.#borderModel.expandedRegionHalf(this.#geometryBuilder, rightStickRegion), this.#theme.borderInner);
-        pushStick(rightStickRegion, rightStickFillColor);
-        drawRing(rightRingRegion, rightStickFillColor);
+        const stickPlans = [
+            new WebglStickRenderPlan({
+                stickShape: new WebglShapeModel({region: leftStickRegion, shape: "ellipse"}),
+                ringShape: new WebglShapeModel({region: leftRingRegion, shape: "ellipse"}),
+                fillColor: leftStickFillColor,
+            }),
+            new WebglStickRenderPlan({
+                stickShape: new WebglShapeModel({region: rightStickRegion, shape: "ellipse"}),
+                ringShape: new WebglShapeModel({region: rightRingRegion, shape: "ellipse"}),
+                fillColor: rightStickFillColor,
+            }),
+        ];
+        for (const stickPlan of stickPlans) {
+            this.#drawStickPlan(stickVertexPositions, stickVertexColors, stickPlan);
+        }
     }
 
     // ---------- Rendering ----------
