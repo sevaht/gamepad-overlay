@@ -35,9 +35,17 @@
             })();
 
             const style = getComputedStyle(document.documentElement);
-            const borderWidth = (Number.parseFloat(style.getPropertyValue("--overlay-border-inner-size")) || 4)
-                + (Number.parseFloat(style.getPropertyValue("--overlay-border-outer-size")) || 4);
-            const model = createRasterOverlayModel({buttonLength: 132, buttonWidth: 132, borderWidth, gap: 1, betweenHalvesGap: 0});
+            const innerBorderSize = Number.parseFloat(style.getPropertyValue("--overlay-border-inner-size")) || 4;
+            const outerBorderSize = Number.parseFloat(style.getPropertyValue("--overlay-border-outer-size")) || 4;
+            const borderWidth = innerBorderSize + outerBorderSize;
+            const model = createRasterOverlayModel({
+                buttonLength: 132,
+                buttonWidth: 132,
+                borderWidth,
+                innerBorderSize,
+                gap: 1,
+                betweenHalvesGap: 0,
+            });
             const renderer = new Canvas2DGamepadOverlayRenderer({
                 canvas: document.getElementById("overlayCanvas"),
                 model,

@@ -300,6 +300,70 @@ class WebGLGamepadOverlayRenderer {
         return 0;
     }
 
+    #polygonSignedArea(points) {
+        let area = 0;
+        for (let index = 0; index < points.length; index += 1) {
+            const current = points[index];
+            const next = points[(index + 1) % points.length];
+            area += (current.x * next.y) - (next.x * current.y);
+        }
+        return area / 2;
+    }
+
+    #lineIntersection(a1, a2, b1, b2) {
+        const x1 = a1.x;
+        const y1 = a1.y;
+        const x2 = a2.x;
+        const y2 = a2.y;
+        const x3 = b1.x;
+        const y3 = b1.y;
+        const x4 = b2.x;
+        const y4 = b2.y;
+        const denominator = ((x1 - x2) * (y3 - y4)) - ((y1 - y2) * (x3 - x4));
+        if (Math.abs(denominator) < 1e-9) {
+            return null;
+        }
+        const pre = (x1 * y2) - (y1 * x2);
+        const post = (x3 * y4) - (y3 * x4);
+        const x = ((pre * (x3 - x4)) - ((x1 - x2) * post)) / denominator;
+        const y = ((pre * (y3 - y4)) - ((y1 - y2) * post)) / denominator;
+        return new WebglCore.Vector2({x, y});
+    }
+
+    #offsetConvexPolygon(points, distance) {
+        if (!(distance > 0) || points.length < 3) {
+            return points;
+        }
+        const area = this.#polygonSignedArea(points);
+        const winding = area >= 0 ? 1 : -1;
+        const offsetEdges = points.map((start, index) => {
+            const end = points[(index + 1) % points.length];
+            const edgeX = end.x - start.x;
+            const edgeY = end.y - start.y;
+            const edgeLength = Math.hypot(edgeX, edgeY);
+            if (edgeLength === 0) {
+                return null;
+            }
+            const normalScale = winding / edgeLength;
+            const outwardNormalX = edgeY * normalScale;
+            const outwardNormalY = -edgeX * normalScale;
+            const offsetX = outwardNormalX * distance;
+            const offsetY = outwardNormalY * distance;
+            return {
+                a: new WebglCore.Vector2({x: start.x + offsetX, y: start.y + offsetY}),
+                b: new WebglCore.Vector2({x: end.x + offsetX, y: end.y + offsetY}),
+            };
+        });
+        return points.map((point, index) => {
+            const previousEdge = offsetEdges[(index - 1 + offsetEdges.length) % offsetEdges.length];
+            const nextEdge = offsetEdges[index];
+            if (previousEdge == null || nextEdge == null) {
+                return point;
+            }
+            return this.#lineIntersection(previousEdge.a, previousEdge.b, nextEdge.a, nextEdge.b) ?? point;
+        });
+    }
+
     #drawShape(vertices, colors, shapeModel, fillColor) {
         const shapeType = shapeModel.shapeType;
         const shapeRegion = shapeModel.region;
@@ -436,7 +500,7 @@ class WebGLGamepadOverlayRenderer {
         this.#staticColors = [];
         this.#staticVertexCount = 0;
         this.#perf = new PerfTracker(!!debugPerf);
-        this.#borderModel = new DomainBorderModel({innerSize: Math.max(2.5, this.#model.borderWidth)});
+        this.#borderModel = new DomainBorderModel({innerSize: this.#model.borderWidth});
         this.#initProgram();
         this.resize();
     }
@@ -447,7 +511,7 @@ class WebGLGamepadOverlayRenderer {
         this.#canvas.width = Math.ceil(this.#model.width);
         this.#canvas.height = Math.ceil(this.#model.height);
         this.#gl.viewport(0, 0, this.#canvas.width, this.#canvas.height);
-        this.#borderModel = new DomainBorderModel({innerSize: Math.max(2.5, this.#model.borderWidth)});
+        this.#borderModel = new DomainBorderModel({innerSize: this.#model.borderWidth});
         this.#rebuildStaticGeometry();
         this.draw();
     }
@@ -459,29 +523,22 @@ class WebGLGamepadOverlayRenderer {
         staticVertexPositions.length = 0;
         staticVertexColors.length = 0;
 
-        const pushTriangle = (ax, ay, bx, by, cx, cy, color) => {
-            staticVertexPositions.push(ax, ay, bx, by, cx, cy);
-            for (let i = 0; i < 3; i += 1) {
-                staticVertexColors.push(color[0], color[1], color[2], color[3]);
+        const crossFacePoints = overlayModel.leftLayout.crossPoints;
+        const crossCenter = overlayModel.leftLayout.origin.center;
+        const expandFromCenter = (points, distance) => points.map((point) => {
+            const deltaX = point.x - crossCenter.x;
+            const deltaY = point.y - crossCenter.y;
+            const length = Math.hypot(deltaX, deltaY);
+            if (!(length > 0)) {
+                return point;
             }
-        };
-        const pushPolygon = (polygonPoints, color) => {
-            for (let pointIndex = 1; pointIndex < polygonPoints.length - 1; pointIndex += 1) {
-                const firstPoint = polygonPoints[0];
-                const secondPoint = polygonPoints[pointIndex];
-                const thirdPoint = polygonPoints[pointIndex + 1];
-                pushTriangle(firstPoint.x, firstPoint.y, secondPoint.x, secondPoint.y, thirdPoint.x, thirdPoint.y, color);
-            }
-        };
-
-        pushPolygon(overlayModel.leftLayout.crossPoints, this.#theme.borderOuter);
-        const insetCrossPoints = overlayModel.leftLayout.crossPoints.map((point) => {
-            const center = overlayModel.leftLayout.origin.center;
-            const deltaX = point.x - center.x;
-            const deltaY = point.y - center.y;
-            return new WebglCore.Vector2({x: center.x + deltaX * 0.965, y: center.y + deltaY * 0.965});
+            const scale = (length + distance) / length;
+            return new WebglCore.Vector2({x: crossCenter.x + (deltaX * scale), y: crossCenter.y + (deltaY * scale)});
         });
-        pushPolygon(insetCrossPoints, this.#theme.borderInner);
+        const crossBlackOuterPoints = expandFromCenter(crossFacePoints, this.#borderModel.halfWidth);
+        const crossWhiteOuterPoints = expandFromCenter(crossFacePoints, this.#borderModel.width);
+        this.#geometryBuilder.pushRing(staticVertexPositions, staticVertexColors, crossWhiteOuterPoints, crossBlackOuterPoints, this.#theme.borderOuter);
+        this.#geometryBuilder.pushRing(staticVertexPositions, staticVertexColors, crossBlackOuterPoints, crossFacePoints, this.#theme.borderInner);
         this.#staticStream.upload(staticVertexPositions, staticVertexColors);
         this.#staticVertexCount = staticVertexPositions.length / 2;
     }

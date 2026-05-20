@@ -22,7 +22,8 @@ function mixColor(a, b, t) {
     ];
 }
 
-function createRasterOverlayModel({buttonLength = 132, buttonWidth = 132, borderWidth = 8, gap = 1, betweenHalvesGap = 0}) {
+function createRasterOverlayModel({buttonLength = 132, buttonWidth = 132, borderWidth = 8, innerBorderSize = null, gap = 1, betweenHalvesGap = 0}) {
+    const resolvedInnerBorderSize = Math.max(0, Number(innerBorderSize) || (Number(borderWidth) || 0) / 2);
     const topLeft = new RasterCore.Vector2({x: 0, y: 0});
     const gapPixels = gap * borderWidth;
     const betweenHalvesGapPixels = betweenHalvesGap * borderWidth;
@@ -152,6 +153,7 @@ function createRasterOverlayModel({buttonLength = 132, buttonWidth = 132, border
 
     return {
         borderWidth,
+        innerBorderSize: resolvedInnerBorderSize,
         leftLayout,
         rightLayout,
         width,

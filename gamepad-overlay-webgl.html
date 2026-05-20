@@ -30,7 +30,18 @@
                 return ["browser", "websocket", "demo"].includes(source) ? source : "browser";
             })();
 
-            const model = createRasterOverlayModel({buttonLength: 132, buttonWidth: 132, borderWidth: 8, gap: 1, betweenHalvesGap: 0});
+            const style = getComputedStyle(document.documentElement);
+            const innerBorderSize = Number.parseFloat(style.getPropertyValue("--overlay-border-inner-size")) || 4;
+            const outerBorderSize = Number.parseFloat(style.getPropertyValue("--overlay-border-outer-size")) || 4;
+            const borderWidth = innerBorderSize + outerBorderSize;
+            const model = createRasterOverlayModel({
+                buttonLength: 132,
+                buttonWidth: 132,
+                borderWidth,
+                innerBorderSize,
+                gap: 1,
+                betweenHalvesGap: 0,
+            });
             const renderer = new WebGLGamepadOverlayRenderer({
                 canvas: document.getElementById("overlayWebgl"),
                 model,
