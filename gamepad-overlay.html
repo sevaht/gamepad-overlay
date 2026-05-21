@@ -60,6 +60,8 @@
         </style>
         <script src="overlay-core.js"></script>
         <script src="overlay-domain.js"></script>
+        <script src="overlay-theme.js"></script>
+        <script src="gamepad-overlay-raster-common.js"></script>
         <script src="gamepad-overlay-svg.js"></script>
         <script src="gamepad-input-sources.js"></script>
     </head>
@@ -76,29 +78,25 @@
             })();
 
             const context = new SvgContext(document.getElementById("overlayRoot"));
-            const THEME_PRESETS = {
-                xbox: {
-                    global: {},
-                    "right:up": {"--btn-idle": "rgba(95, 95, 31, 0.7)", "--btn-pressed": "#ffff33"},
-                    "right:right": {"--btn-idle": "rgba(95, 31, 31, 0.7)", "--btn-pressed": "#ff3333"},
-                    "right:left": {"--btn-idle": "rgba(31, 31, 95, 0.7)", "--btn-pressed": "#3377ff"},
-                    "right:down": {"--btn-idle": "rgba(31, 79, 32, 0.7)", "--btn-pressed": "#3fcf3f"},
-                },
-                snes: {
-                    global: {},
-                    "right:up": {"--btn-idle": "rgba(32, 32, 79, 0.7)", "--btn-pressed": "#5555ff"},
-                    "right:right": {"--btn-idle": "rgba(79, 32, 32, 0.7)", "--btn-pressed": "#ff5555"},
-                    "right:down": {"--btn-idle": "rgba(79, 79, 32, 0.7)", "--btn-pressed": "#ffff55"},
-                    "right:left": {"--btn-idle": "rgba(32, 79, 32, 0.7)", "--btn-pressed": "#55ff55"},
-                },
-            };
-
             const theme = (QUERY.get("theme") || "xbox").toLowerCase();
             const digitalRenderMode = QUERY.get("digitalRenderMode") === "class" ? "class-toggle" : "fill";
             const prewarmPressFillVisuals = QUERY.get("prewarmPressVisuals") !== "0";
-            const themeVariables = THEME_PRESETS[theme] || THEME_PRESETS.xbox;
+            const themeVariables = OverlayTheme.THEME_PRESETS[theme] || OverlayTheme.THEME_PRESETS.xbox;
+            const style = getComputedStyle(document.documentElement);
+            const innerBorderSize = Number.parseFloat(style.getPropertyValue("--overlay-border-inner-size")) || 4;
+            const outerBorderSize = Number.parseFloat(style.getPropertyValue("--overlay-border-outer-size")) || 4;
+            const borderWidth = innerBorderSize + outerBorderSize;
+            const model = createRasterOverlayModel({
+                buttonLength: 132,
+                buttonWidth: 132,
+                borderWidth,
+                innerBorderSize,
+                gap: 1,
+                betweenHalvesGap: 0,
+            });
             const overlay = new GamepadOverlay({
                 context,
+                model,
                 buttonLength: 132,
                 buttonWidth: 132,
                 topLeft: new Vector2({x: 0, y: 0}),

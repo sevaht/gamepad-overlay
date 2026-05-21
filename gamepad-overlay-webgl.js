@@ -591,24 +591,7 @@ class WebGLGamepadOverlayRenderer {
 
     #buildTheme() {
         const root = getComputedStyle(document.documentElement);
-        const idleRgb = parseCssRgbTriplet(root.getPropertyValue("--btn-idle-rgb"), [44, 47, 51]);
-        const baseIdleAlpha = Number.parseFloat(root.getPropertyValue("--btn-idle-alpha")) || 0.7;
-        const idleAlpha = Math.max(0, Math.min(1, baseIdleAlpha * this.#alphaScale));
-        return {
-            idle: [idleRgb[0] / 255, idleRgb[1] / 255, idleRgb[2] / 255, idleAlpha],
-            pressed: [63 / 255, 140 / 255, 1, 1],
-            black: [0, 0, 0, 1],
-            borderOuter: [1, 1, 1, 1],
-            borderInner: [0, 0, 0, 1],
-            rightFaceUp: [95 / 255, 95 / 255, 31 / 255, idleAlpha],
-            rightFaceRight: [95 / 255, 31 / 255, 31 / 255, idleAlpha],
-            rightFaceLeft: [31 / 255, 31 / 255, 95 / 255, idleAlpha],
-            rightFaceDown: [31 / 255, 79 / 255, 32 / 255, idleAlpha],
-            rightFacePressedUp: [1, 1, 51 / 255, 1],
-            rightFacePressedRight: [1, 51 / 255, 51 / 255, 1],
-            rightFacePressedLeft: [51 / 255, 119 / 255, 1, 1],
-            rightFacePressedDown: [63 / 255, 207 / 255, 63 / 255, 1],
-        };
+        return OverlayTheme.buildThemeForWebGL({rootStyles: root, alphaScale: this.#alphaScale});
     }
 
     #rebuildTheme() {

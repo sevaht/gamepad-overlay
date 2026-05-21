@@ -733,8 +733,9 @@ class CompositeControl {
 //
 
 
-class GamepadOverlay {
+class SvgGamepadOverlay {
     #context;
+    #model;
     #leftLayout;
     #rightLayout;
     #entities;
@@ -746,57 +747,6 @@ class GamepadOverlay {
     #digitalRenderMode;
     #themeVariables;
     #prewarmPressFillVisuals;
-
-    static #DEFAULT_SIDE_OPTIONS = Object.freeze({
-        left: Object.freeze({
-            cardinalShapeType: ShapeType.RECTANGLE,
-            cornerButtons: Object.freeze({
-                leftBumper: Object.freeze({
-                    regionName: "topLeft",
-                    scale: Object.freeze({x: 0.9, y: 0.6}),
-                    shapeType: ShapeType.RECTANGLE,
-                    cornerRadiusPercent: Object.freeze({x: 0.25, y: 0.25}),
-                }),
-                leftTrigger: Object.freeze({
-                    regionName: "bottomLeft",
-                    scale: Object.freeze({x: 1.0, y: 1.0}),
-                    shapeType: ShapeType.TRIANGLE_DOWN,
-                    pressFillDirection: PressFillDirection.DOWN,
-                    pressMode: "analog",
-                }),
-                select: Object.freeze({
-                    regionName: "topRight",
-                    scale: Object.freeze({x: 0.7, y: 0.7}),
-                    shapeType: ShapeType.ELLIPSE,
-                }),
-                leftSpecial: false,
-            }),
-        }),
-        right: Object.freeze({
-            cardinalShapeType: ShapeType.ELLIPSE,
-            cornerButtons: Object.freeze({
-                start: Object.freeze({
-                    regionName: "topLeft",
-                    scale: Object.freeze({x: 0.7, y: 0.7}),
-                    shapeType: ShapeType.ELLIPSE,
-                }),
-                rightBumper: Object.freeze({
-                    regionName: "topRight",
-                    scale: Object.freeze({x: 0.9, y: 0.6}),
-                    shapeType: ShapeType.RECTANGLE,
-                    cornerRadiusPercent: Object.freeze({x: 0.25, y: 0.25}),
-                }),
-                rightSpecial: false,
-                rightTrigger: Object.freeze({
-                    regionName: "bottomRight",
-                    scale: Object.freeze({x: 1.0, y: 1.0}),
-                    shapeType: ShapeType.TRIANGLE_DOWN,
-                    pressFillDirection: PressFillDirection.DOWN,
-                    pressMode: "analog",
-                }),
-            }),
-        }),
-    });
 
     static #parseCssNumber(value, fallback = 0) {
         const parsed = Number.parseFloat(String(value ?? "").trim());
@@ -817,6 +767,7 @@ class GamepadOverlay {
 
     constructor({
         context,
+        model = null,
         buttonLength,
         buttonWidth,
         topLeft,
@@ -833,33 +784,32 @@ class GamepadOverlay {
     }) {
         this.#context = context;
         borderWidth ??= this.constructor.#resolveBorderWidthFromCss(context);
-        const gapPixels = gap * borderWidth;
-        const betweenHalvesGapPixels = betweenHalvesGap * borderWidth;
-        this.#borderWidth = borderWidth;
         this.#innerBorderSize = this.constructor.#resolveInnerBorderSizeFromCss(context);
+        if (model == null) {
+            model = createRasterOverlayModel({
+                buttonLength,
+                buttonWidth,
+                borderWidth,
+                innerBorderSize: this.#innerBorderSize,
+                gap,
+                betweenHalvesGap,
+            });
+        }
+        this.#model = model;
+        this.#borderWidth = this.#model.borderWidth;
         this.#digitalThreshold = digitalThreshold;
         this.#digitalRenderMode = digitalRenderMode;
         this.#themeVariables = {...themeVariables};
         this.#prewarmPressFillVisuals = Boolean(prewarmPressFillVisuals);
-        this.#cornerCompensation = gapPixels + borderWidth * 2;
-        const leftLayoutPosition = topLeft.clone()
-            .add(Vector2.splat(borderWidth));
-        this.#leftLayout = new DpadLayout({buttonLength, buttonWidth, topLeft: leftLayoutPosition});
-        this.#rightLayout = new DpadLayout({
-            buttonLength,
-            buttonWidth,
-            topLeft: leftLayoutPosition.clone()
-                .add(new Vector2({x: this.#leftLayout.size.x + borderWidth*2 + gapPixels + betweenHalvesGapPixels, y:0}))
-        });
-        const size = new Vector2({
-            x: this.#rightLayout.topRight.bottomRight.x - topLeft.x + borderWidth,
-            y: this.#leftLayout.bottomLeft.bottomRight.y - topLeft.y + borderWidth,
-        });
+        this.#cornerCompensation = (gap * this.#model.borderWidth) + this.#model.borderWidth * 2;
+        this.#leftLayout = this.#model.leftLayout;
+        this.#rightLayout = this.#model.rightLayout;
+        const size = new Vector2({x: this.#model.width, y: this.#model.height});
         this.#region = new Region({
             topLeft: topLeft.clone(),
             size,
         });
-        this.#entities = this.#build({hasAnalogStick, leftSide, rightSide});
+        this.#entities = this.#build({hasAnalogStick});
     }
 
     get entities() {
@@ -1214,45 +1164,14 @@ class GamepadOverlay {
         return new Region({topLeft, size});
     }
 
-    #resolveSideOptions(sideName, sideOptions = {}) {
-        const defaults = this.constructor.#DEFAULT_SIDE_OPTIONS[sideName];
-        sideOptions.cornerButtons ??= {};
-        const defaultCorners = defaults.cornerButtons;
-        const cornerButtons = {
-            ...defaultCorners,
-            ...sideOptions.cornerButtons,
-        };
-        for (const [key, incomingSpec] of Object.entries(sideOptions.cornerButtons)) {
-            const defaultSpec = defaultCorners[key];
-            if (defaultSpec && incomingSpec && typeof defaultSpec === "object" && typeof incomingSpec === "object") {
-                cornerButtons[key] = {
-                    ...defaultSpec,
-                    ...incomingSpec,
-                };
-            }
-        }
-        for (const [key, value] of Object.entries(defaultCorners)) {
-            if (cornerButtons[key] === undefined) {
-                cornerButtons[key] = value;
-            }
-        }
-        return {
-            cardinalShapeType: sideOptions.cardinalShapeType ?? defaults.cardinalShapeType,
-            cornerButtons,
-        };
-    }
-
     #buildSide({
         sidePrefix,
         sideName,
         layout,
+        sideButtons,
         topGroup,
         hasAnalogStick,
         drawCrossBorder,
-        analogAreaHasOuterBorder,
-        cardinalHasBorder,
-        cardinalShapeType = ShapeType.RECTANGLE,
-        cornerButtons,
     }) {
         const backgroundGroup = this.#context.addChild(
             createSvgElement("g", {id: `${sidePrefix}BackgroundGroup`} ),
@@ -1272,39 +1191,74 @@ class GamepadOverlay {
             });
         }
 
+        const toSvgShapeType = (shape) => {
+            switch (shape) {
+                case "rect": return ShapeType.RECTANGLE;
+                case "ellipse": return ShapeType.ELLIPSE;
+                case "triUp": return ShapeType.TRIANGLE_UP;
+                case "triDown": return ShapeType.TRIANGLE_DOWN;
+                case "triLeft": return ShapeType.TRIANGLE_LEFT;
+                case "triRight": return ShapeType.TRIANGLE_RIGHT;
+                default: return ShapeType.RECTANGLE;
+            }
+        };
+        const makeButton = ({group, idSuffix, spec, roleName}) => {
+            if (!spec) {
+                return null;
+            }
+            return this.#createButton({
+                group,
+                id: `${sidePrefix}${idSuffix}`,
+                region: spec.region,
+                shapeType: toSvgShapeType(spec.shape),
+                cornerRadiusPercent: spec.cornerRadiusPercent ?? 0,
+                includeBorder: true,
+                includeOuterBorder: spec.includeOuterBorder !== false,
+                semanticClasses: [`side-${sideName}`, `role-${roleName}`],
+                semanticAttributes: {"data-side": sideName, "data-role": roleName},
+                pressMode: spec.pressMode === "analog" ? "analog" : "digital",
+                digitalRenderMode: "class-toggle",
+                digitalThreshold: spec.pressMode === "none" ? 2 : this.#digitalThreshold,
+            });
+        };
+
         const leftButton = this.#createButton({
             group: dpadGroup,
             id: `${sidePrefix}LeftButton`,
-            region: layout.left,
-            shapeType: cardinalShapeType,
-            includeBorder: cardinalHasBorder,
+            region: sideButtons.left.region,
+            shapeType: toSvgShapeType(sideButtons.left.shape),
+            includeBorder: true,
+            includeOuterBorder: sideButtons.left.includeOuterBorder !== false,
             semanticClasses: [`side-${sideName}`, "role-left"],
             semanticAttributes: {"data-side": sideName, "data-role": "left"},
         });
         const upButton = this.#createButton({
             group: dpadGroup,
             id: `${sidePrefix}UpButton`,
-            region: layout.up,
-            shapeType: cardinalShapeType,
-            includeBorder: cardinalHasBorder,
+            region: sideButtons.up.region,
+            shapeType: toSvgShapeType(sideButtons.up.shape),
+            includeBorder: true,
+            includeOuterBorder: sideButtons.up.includeOuterBorder !== false,
             semanticClasses: [`side-${sideName}`, "role-up"],
             semanticAttributes: {"data-side": sideName, "data-role": "up"},
         });
         const rightButton = this.#createButton({
             group: dpadGroup,
             id: `${sidePrefix}RightButton`,
-            region: layout.right,
-            shapeType: cardinalShapeType,
-            includeBorder: cardinalHasBorder,
+            region: sideButtons.right.region,
+            shapeType: toSvgShapeType(sideButtons.right.shape),
+            includeBorder: true,
+            includeOuterBorder: sideButtons.right.includeOuterBorder !== false,
             semanticClasses: [`side-${sideName}`, "role-right"],
             semanticAttributes: {"data-side": sideName, "data-role": "right"},
         });
         const downButton = this.#createButton({
             group: dpadGroup,
             id: `${sidePrefix}DownButton`,
-            region: layout.down,
-            shapeType: cardinalShapeType,
-            includeBorder: cardinalHasBorder,
+            region: sideButtons.down.region,
+            shapeType: toSvgShapeType(sideButtons.down.shape),
+            includeBorder: true,
+            includeOuterBorder: sideButtons.down.includeOuterBorder !== false,
             semanticClasses: [`side-${sideName}`, "role-down"],
             semanticAttributes: {"data-side": sideName, "data-role": "down"},
         });
@@ -1312,86 +1266,23 @@ class GamepadOverlay {
             ? this.#createButton({
                 group: dpadGroup,
                 id: `${sidePrefix}OriginButton`,
-                region: layout.origin,
-                shapeType: ShapeType.RECTANGLE,
-                includeBorder: false,
+                region: sideButtons.origin.region,
+                shapeType: toSvgShapeType(sideButtons.origin.shape),
+                includeBorder: true,
+                includeOuterBorder: sideButtons.origin.includeOuterBorder !== false,
                 semanticClasses: [`side-${sideName}`, "role-origin"],
                 semanticAttributes: {"data-side": sideName, "data-role": "origin"},
             })
             : null;
 
-        const leftBumper = this.#createCornerButton({
-            group: dpadGroup,
-            sidePrefix,
-            sideName,
-            roleName: "left-bumper",
-            layout,
-            idSuffix: "LeftBumperButton",
-            spec: cornerButtons.leftBumper,
-        });
-        const select = this.#createCornerButton({
-            group: dpadGroup,
-            sidePrefix,
-            sideName,
-            roleName: "select",
-            layout,
-            idSuffix: "SelectButton",
-            spec: cornerButtons.select,
-        });
-        const leftTrigger = this.#createCornerButton({
-            group: dpadGroup,
-            sidePrefix,
-            sideName,
-            roleName: "left-trigger",
-            layout,
-            idSuffix: "LeftTriggerButton",
-            spec: cornerButtons.leftTrigger,
-        });
-        const leftSpecial = this.#createCornerButton({
-            group: dpadGroup,
-            sidePrefix,
-            sideName,
-            roleName: "left-special",
-            layout,
-            idSuffix: "LeftSpecialButton",
-            spec: cornerButtons.leftSpecial,
-        });
-        const start = this.#createCornerButton({
-            group: dpadGroup,
-            sidePrefix,
-            sideName,
-            roleName: "start",
-            layout,
-            idSuffix: "StartButton",
-            spec: cornerButtons.start,
-        });
-        const rightBumper = this.#createCornerButton({
-            group: dpadGroup,
-            sidePrefix,
-            sideName,
-            roleName: "right-bumper",
-            layout,
-            idSuffix: "RightBumperButton",
-            spec: cornerButtons.rightBumper,
-        });
-        const rightSpecial = this.#createCornerButton({
-            group: dpadGroup,
-            sidePrefix,
-            sideName,
-            roleName: "right-special",
-            layout,
-            idSuffix: "RightSpecialButton",
-            spec: cornerButtons.rightSpecial,
-        });
-        const rightTrigger = this.#createCornerButton({
-            group: dpadGroup,
-            sidePrefix,
-            sideName,
-            roleName: "right-trigger",
-            layout,
-            idSuffix: "RightTriggerButton",
-            spec: cornerButtons.rightTrigger,
-        });
+        const leftBumper = makeButton({group: dpadGroup, idSuffix: "LeftBumperButton", spec: sideButtons.leftBumper, roleName: "left-bumper"});
+        const select = makeButton({group: dpadGroup, idSuffix: "SelectButton", spec: sideButtons.select, roleName: "select"});
+        const leftTrigger = makeButton({group: dpadGroup, idSuffix: "LeftTriggerButton", spec: sideButtons.leftTrigger, roleName: "left-trigger"});
+        const leftSpecial = makeButton({group: dpadGroup, idSuffix: "LeftSpecialButton", spec: sideButtons.leftSpecial, roleName: "left-special"});
+        const start = makeButton({group: dpadGroup, idSuffix: "StartButton", spec: sideButtons.start, roleName: "start"});
+        const rightBumper = makeButton({group: dpadGroup, idSuffix: "RightBumperButton", spec: sideButtons.rightBumper, roleName: "right-bumper"});
+        const rightSpecial = makeButton({group: dpadGroup, idSuffix: "RightSpecialButton", spec: sideButtons.rightSpecial, roleName: "right-special"});
+        const rightTrigger = makeButton({group: dpadGroup, idSuffix: "RightTriggerButton", spec: sideButtons.rightTrigger, roleName: "right-trigger"});
 
         let analogAreaGroup = null;
         let analogArea = null;
@@ -1406,15 +1297,16 @@ class GamepadOverlay {
                 {parent: backgroundGroup},
             );
             const analogAreaRegion = Region.fromCenter({
-                center: layout.analogRegion.center,
-                size: layout.analogRegion.size.clone(),
+                center: sideButtons.analogArea.region.center,
+                size: sideButtons.analogArea.region.size.clone(),
             });
             analogArea = this.#createButton({
                 group: analogAreaGroup,
                 id: `${sidePrefix}AnalogArea`,
                 region: analogAreaRegion,
                 shapeType: ShapeType.ELLIPSE,
-                includeBorder: analogAreaHasOuterBorder,
+                includeBorder: true,
+                includeOuterBorder: sideButtons.analogArea.includeOuterBorder !== false,
                 semanticClasses: [`side-${sideName}`, "role-analog-area"],
                 semanticAttributes: {"data-side": sideName, "data-role": "analog-area"},
                 pressMode: "digital",
@@ -1427,33 +1319,26 @@ class GamepadOverlay {
                 createSvgElement("g", {id: `${sidePrefix}AnalogStickGroup`} ),
                 {parent: topGroup},
             );
-            const analogStickSize = layout.analogRegion.size.clone().multiply(Vector2.splat(0.65));
             analogStick = this.#createButton({
                 group: analogStickGroup,
                 id: `${sidePrefix}AnalogStick`,
-                region: Region.fromCenter({
-                    center: layout.analogRegion.center,
-                    size: analogStickSize,
-                }),
+                region: sideButtons.analogStick.region,
                 shapeType: ShapeType.ELLIPSE,
                 includeBorder: true,
+                includeOuterBorder: sideButtons.analogStick.includeOuterBorder !== false,
                 semanticClasses: [`side-${sideName}`, "role-analog-stick"],
                 semanticAttributes: {"data-side": sideName, "data-role": "analog-stick"},
                 // Stick movement is analog; stick click state (LS/RS) is digital.
                 pressMode: "digital",
                 digitalRenderMode: "class-toggle",
             });
-            const analogStickRingRegion = Region.fromCenter({
-                center: layout.analogRegion.center,
-                size: analogStickSize.clone().multiply(Vector2.splat(0.75)),
-            });
             analogStickRing = this.#createButton({
                 group: analogStickGroup,
                 id: `${sidePrefix}AnalogStickRing`,
-                region: analogStickRingRegion,
+                region: sideButtons.analogStickRing.region,
                 shapeType: ShapeType.ELLIPSE,
                 includeBorder: true,
-                includeOuterBorder: false,
+                includeOuterBorder: sideButtons.analogStickRing.includeOuterBorder === true,
                 buttonClasses: "gamepad-button",
                 semanticClasses: [`side-${sideName}`, "role-analog-stick-ring"],
                 semanticAttributes: {"data-side": sideName, "data-role": "analog-stick-ring"},
@@ -1500,38 +1385,32 @@ class GamepadOverlay {
         };
     }
 
-    #build({hasAnalogStick, leftSide, rightSide}) {
+    #build({hasAnalogStick}) {
         const rootGroup = this.#context.addChild(createSvgElement("g", {id: "gamepadOverlayGroup"}));
-        const leftOptions = this.#resolveSideOptions("left", leftSide);
-        const rightOptions = this.#resolveSideOptions("right", rightSide);
 
         const left = this.#buildSide({
             sidePrefix: "left",
             sideName: "left",
             layout: this.#leftLayout,
+            sideButtons: this.#model.buttons.left,
             topGroup: rootGroup,
             hasAnalogStick,
             drawCrossBorder: true,
-            analogAreaHasOuterBorder: true,
-            cardinalHasBorder: false,
-            cardinalShapeType: leftOptions.cardinalShapeType,
-            cornerButtons: leftOptions.cornerButtons,
         });
 
         const right = this.#buildSide({
             sidePrefix: "right",
             sideName: "right",
             layout: this.#rightLayout,
+            sideButtons: this.#model.buttons.right,
             topGroup: rootGroup,
             hasAnalogStick,
             drawCrossBorder: false,
-            analogAreaHasOuterBorder: true,
-            cardinalHasBorder: true,
-            cardinalShapeType: rightOptions.cardinalShapeType,
-            cornerButtons: rightOptions.cornerButtons,
         });
 
         return {rootGroup, left, right};
     }
 
 }
+
+const GamepadOverlay = SvgGamepadOverlay;

@@ -62,23 +62,7 @@ class Canvas2DGamepadOverlayRenderer {
 
     #buildTheme() {
         const root = getComputedStyle(document.documentElement);
-        const idleRgb = parseCssRgbTriplet(root.getPropertyValue("--btn-idle-rgb"), [44, 47, 51]);
-        const idleAlpha = Number.parseFloat(root.getPropertyValue("--btn-idle-alpha")) || 0.7;
-        return {
-            idle: [idleRgb[0], idleRgb[1], idleRgb[2], idleAlpha],
-            pressed: [63, 140, 255, 1],
-            black: [0, 0, 0, 1],
-            borderOuter: [255, 255, 255, 1],
-            borderInner: [0, 0, 0, 1],
-            rightFaceUp: [95, 95, 31, idleAlpha],
-            rightFaceRight: [95, 31, 31, idleAlpha],
-            rightFaceLeft: [31, 31, 95, idleAlpha],
-            rightFaceDown: [31, 79, 32, idleAlpha],
-            rightFacePressedUp: [255, 255, 51, 1],
-            rightFacePressedRight: [255, 51, 51, 1],
-            rightFacePressedLeft: [51, 119, 255, 1],
-            rightFacePressedDown: [63, 207, 63, 1],
-        };
+        return OverlayTheme.buildThemeForCanvas2D({rootStyles: root});
     }
 
     #resolveColor(colorSpec) {

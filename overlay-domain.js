@@ -330,7 +330,7 @@
         });
 
         const stickOuterShape = stickShape.expanded(borderModel.width);
-        const ringOuterRegion = ringIncludeOuterBorder ? whiteOuterRegion : whiteInnerRegion;
+        const ringOuterRegion = ringIncludeOuterBorder ? whiteOuterRegion : blackOuterRegion;
         const ringOuterShape = new OverlayShapeModel({region: ringOuterRegion, shapeType: "ellipse"});
 
         ops.push({kind: "cutoutShape", shapeModel: stickOuterShape});
