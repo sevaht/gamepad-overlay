@@ -1206,7 +1206,7 @@ class SvgGamepadOverlay {
             if (!spec) {
                 return null;
             }
-            return this.#createButton({
+            const button = this.#createButton({
                 group,
                 id: `${sidePrefix}${idSuffix}`,
                 region: spec.region,
@@ -1220,6 +1220,20 @@ class SvgGamepadOverlay {
                 digitalRenderMode: "class-toggle",
                 digitalThreshold: spec.pressMode === "none" ? 2 : this.#digitalThreshold,
             });
+            const pressFillDirection = (() => {
+                switch (spec.pressFillDirection) {
+                    case "up": return PressFillDirection.UP;
+                    case "down": return PressFillDirection.DOWN;
+                    case "left": return PressFillDirection.LEFT;
+                    case "right": return PressFillDirection.RIGHT;
+                    case "outward": return PressFillDirection.OUTWARD;
+                    default: return null;
+                }
+            })();
+            if (pressFillDirection != null) {
+                button.setPressFillDirection(pressFillDirection);
+            }
+            return button;
         };
 
         const leftButton = this.#createButton({

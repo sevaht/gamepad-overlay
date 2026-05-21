@@ -98,7 +98,7 @@ function createRasterOverlayModel({buttonLength = 132, buttonWidth = 132, border
             origin: {region: leftLayout.origin, shape: "rect", pressMode: "digital", cornerRadiusPercent: 0},
             leftBumper: {region: cornerButtonRegion(leftLayout, "topLeft", 0.9, 0.6), shape: "rect", pressMode: "digital", cornerRadiusPercent: 0.25},
             select: {region: cornerButtonRegion(leftLayout, "topRight", 0.7, 0.7), shape: "ellipse", pressMode: "digital"},
-            leftTrigger: {region: cornerButtonRegion(leftLayout, "bottomLeft", 1.0, 1.0), shape: "triDown", pressMode: "analog"},
+            leftTrigger: {region: cornerButtonRegion(leftLayout, "bottomLeft", 1.0, 1.0), shape: "triDown", pressMode: "analog", pressFillDirection: "down"},
             analogArea: {region: RasterCore.Region.fromCenter({center: leftLayout.analogRegion.center, size: leftLayout.analogRegion.size.clone()}), shape: "ellipse", pressMode: "none"},
             analogStick: {
                 region: RasterCore.Region.fromCenter({
@@ -127,7 +127,7 @@ function createRasterOverlayModel({buttonLength = 132, buttonWidth = 132, border
             origin: null,
             start: {region: cornerButtonRegion(rightLayout, "topLeft", 0.7, 0.7), shape: "ellipse", pressMode: "digital"},
             rightBumper: {region: cornerButtonRegion(rightLayout, "topRight", 0.9, 0.6), shape: "rect", pressMode: "digital", cornerRadiusPercent: 0.25},
-            rightTrigger: {region: cornerButtonRegion(rightLayout, "bottomRight", 1.0, 1.0), shape: "triDown", pressMode: "analog"},
+            rightTrigger: {region: cornerButtonRegion(rightLayout, "bottomRight", 1.0, 1.0), shape: "triDown", pressMode: "analog", pressFillDirection: "down"},
             analogArea: {region: RasterCore.Region.fromCenter({center: rightLayout.analogRegion.center, size: rightLayout.analogRegion.size.clone()}), shape: "ellipse", pressMode: "none"},
             analogStick: {
                 region: RasterCore.Region.fromCenter({
