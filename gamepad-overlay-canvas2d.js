@@ -1,7 +1,7 @@
 const CanvasCore = OverlayCore;
-const buildRasterRenderPlans = OverlayDomain.buildRasterRenderPlans;
-const buildButtonDrawOps = OverlayDomain.buildButtonDrawOps;
-const buildStickDrawOps = OverlayDomain.buildStickDrawOps;
+const canvasBuildRasterRenderPlans = OverlayDomain.buildRasterRenderPlans;
+const canvasBuildButtonDrawOps = OverlayDomain.buildButtonDrawOps;
+const canvasBuildStickDrawOps = OverlayDomain.buildStickDrawOps;
 const CanvasBorderModel = OverlayDomain.BorderModel;
 
 class Canvas2DGamepadOverlayRenderer {
@@ -348,14 +348,14 @@ class Canvas2DGamepadOverlayRenderer {
         this.#drawCrossBorder(this.#model.leftLayout.crossPoints);
         this.#cutoutCrossUnderDpadButtons();
 
-        const plans = buildRasterRenderPlans({
+        const plans = canvasBuildRasterRenderPlans({
             model: this.#model,
             state,
             clampOffset: ({offset, halfSize}) => CanvasCore.clampNormalizedOffsetToEllipse({offset, halfSize}),
         });
 
         for (const plan of plans.buttonPlans) {
-            const ops = buildButtonDrawOps({
+            const ops = canvasBuildButtonDrawOps({
                 shapeModel: plan.shapeModel,
                 borderModel: this.#borderModel,
                 inputAmount: plan.inputAmount,
@@ -367,7 +367,7 @@ class Canvas2DGamepadOverlayRenderer {
         }
 
         for (const plan of plans.stickPlans) {
-            const ops = buildStickDrawOps({
+            const ops = canvasBuildStickDrawOps({
                 stickShape: plan.stickShape,
                 ringShape: plan.ringShape,
                 borderModel: this.#borderModel,

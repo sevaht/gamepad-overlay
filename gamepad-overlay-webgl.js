@@ -1,8 +1,8 @@
 const WebglCore = OverlayCore;
-const DomainBorderModel = OverlayDomain.BorderModel;
-const buildRasterRenderPlans = OverlayDomain.buildRasterRenderPlans;
-const buildButtonDrawOps = OverlayDomain.buildButtonDrawOps;
-const buildStickDrawOps = OverlayDomain.buildStickDrawOps;
+const WebglDomainBorderModel = OverlayDomain.BorderModel;
+const webglBuildRasterRenderPlans = OverlayDomain.buildRasterRenderPlans;
+const webglBuildButtonDrawOps = OverlayDomain.buildButtonDrawOps;
+const webglBuildStickDrawOps = OverlayDomain.buildStickDrawOps;
 
 class WebglBufferStream {
     #gl;
@@ -285,6 +285,8 @@ class WebGLGamepadOverlayRenderer {
     #perf;
     #geometryBuilder;
     #borderModel;
+    #alphaScale;
+    #outputGamma;
 
     #cornerRadiusPixels(shapeModel) {
         const shapeRegion = shapeModel.region;
@@ -380,7 +382,7 @@ class WebGLGamepadOverlayRenderer {
     }
 
     #drawButtonPlan(vertices, colors, plan) {
-        const ops = buildButtonDrawOps({
+        const ops = webglBuildButtonDrawOps({
             shapeModel: plan.shapeModel,
             borderModel: this.#borderModel,
             inputAmount: plan.inputAmount,
@@ -392,7 +394,7 @@ class WebGLGamepadOverlayRenderer {
     }
 
     #drawStickPlan(vertices, colors, plan) {
-        const ops = buildStickDrawOps({
+        const ops = webglBuildStickDrawOps({
             stickShape: plan.stickShape,
             ringShape: plan.ringShape,
             borderModel: this.#borderModel,
@@ -469,7 +471,7 @@ class WebGLGamepadOverlayRenderer {
 
     // ---------- Geometry and color helpers ----------
 
-    constructor({canvas, model, maxFps = 0, debugPerf = false}) {
+    constructor({canvas, model, maxFps = 0, debugPerf = false, alphaScale = 1, outputGamma = 1.45}) {
         this.#canvas = canvas;
         this.#model = model;
         this.#gl = canvas.getContext("webgl", {
@@ -482,6 +484,8 @@ class WebGLGamepadOverlayRenderer {
         if (!this.#gl) {
             throw new Error("WebGL unavailable in this browser");
         }
+        this.#alphaScale = Math.max(0.1, Math.min(2, Number(alphaScale) || 1));
+        this.#outputGamma = Math.max(1.0, Math.min(3.0, Number(outputGamma) || 1.45));
         this.#theme = this.#buildTheme();
         this.#queuedState = null;
         this.#renderScheduled = false;
@@ -500,7 +504,7 @@ class WebGLGamepadOverlayRenderer {
         this.#staticColors = [];
         this.#staticVertexCount = 0;
         this.#perf = new PerfTracker(!!debugPerf);
-        this.#borderModel = new DomainBorderModel({innerSize: this.#model.borderWidth});
+        this.#borderModel = new WebglDomainBorderModel({innerSize: this.#model.borderWidth});
         this.#initProgram();
         this.resize();
     }
@@ -511,7 +515,7 @@ class WebGLGamepadOverlayRenderer {
         this.#canvas.width = Math.ceil(this.#model.width);
         this.#canvas.height = Math.ceil(this.#model.height);
         this.#gl.viewport(0, 0, this.#canvas.width, this.#canvas.height);
-        this.#borderModel = new DomainBorderModel({innerSize: this.#model.borderWidth});
+        this.#borderModel = new WebglDomainBorderModel({innerSize: this.#model.borderWidth});
         this.#rebuildStaticGeometry();
         this.draw();
     }
@@ -570,7 +574,8 @@ class WebGLGamepadOverlayRenderer {
     #buildTheme() {
         const root = getComputedStyle(document.documentElement);
         const idleRgb = parseCssRgbTriplet(root.getPropertyValue("--btn-idle-rgb"), [44, 47, 51]);
-        const idleAlpha = Number.parseFloat(root.getPropertyValue("--btn-idle-alpha")) || 0.7;
+        const baseIdleAlpha = Number.parseFloat(root.getPropertyValue("--btn-idle-alpha")) || 0.7;
+        const idleAlpha = Math.max(0, Math.min(1, baseIdleAlpha * this.#alphaScale));
         return {
             idle: [idleRgb[0] / 255, idleRgb[1] / 255, idleRgb[2] / 255, idleAlpha],
             pressed: [63 / 255, 140 / 255, 1, 1],
@@ -588,6 +593,10 @@ class WebGLGamepadOverlayRenderer {
         };
     }
 
+    #rebuildTheme() {
+        this.#theme = this.#buildTheme();
+    }
+
     // ---------- GPU pipeline setup ----------
 
     #initProgram() {
@@ -596,7 +605,7 @@ class WebGLGamepadOverlayRenderer {
         gl.shaderSource(vert, "attribute vec2 a_pos; attribute vec4 a_color; uniform vec2 u_resolution; varying vec4 v_color; void main(){ vec2 zeroToOne = a_pos / u_resolution; vec2 clip = zeroToOne * 2.0 - 1.0; gl_Position = vec4(clip * vec2(1.0, -1.0), 0.0, 1.0); v_color = a_color; }");
         gl.compileShader(vert);
         const frag = gl.createShader(gl.FRAGMENT_SHADER);
-        gl.shaderSource(frag, "precision mediump float; varying vec4 v_color; void main(){ gl_FragColor = v_color; }");
+        gl.shaderSource(frag, `precision mediump float; varying vec4 v_color; void main(){ vec3 encoded = pow(max(v_color.rgb, vec3(0.0)), vec3(1.0 / ${this.#outputGamma.toFixed(4)})); gl_FragColor = vec4(encoded, v_color.a); }`);
         gl.compileShader(frag);
 
         this.#program = gl.createProgram();
@@ -632,10 +641,8 @@ class WebGLGamepadOverlayRenderer {
         const cutoutVertexColors = this.#cutoutColors;
         stickVertexPositions.length = 0;
         stickVertexColors.length = 0;
-        cutoutVertexPositions.length = 0;
-        cutoutVertexColors.length = 0;
         for (const stickPlan of stickPlans) {
-            const ops = buildStickDrawOps({
+            const ops = webglBuildStickDrawOps({
                 stickShape: stickPlan.stickShape,
                 ringShape: stickPlan.ringShape,
                 borderModel: this.#borderModel,
@@ -669,11 +676,13 @@ class WebGLGamepadOverlayRenderer {
 
     draw() {
         const buildStartTimestamp = performance.now();
-        const plans = buildRasterRenderPlans({
+        const plans = webglBuildRasterRenderPlans({
             model: this.#model,
             state: this.#model.state,
             clampOffset: ({offset, halfSize}) => WebglCore.clampNormalizedOffsetToEllipse({offset, halfSize}),
         });
+        this.#cutoutVerts.length = 0;
+        this.#cutoutColors.length = 0;
         this.#buildDynamicButtons(plans.buttonPlans);
         const uploadStartTimestamp = performance.now();
         this.#dynamicStream.upload(this.#vertices, this.#colors);
@@ -688,5 +697,25 @@ class WebGLGamepadOverlayRenderer {
             dynamicVertexCount: this.#dynamicStream.vertexCount,
             stickVertexCount: this.#stickStream.vertexCount,
         });
+    }
+
+    setOutputGamma(value) {
+        this.#outputGamma = Math.max(1.0, Math.min(3.0, Number(value) || 1.45));
+        this.#initProgram();
+        this.draw();
+    }
+
+    setAlphaScale(value) {
+        this.#alphaScale = Math.max(0.1, Math.min(2.0, Number(value) || 1));
+        this.#rebuildTheme();
+        this.draw();
+    }
+
+    readPixelsRgba() {
+        const width = this.#canvas.width;
+        const height = this.#canvas.height;
+        const pixels = new Uint8Array(width * height * 4);
+        this.#gl.readPixels(0, 0, width, height, this.#gl.RGBA, this.#gl.UNSIGNED_BYTE, pixels);
+        return pixels;
     }
 }

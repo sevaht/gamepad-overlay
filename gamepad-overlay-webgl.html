@@ -16,6 +16,7 @@
         <script src="overlay-domain.js"></script>
         <script src="gamepad-input-sources.js"></script>
         <script src="gamepad-overlay-raster-common.js"></script>
+        <script src="gamepad-overlay-canvas2d.js"></script>
         <script src="gamepad-overlay-webgl.js"></script>
     </head>
     <body>
@@ -47,6 +48,8 @@
                 model,
                 maxFps: Number.parseInt(QUERY.get("maxFps") || "0", 10),
                 debugPerf: QUERY.get("debugPerf") === "1",
+                alphaScale: Number.parseFloat(QUERY.get("alphaScale") || "1"),
+                outputGamma: Number.parseFloat(QUERY.get("outputGamma") || "1.45"),
             });
 
             const source = createGamepadSource({
