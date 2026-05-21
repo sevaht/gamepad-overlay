@@ -75,6 +75,34 @@ class Canvas2DGamepadOverlayRenderer {
         return this.#theme.idle;
     }
 
+    #trianglePressPolygon(points, amount, direction) {
+        const resolvedDirection = direction || "outward";
+        const pickAnchorIndex = () => {
+            if (resolvedDirection === "up") {
+                return points.reduce((best, point, index) => (point.y < points[best].y ? index : best), 0);
+            }
+            if (resolvedDirection === "down") {
+                return points.reduce((best, point, index) => (point.y > points[best].y ? index : best), 0);
+            }
+            if (resolvedDirection === "left") {
+                return points.reduce((best, point, index) => (point.x < points[best].x ? index : best), 0);
+            }
+            if (resolvedDirection === "right") {
+                return points.reduce((best, point, index) => (point.x > points[best].x ? index : best), 0);
+            }
+            return 0;
+        };
+        const anchorIndex = pickAnchorIndex();
+        const baseAIndex = (anchorIndex + 1) % points.length;
+        const baseBIndex = (anchorIndex + 2) % points.length;
+        const anchor = points[anchorIndex];
+        const baseA = points[baseAIndex];
+        const baseB = points[baseBIndex];
+        const edgeA = new CanvasCore.Vector2({x: baseA.x + (anchor.x - baseA.x) * amount, y: baseA.y + (anchor.y - baseA.y) * amount});
+        const edgeB = new CanvasCore.Vector2({x: baseB.x + (anchor.x - baseB.x) * amount, y: baseB.y + (anchor.y - baseB.y) * amount});
+        return [baseA, baseB, edgeB, edgeA];
+    }
+
     #ellipseSeamOverlapPx(innerShape, outerShape) {
         const outerRegion = outerShape?.region;
         const innerRegion = innerShape?.region;
@@ -226,15 +254,13 @@ class Canvas2DGamepadOverlayRenderer {
                 continue;
             }
             if (op.kind === "trianglePressFill") {
-                const points = op.points;
-                const leftEdgePoint = new CanvasCore.Vector2({x: points[1].x + (points[0].x - points[1].x) * op.amount, y: points[1].y + (points[0].y - points[1].y) * op.amount});
-                const rightEdgePoint = new CanvasCore.Vector2({x: points[2].x + (points[0].x - points[2].x) * op.amount, y: points[2].y + (points[0].y - points[2].y) * op.amount});
+                const polygon = this.#trianglePressPolygon(op.points, op.amount, op.direction);
                 const ctx = this.#ctx;
                 ctx.beginPath();
-                ctx.moveTo(points[1].x, points[1].y);
-                ctx.lineTo(points[2].x, points[2].y);
-                ctx.lineTo(rightEdgePoint.x, rightEdgePoint.y);
-                ctx.lineTo(leftEdgePoint.x, leftEdgePoint.y);
+                ctx.moveTo(polygon[0].x, polygon[0].y);
+                ctx.lineTo(polygon[1].x, polygon[1].y);
+                ctx.lineTo(polygon[2].x, polygon[2].y);
+                ctx.lineTo(polygon[3].x, polygon[3].y);
                 ctx.closePath();
                 ctx.fillStyle = colorToCss(this.#resolveColor(op.color));
                 ctx.fill();
@@ -344,6 +370,7 @@ class Canvas2DGamepadOverlayRenderer {
                 borderModel: this.#borderModel,
                 inputAmount: plan.inputAmount,
                 pressMode: plan.pressMode,
+                pressFillDirection: plan.pressFillDirection,
                 baseColorToken: plan.baseColorToken,
                 pressedColorToken: plan.pressedColorToken,
                 includeOuterBorder: plan.includeOuterBorder,

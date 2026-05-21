@@ -1221,18 +1221,16 @@ class SvgGamepadOverlay {
                 digitalThreshold: spec.pressMode === "none" ? 2 : this.#digitalThreshold,
             });
             const pressFillDirection = (() => {
-                switch (spec.pressFillDirection) {
+                switch (spec.pressFillDirection || "outward") {
                     case "up": return PressFillDirection.UP;
                     case "down": return PressFillDirection.DOWN;
                     case "left": return PressFillDirection.LEFT;
                     case "right": return PressFillDirection.RIGHT;
                     case "outward": return PressFillDirection.OUTWARD;
-                    default: return null;
+                    default: return PressFillDirection.OUTWARD;
                 }
             })();
-            if (pressFillDirection != null) {
-                button.setPressFillDirection(pressFillDirection);
-            }
+            button.setPressFillDirection(pressFillDirection);
             return button;
         };
 

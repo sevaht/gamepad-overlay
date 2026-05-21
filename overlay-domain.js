@@ -155,6 +155,7 @@
                 pressedColorToken,
                 inputAmount,
                 pressMode: buttonSpec.pressMode || "digital",
+                pressFillDirection: buttonSpec.pressFillDirection || "outward",
                 includeOuterBorder: buttonSpec.includeOuterBorder !== false,
             }));
         };
@@ -284,7 +285,7 @@
         });
     }
 
-    function buildButtonDrawOps({shapeModel, borderModel, inputAmount = 0, pressMode = "digital", baseColorToken = "idle", pressedColorToken = "pressed", includeOuterBorder = true}) {
+    function buildButtonDrawOps({shapeModel, borderModel, inputAmount = 0, pressMode = "digital", pressFillDirection = "outward", baseColorToken = "idle", pressedColorToken = "pressed", includeOuterBorder = true}) {
         const ops = [];
         const blendedFaceColor = blendColor(baseColorToken, pressedColorToken, inputAmount);
         const isTriangle = typeof shapeModel.shapeType === "string" && shapeModel.shapeType.startsWith("tri");
@@ -300,7 +301,7 @@
             ops.push({kind: "polygonFill", points: facePoints, color: solidColor("borderInner")});
             ops.push({kind: "polygonFill", points: facePoints, color: solidColor(baseColorToken)});
             if (pressMode === "analog" && inputAmount > 0.01) {
-                ops.push({kind: "trianglePressFill", points: facePoints, amount: Math.max(0, Math.min(1, Number(inputAmount) || 0)), color: solidColor(pressedColorToken)});
+                ops.push({kind: "trianglePressFill", points: facePoints, amount: Math.max(0, Math.min(1, Number(inputAmount) || 0)), direction: pressFillDirection || "outward", color: solidColor(pressedColorToken)});
             }
             return ops;
         }

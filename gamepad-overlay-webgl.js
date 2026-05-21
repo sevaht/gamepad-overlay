@@ -396,12 +396,41 @@ class WebGLGamepadOverlayRenderer {
         this.#geometryBuilder.pushRoundedRect(vertices, colors, shapeRegion, cornerRadius, fillColor);
     }
 
+    #trianglePressPolygon(points, amount, direction) {
+        const resolvedDirection = direction || "outward";
+        const pickAnchorIndex = () => {
+            if (resolvedDirection === "up") {
+                return points.reduce((best, point, index) => (point.y < points[best].y ? index : best), 0);
+            }
+            if (resolvedDirection === "down") {
+                return points.reduce((best, point, index) => (point.y > points[best].y ? index : best), 0);
+            }
+            if (resolvedDirection === "left") {
+                return points.reduce((best, point, index) => (point.x < points[best].x ? index : best), 0);
+            }
+            if (resolvedDirection === "right") {
+                return points.reduce((best, point, index) => (point.x > points[best].x ? index : best), 0);
+            }
+            return 0;
+        };
+        const anchorIndex = pickAnchorIndex();
+        const baseAIndex = (anchorIndex + 1) % points.length;
+        const baseBIndex = (anchorIndex + 2) % points.length;
+        const anchor = points[anchorIndex];
+        const baseA = points[baseAIndex];
+        const baseB = points[baseBIndex];
+        const edgeA = new WebglCore.Vector2({x: baseA.x + (anchor.x - baseA.x) * amount, y: baseA.y + (anchor.y - baseA.y) * amount});
+        const edgeB = new WebglCore.Vector2({x: baseB.x + (anchor.x - baseB.x) * amount, y: baseB.y + (anchor.y - baseB.y) * amount});
+        return [baseA, baseB, edgeB, edgeA];
+    }
+
     #drawButtonPlan(vertices, colors, plan) {
         const ops = webglBuildButtonDrawOps({
             shapeModel: plan.shapeModel,
             borderModel: this.#borderModel,
             inputAmount: plan.inputAmount,
             pressMode: plan.pressMode,
+            pressFillDirection: plan.pressFillDirection,
             baseColorToken: plan.baseColorToken,
             pressedColorToken: plan.pressedColorToken,
             includeOuterBorder: plan.includeOuterBorder,
@@ -463,10 +492,7 @@ class WebGLGamepadOverlayRenderer {
                 continue;
             }
             if (op.kind === "trianglePressFill") {
-                const points = op.points;
-                const leftEdgePoint = new WebglCore.Vector2({x: points[1].x + (points[0].x - points[1].x) * op.amount, y: points[1].y + (points[0].y - points[1].y) * op.amount});
-                const rightEdgePoint = new WebglCore.Vector2({x: points[2].x + (points[0].x - points[2].x) * op.amount, y: points[2].y + (points[0].y - points[2].y) * op.amount});
-                this.#geometryBuilder.pushPoly(vertices, colors, [points[1], points[2], rightEdgePoint, leftEdgePoint], this.#resolveColor(op.color));
+                this.#geometryBuilder.pushPoly(vertices, colors, this.#trianglePressPolygon(op.points, op.amount, op.direction), this.#resolveColor(op.color));
                 continue;
             }
             if (op.kind === "borderRing") {
