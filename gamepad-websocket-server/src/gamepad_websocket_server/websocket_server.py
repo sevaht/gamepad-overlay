@@ -1,4 +1,5 @@
 import json
+import logging
 import threading
 from contextlib import suppress
 from typing import Any
@@ -6,6 +7,10 @@ from typing import Any
 from websockets.exceptions import ConnectionClosed
 from websockets.sync.connection import Connection
 from websockets.sync.server import serve
+
+from .cli_output import announce
+
+logger = logging.getLogger(__name__)
 
 
 class WebSocketBroadcaster:
@@ -32,6 +37,10 @@ class WebSocketBroadcaster:
 
         with self._clients_lock:
             self._clients.add(ws)
+            connection_count = len(self._clients)
+        announce(
+            f"WebSocket client connected ({connection_count} active)", logger
+        )
 
         try:
             ws.send(self._banner)
@@ -43,6 +52,11 @@ class WebSocketBroadcaster:
         finally:
             with self._clients_lock:
                 self._clients.discard(ws)
+                connection_count = len(self._clients)
+            announce(
+                f"WebSocket client disconnected ({connection_count} active)",
+                logger,
+            )
 
     def send_state(self, state: dict[Any, Any]) -> None:
         message = json.dumps(state)

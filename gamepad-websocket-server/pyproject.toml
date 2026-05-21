@@ -43,6 +43,7 @@ skip-magic-trailing-comma = true
 
 [tool.mypy]
 strict = true
+mypy_path = ["typings"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -62,6 +63,7 @@ select = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*" = ["PLR2004", "S101"]
+"typings/sdl2/__init__.pyi" = ["ANN401", "N801", "N802"]
 
 [tool.uv.sources]
 sevaht-utility = { git = "https://github.com/nacitar/sevaht-utility.git", rev = "main" }
