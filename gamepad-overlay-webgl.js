@@ -404,6 +404,7 @@ class WebGLGamepadOverlayRenderer {
             pressMode: plan.pressMode,
             baseColorToken: plan.baseColorToken,
             pressedColorToken: plan.pressedColorToken,
+            includeOuterBorder: plan.includeOuterBorder,
         });
         this.#executeDrawOps(vertices, colors, ops);
     }
@@ -414,6 +415,8 @@ class WebGLGamepadOverlayRenderer {
             ringShape: plan.ringShape,
             borderModel: this.#borderModel,
             fillColorSpec: plan.fillColorSpec,
+            stickIncludeOuterBorder: plan.stickIncludeOuterBorder,
+            ringIncludeOuterBorder: plan.ringIncludeOuterBorder,
         });
         this.#executeDrawOps(vertices, colors, ops);
     }
@@ -662,6 +665,8 @@ class WebGLGamepadOverlayRenderer {
                 ringShape: stickPlan.ringShape,
                 borderModel: this.#borderModel,
                 fillColorSpec: stickPlan.fillColorSpec,
+                stickIncludeOuterBorder: stickPlan.stickIncludeOuterBorder,
+                ringIncludeOuterBorder: stickPlan.ringIncludeOuterBorder,
             });
             this.#executeDrawOps(stickVertexPositions, stickVertexColors, ops, cutoutVertexPositions, cutoutVertexColors);
         }

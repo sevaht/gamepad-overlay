@@ -155,6 +155,7 @@
                 pressedColorToken,
                 inputAmount,
                 pressMode: buttonSpec.pressMode || "digital",
+                includeOuterBorder: buttonSpec.includeOuterBorder !== false,
             }));
         };
 
@@ -196,11 +197,15 @@
                 stickShape: new OverlayShapeModel({region: leftStickRegion, shapeType: "ellipse"}),
                 ringShape: new OverlayShapeModel({region: leftRingRegion, shapeType: "ellipse"}),
                 fillColorSpec: {mode: "blend", baseToken: "idle", pressedToken: "pressed", amount: state.LS},
+                stickIncludeOuterBorder: model.buttons.left.analogStick?.includeOuterBorder !== false,
+                ringIncludeOuterBorder: model.buttons.left.analogStickRing?.includeOuterBorder === true,
             }),
             new OverlayStickRenderPlan({
                 stickShape: new OverlayShapeModel({region: rightStickRegion, shapeType: "ellipse"}),
                 ringShape: new OverlayShapeModel({region: rightRingRegion, shapeType: "ellipse"}),
                 fillColorSpec: {mode: "blend", baseToken: "idle", pressedToken: "pressed", amount: state.RS},
+                stickIncludeOuterBorder: model.buttons.right.analogStick?.includeOuterBorder !== false,
+                ringIncludeOuterBorder: model.buttons.right.analogStickRing?.includeOuterBorder === true,
             }),
         ];
 
@@ -279,7 +284,7 @@
         });
     }
 
-    function buildButtonDrawOps({shapeModel, borderModel, inputAmount = 0, pressMode = "digital", baseColorToken = "idle", pressedColorToken = "pressed"}) {
+    function buildButtonDrawOps({shapeModel, borderModel, inputAmount = 0, pressMode = "digital", baseColorToken = "idle", pressedColorToken = "pressed", includeOuterBorder = true}) {
         const ops = [];
         const blendedFaceColor = blendColor(baseColorToken, pressedColorToken, inputAmount);
         const isTriangle = typeof shapeModel.shapeType === "string" && shapeModel.shapeType.startsWith("tri");
@@ -288,7 +293,9 @@
             const facePoints = shapeModel.trianglePoints();
             const blackOuterPoints = offsetConvexPolygon(facePoints, borderModel.halfWidth);
             const whiteOuterPoints = offsetConvexPolygon(facePoints, borderModel.width);
-            ops.push({kind: "polygonRing", innerPoints: blackOuterPoints, outerPoints: whiteOuterPoints, color: solidColor("borderOuter")});
+            if (includeOuterBorder) {
+                ops.push({kind: "polygonRing", innerPoints: blackOuterPoints, outerPoints: whiteOuterPoints, color: solidColor("borderOuter")});
+            }
             ops.push({kind: "polygonRing", innerPoints: facePoints, outerPoints: blackOuterPoints, color: solidColor("borderInner")});
             ops.push({kind: "polygonFill", points: facePoints, color: solidColor("borderInner")});
             ops.push({kind: "polygonFill", points: facePoints, color: solidColor(baseColorToken)});
@@ -300,13 +307,15 @@
 
         const halfExpanded = shapeModel.expanded(borderModel.halfWidth);
         const fullExpanded = shapeModel.expanded(borderModel.width);
-        ops.push({kind: "borderRing", innerShape: halfExpanded, outerShape: fullExpanded, color: solidColor("borderOuter")});
+        if (includeOuterBorder) {
+            ops.push({kind: "borderRing", innerShape: halfExpanded, outerShape: fullExpanded, color: solidColor("borderOuter")});
+        }
         ops.push({kind: "borderRing", innerShape: shapeModel, outerShape: halfExpanded, color: solidColor("borderInner")});
         ops.push({kind: "shapeFill", shapeModel, color: blendedFaceColor});
         return ops;
     }
 
-    function buildStickDrawOps({stickShape, ringShape, borderModel, fillColorSpec = solidColor("idle")}) {
+    function buildStickDrawOps({stickShape, ringShape, borderModel, fillColorSpec = solidColor("idle"), stickIncludeOuterBorder = true, ringIncludeOuterBorder = false}) {
         const ops = [];
         const ringRegion = ringShape.region;
         const whiteOuterRegion = borderModel.expandedRegion({expandRegion: (r, amount) => Region.fromCenter({center: r.center, size: r.size.clone().add(Vector2.splat(amount * 2))})}, ringRegion);
@@ -321,16 +330,21 @@
         });
 
         const stickOuterShape = stickShape.expanded(borderModel.width);
-        const ringOuterShape = new OverlayShapeModel({region: whiteOuterRegion, shapeType: "ellipse"});
+        const ringOuterRegion = ringIncludeOuterBorder ? whiteOuterRegion : whiteInnerRegion;
+        const ringOuterShape = new OverlayShapeModel({region: ringOuterRegion, shapeType: "ellipse"});
 
         ops.push({kind: "cutoutShape", shapeModel: stickOuterShape});
-        ops.push({kind: "borderRing", innerShape: stickShape.expanded(borderModel.halfWidth), outerShape: stickOuterShape, color: solidColor("borderOuter"), composite: "stick"});
+        if (stickIncludeOuterBorder) {
+            ops.push({kind: "borderRing", innerShape: stickShape.expanded(borderModel.halfWidth), outerShape: stickOuterShape, color: solidColor("borderOuter"), composite: "stick"});
+        }
         ops.push({kind: "borderRing", innerShape: stickShape, outerShape: stickShape.expanded(borderModel.halfWidth), color: solidColor("borderInner"), composite: "stick"});
         ops.push({kind: "cutoutShape", shapeModel: stickShape});
         ops.push({kind: "shapeFill", shapeModel: stickShape, color: fillColorSpec});
 
         ops.push({kind: "cutoutShape", shapeModel: ringOuterShape});
-        ops.push({kind: "borderRing", innerShape: new OverlayShapeModel({region: whiteInnerRegion, shapeType: "ellipse"}), outerShape: ringOuterShape, color: solidColor("borderOuter"), composite: "stick"});
+        if (ringIncludeOuterBorder) {
+            ops.push({kind: "borderRing", innerShape: new OverlayShapeModel({region: whiteInnerRegion, shapeType: "ellipse"}), outerShape: ringOuterShape, color: solidColor("borderOuter"), composite: "stick"});
+        }
         ops.push({kind: "cutoutShape", shapeModel: new OverlayShapeModel({region: whiteInnerRegion, shapeType: "ellipse"})});
         ops.push({kind: "shapeFill", shapeModel: new OverlayShapeModel({region: whiteInnerRegion, shapeType: "ellipse"}), color: fillColorSpec});
         ops.push({kind: "borderRing", innerShape: new OverlayShapeModel({region: blackInnerRegion, shapeType: "ellipse"}), outerShape: new OverlayShapeModel({region: blackOuterRegion, shapeType: "ellipse"}), color: solidColor("borderInner"), composite: "stick"});

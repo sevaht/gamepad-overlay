@@ -107,6 +107,7 @@ function createRasterOverlayModel({buttonLength = 132, buttonWidth = 132, border
                 }),
                 shape: "ellipse",
                 pressMode: "digital",
+                includeOuterBorder: true,
             },
             analogStickRing: {
                 region: RasterCore.Region.fromCenter({
@@ -115,6 +116,7 @@ function createRasterOverlayModel({buttonLength = 132, buttonWidth = 132, border
                 }),
                 shape: "ellipse",
                 pressMode: "none",
+                includeOuterBorder: false,
             },
         },
         right: {
@@ -134,6 +136,7 @@ function createRasterOverlayModel({buttonLength = 132, buttonWidth = 132, border
                 }),
                 shape: "ellipse",
                 pressMode: "digital",
+                includeOuterBorder: true,
             },
             analogStickRing: {
                 region: RasterCore.Region.fromCenter({
@@ -142,6 +145,7 @@ function createRasterOverlayModel({buttonLength = 132, buttonWidth = 132, border
                 }),
                 shape: "ellipse",
                 pressMode: "none",
+                includeOuterBorder: false,
             },
         },
     };

@@ -980,9 +980,9 @@ class GamepadOverlay {
         });
     }
 
-    #createBorderedLayerSpecs({fillShapeId, includeBorderStroke, faceClasses, semanticAttributes}) {
+    #createBorderedLayerSpecs({fillShapeId, includeBorderStroke, includeOuterBorder, faceClasses, semanticAttributes}) {
         const layers = [];
-        if (includeBorderStroke) {
+        if (includeBorderStroke && includeOuterBorder) {
             layers.push(new LayerSpec({
                 classes: "outer-border",
                 cutout: true,
@@ -1004,6 +1004,7 @@ class GamepadOverlay {
         shapeType,
         cornerRadiusPercent,
         includeBorder = false,
+        includeOuterBorder = true,
         buttonClasses = "gamepad-button",
         semanticClasses = [],
         semanticAttributes = {},
@@ -1025,6 +1026,7 @@ class GamepadOverlay {
         const layers = this.#createBorderedLayerSpecs({
             fillShapeId: fillCutoutShapeId ?? id,
             includeBorderStroke,
+            includeOuterBorder,
             faceClasses: [].concat(buttonClasses, semanticClasses, includeBorderStroke ? ["gamepad-button-bordered"] : []),
             semanticAttributes,
         });
@@ -1451,6 +1453,7 @@ class GamepadOverlay {
                 region: analogStickRingRegion,
                 shapeType: ShapeType.ELLIPSE,
                 includeBorder: true,
+                includeOuterBorder: false,
                 buttonClasses: "gamepad-button",
                 semanticClasses: [`side-${sideName}`, "role-analog-stick-ring"],
                 semanticAttributes: {"data-side": sideName, "data-role": "analog-stick-ring"},

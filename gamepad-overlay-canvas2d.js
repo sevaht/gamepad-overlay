@@ -362,6 +362,7 @@ class Canvas2DGamepadOverlayRenderer {
                 pressMode: plan.pressMode,
                 baseColorToken: plan.baseColorToken,
                 pressedColorToken: plan.pressedColorToken,
+                includeOuterBorder: plan.includeOuterBorder,
             });
             this.#executeDrawOps(ops);
         }
@@ -372,6 +373,8 @@ class Canvas2DGamepadOverlayRenderer {
                 ringShape: plan.ringShape,
                 borderModel: this.#borderModel,
                 fillColorSpec: plan.fillColorSpec,
+                stickIncludeOuterBorder: plan.stickIncludeOuterBorder,
+                ringIncludeOuterBorder: plan.ringIncludeOuterBorder,
             });
             this.#executeDrawOps(ops);
         }
