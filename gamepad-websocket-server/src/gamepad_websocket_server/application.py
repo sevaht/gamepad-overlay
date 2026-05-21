@@ -324,12 +324,7 @@ class SDLGameController:
                     )
                     announced_waiting = True
 
-            sdl2.SDL_ClearError()
             if sdl2.SDL_WaitEventTimeout(event, 2000) == 0:
-                error = sdl2.SDL_GetError().decode("utf-8")
-                if error:
-                    message = f"SDL_WaitEventTimeout failed: {error}"
-                    raise RuntimeError(message)
                 continue
 
             updated = self._handle_event(event, monitor)
