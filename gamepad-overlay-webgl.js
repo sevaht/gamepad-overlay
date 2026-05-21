@@ -105,6 +105,18 @@ class WebglGeometryBuilder {
         this.#circleLookupBySegmentCount = circleLookupBySegmentCount;
     }
 
+    #ellipseSegmentCountForRegion(region) {
+        const rx = Math.max(1, region.halfSize.x);
+        const ry = Math.max(1, region.halfSize.y);
+        const r = Math.max(rx, ry);
+        return Math.ceil(Math.max(40, Math.min(128, r * 0.9)));
+    }
+
+    #roundedRectCornerSegmentCount(region) {
+        const r = Math.max(1, Math.min(region.halfSize.x, region.halfSize.y));
+        return Math.ceil(Math.max(8, Math.min(24, r * 0.2)));
+    }
+
     // Returns cached unit-circle lookup points for a segment count.
 
     getCircleLookupTable(segmentCount) {
@@ -159,12 +171,13 @@ class WebglGeometryBuilder {
         }
     }
 
-    pushEllipse(vertices, colors, region, color, segmentCount = 36) {
+    pushEllipse(vertices, colors, region, color, segmentCount = null) {
         const center = region.center;
-        const unitCircleLookupTable = this.getCircleLookupTable(segmentCount);
-        for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex += 1) {
+        const resolvedSegmentCount = Math.max(12, Math.floor(segmentCount || this.#ellipseSegmentCountForRegion(region)));
+        const unitCircleLookupTable = this.getCircleLookupTable(resolvedSegmentCount);
+        for (let segmentIndex = 0; segmentIndex < resolvedSegmentCount; segmentIndex += 1) {
             const currentUnitPoint = unitCircleLookupTable[segmentIndex];
-            const nextUnitPoint = unitCircleLookupTable[(segmentIndex + 1) % segmentCount];
+            const nextUnitPoint = unitCircleLookupTable[(segmentIndex + 1) % resolvedSegmentCount];
             this.pushTri(
                 vertices,
                 colors,
@@ -179,7 +192,8 @@ class WebglGeometryBuilder {
         }
     }
 
-    pushRoundedRect(vertices, colors, region, radius, color, segmentCount = 6) {
+    pushRoundedRect(vertices, colors, region, radius, color, segmentCount = null) {
+        const resolvedSegmentCount = Math.max(3, Math.floor(segmentCount || this.#roundedRectCornerSegmentCount(region)));
         const cornerRadius = Math.max(0, Math.min(radius, region.halfSize.x, region.halfSize.y));
         if (cornerRadius < 0.01) {
             this.pushPoly(vertices, colors, [region.topLeft, region.topRight, region.bottomRight, region.bottomLeft], color);
@@ -187,8 +201,8 @@ class WebglGeometryBuilder {
         }
         const polygonPoints = [];
         const appendArcPoints = (centerX, centerY, startRadians, endRadians) => {
-            for (let segmentIndex = 0; segmentIndex <= segmentCount; segmentIndex += 1) {
-                const radians = startRadians + (endRadians - startRadians) * (segmentIndex / segmentCount);
+            for (let segmentIndex = 0; segmentIndex <= resolvedSegmentCount; segmentIndex += 1) {
+                const radians = startRadians + (endRadians - startRadians) * (segmentIndex / resolvedSegmentCount);
                 polygonPoints.push(new WebglCore.Vector2({x: centerX + Math.cos(radians) * cornerRadius, y: centerY + Math.sin(radians) * cornerRadius}));
             }
         };
@@ -199,15 +213,16 @@ class WebglGeometryBuilder {
         this.pushPoly(vertices, colors, polygonPoints, color);
     }
 
-    roundedRectLoop(region, radius, segmentCount = 6) {
+    roundedRectLoop(region, radius, segmentCount = null) {
+        const resolvedSegmentCount = Math.max(3, Math.floor(segmentCount || this.#roundedRectCornerSegmentCount(region)));
         const cornerRadius = Math.max(0, Math.min(radius, region.halfSize.x, region.halfSize.y));
         if (cornerRadius < 0.01) {
             return [region.topLeft, region.topRight, region.bottomRight, region.bottomLeft];
         }
         const polygonPoints = [];
         const appendArcPoints = (centerX, centerY, startRadians, endRadians) => {
-            for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex += 1) {
-                const radians = startRadians + (endRadians - startRadians) * (segmentIndex / segmentCount);
+            for (let segmentIndex = 0; segmentIndex < resolvedSegmentCount; segmentIndex += 1) {
+                const radians = startRadians + (endRadians - startRadians) * (segmentIndex / resolvedSegmentCount);
                 polygonPoints.push(new WebglCore.Vector2({x: centerX + Math.cos(radians) * cornerRadius, y: centerY + Math.sin(radians) * cornerRadius}));
             }
         };
@@ -605,7 +620,7 @@ class WebGLGamepadOverlayRenderer {
         gl.shaderSource(vert, "attribute vec2 a_pos; attribute vec4 a_color; uniform vec2 u_resolution; varying vec4 v_color; void main(){ vec2 zeroToOne = a_pos / u_resolution; vec2 clip = zeroToOne * 2.0 - 1.0; gl_Position = vec4(clip * vec2(1.0, -1.0), 0.0, 1.0); v_color = a_color; }");
         gl.compileShader(vert);
         const frag = gl.createShader(gl.FRAGMENT_SHADER);
-        gl.shaderSource(frag, `precision mediump float; varying vec4 v_color; void main(){ vec3 encoded = pow(max(v_color.rgb, vec3(0.0)), vec3(1.0 / ${this.#outputGamma.toFixed(4)})); gl_FragColor = vec4(encoded, v_color.a); }`);
+        gl.shaderSource(frag, `precision highp float; varying vec4 v_color; void main(){ vec3 encoded = pow(max(v_color.rgb, vec3(0.0)), vec3(1.0 / ${this.#outputGamma.toFixed(4)})); gl_FragColor = vec4(encoded, v_color.a); }`);
         gl.compileShader(frag);
 
         this.#program = gl.createProgram();
