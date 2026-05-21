@@ -116,7 +116,7 @@ function createRasterOverlayModel({buttonLength = 132, buttonWidth = 132, border
                 }),
                 shape: "ellipse",
                 pressMode: "none",
-                includeOuterBorder: false,
+                includeOuterBorder: true,
             },
         },
         right: {
@@ -145,7 +145,7 @@ function createRasterOverlayModel({buttonLength = 132, buttonWidth = 132, border
                 }),
                 shape: "ellipse",
                 pressMode: "none",
-                includeOuterBorder: false,
+                includeOuterBorder: true,
             },
         },
     };
