@@ -1,0 +1,52 @@
+body {
+    margin: 0;
+    background: transparent;
+}
+
+#overlayRoot,
+#overlayCanvas,
+#overlayWebgl {
+    display: block;
+    background: transparent;
+}
+
+.outer-border {
+    fill: none;
+    stroke: white;
+    stroke-width: calc((var(--overlay-border-inner-size) + (var(--overlay-border-outer-size) * 2)) * 1px);
+    stroke-linejoin: round;
+    stroke-linecap: round;
+}
+
+.gamepad-button {
+    fill: var(--btn-idle, rgba(44, 47, 51, 0.7));
+    stroke: black;
+    stroke-width: 0;
+}
+
+.gamepad-button-bordered {
+    stroke-width: calc(var(--overlay-border-inner-size) * 1px);
+    stroke-linejoin: round;
+    stroke-linecap: round;
+}
+
+.black-border-stroke {
+    fill: none;
+    stroke: black;
+    stroke-width: calc(var(--overlay-border-inner-size) * 1px);
+    stroke-linejoin: round;
+    stroke-linecap: round;
+}
+
+.gamepad-button-pressed-fill {
+    fill: var(--btn-pressed, #c00);
+    stroke: none;
+}
+
+.gamepad-button.is-pressed {
+    fill: var(--btn-pressed, #c00);
+}
+
+#overlayRoot [data-role="analog-area"] {
+    --btn-idle: rgba(0, 0, 0, 1);
+}
