@@ -57,6 +57,25 @@
         return output;
     }
 
+    const CSS_DEFAULTS = Object.freeze({
+        "--btn-idle-rgb": "44, 47, 51",
+        "--btn-idle-alpha": "0.7",
+        "--btn-idle": "rgba(44, 47, 51, 0.7)",
+        "--btn-pressed": "#3f8cff",
+        "--overlay-border-inner-size": "4",
+        "--overlay-border-outer-size": "4",
+    });
+
+    function applyCssDefaults(element = document.documentElement) {
+        const styles = getComputedStyle(element);
+        for (const [name, value] of Object.entries(CSS_DEFAULTS)) {
+            const existing = styles.getPropertyValue(name).trim();
+            if (!existing) {
+                element.style.setProperty(name, value);
+            }
+        }
+    }
+
     const THEME_PRESETS = Object.freeze({
         xbox: Object.freeze({
             global: Object.freeze({}),
@@ -75,7 +94,9 @@
     });
 
     window.OverlayTheme = Object.freeze({
+        CSS_DEFAULTS,
         THEME_PRESETS,
+        applyCssDefaults,
         buildThemeForCanvas2D,
         buildThemeForWebGL,
     });

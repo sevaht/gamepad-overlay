@@ -10,10 +10,6 @@
 
             #overlayRoot {
                 display: block;
-                --btn-idle: rgba(44, 47, 51, 0.7);
-                --btn-pressed: #3f8cff;
-                --overlay-border-inner-size: 4;
-                --overlay-border-outer-size: 4;
             }
 
             .outer-border {
@@ -68,6 +64,7 @@
     <body>
         <svg id="overlayRoot"></svg>
         <script defer>
+            OverlayTheme.applyCssDefaults(document.documentElement);
             const QUERY = new URLSearchParams(window.location.search);
             const INPUT_SOURCE = (() => {
                 const source = (QUERY.get("source") || "websocket").toLowerCase();

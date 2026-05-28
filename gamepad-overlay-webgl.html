@@ -23,6 +23,7 @@
     <body>
         <canvas id="overlayWebgl"></canvas>
         <script defer>
+            OverlayTheme.applyCssDefaults(document.documentElement);
             const QUERY = new URLSearchParams(window.location.search);
             const INPUT_SOURCE = (() => {
                 const source = (QUERY.get("source") || "websocket").toLowerCase();

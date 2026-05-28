@@ -3,10 +3,6 @@
     <head>
         <title>Gamepad Overlay Canvas2D</title>
         <style>
-            :root {
-                --btn-idle-rgb: 44, 47, 51;
-                --btn-idle-alpha: 0.7;
-            }
             body {
                 margin: 0;
                 background: transparent;
@@ -26,6 +22,7 @@
     <body>
         <canvas id="overlayCanvas"></canvas>
         <script defer>
+            OverlayTheme.applyCssDefaults(document.documentElement);
             const QUERY = new URLSearchParams(window.location.search);
             const INPUT_SOURCE = (() => {
                 const source = (QUERY.get("source") || "websocket").toLowerCase();
