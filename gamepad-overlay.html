@@ -4,17 +4,16 @@
         <title>Gamepad Overlay</title>
         <link rel="stylesheet" href="overlay-shell.css">
         <script src="overlay-core.js"></script>
-        <script src="overlay-domain.js"></script>
+        <script src="overlay-spec.js"></script>
         <script src="overlay-theme.js"></script>
-        <script src="overlay-bootstrap.js"></script>
+        <script src="overlay-app.js"></script>
         <script src="gamepad-input-sources.js"></script>
-        <script src="gamepad-overlay-raster-common.js"></script>
-        <script src="gamepad-overlay-svg.js"></script>
+        <script src="overlay-renderer-svg.js"></script>
     </head>
     <body>
         <svg id="overlayRoot"></svg>
         <script defer>
-            OverlayBootstrap.initSvg({svgId: "overlayRoot"});
+            OverlayApp.init({svgId: "overlayRoot"});
         </script>
     </body>
 </html>

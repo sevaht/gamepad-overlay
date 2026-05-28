@@ -91,12 +91,18 @@ class BrowserGamepadSource {
     #pollTimer;
     #lastTimestamp;
     #cleanup;
+    #lastPadListSignature;
+    #selectedPadId;
+    #selectedPadIndex;
 
     constructor(config) {
         this.#config = config;
         this.#pollTimer = null;
         this.#lastTimestamp = null;
         this.#cleanup = null;
+        this.#lastPadListSignature = null;
+        this.#selectedPadId = null;
+        this.#selectedPadIndex = null;
     }
 
     start() {
@@ -163,38 +169,87 @@ class BrowserGamepadSource {
     }
 
     #selectGamepad(gamepads) {
-        const pads = gamepads.filter((pad) => pad != null && pad.connected);
-        if (this.#config.padIndex != null) {
-            const byIndex = pads.find((pad) => pad.index === this.#config.padIndex);
-            if (byIndex) {
-                return byIndex;
+        const connected = gamepads.filter((pad) => pad != null && pad.connected);
+        const eligible = this.#config.padRequireStandard
+            ? connected.filter((pad) => pad.mapping === "standard")
+            : connected;
+        eligible.sort((a, b) => a.index - b.index);
+
+        if (eligible.length === 0) {
+            this.#selectedPadId = null;
+            this.#selectedPadIndex = null;
+            return null;
+        }
+
+        const needle = (this.#config.padIdContains || "").trim().toLowerCase();
+        if (needle) {
+            const preferred = eligible.filter((pad) => pad.id.toLowerCase().includes(needle));
+            if (preferred.length > 0) {
+                return this.#rememberSelectedPad(preferred[0]);
             }
         }
-        let candidates = pads;
-        if (this.#config.padIdContains) {
-            const needle = this.#config.padIdContains.toLowerCase();
-            candidates = candidates.filter((pad) => pad.id.toLowerCase().includes(needle));
+
+        if (this.#selectedPadId != null || this.#selectedPadIndex != null) {
+            const lockedExact = eligible.find((pad) => pad.id === this.#selectedPadId && pad.index === this.#selectedPadIndex);
+            if (lockedExact) {
+                return this.#rememberSelectedPad(lockedExact);
+            }
+            const lockedById = this.#selectedPadId == null
+                ? null
+                : eligible.find((pad) => pad.id === this.#selectedPadId);
+            if (lockedById) {
+                return this.#rememberSelectedPad(lockedById);
+            }
+            const lockedByIndex = this.#selectedPadIndex == null
+                ? null
+                : eligible.find((pad) => pad.index === this.#selectedPadIndex);
+            if (lockedByIndex) {
+                return this.#rememberSelectedPad(lockedByIndex);
+            }
         }
-        if (this.#config.padRequireStandard) {
-            candidates = candidates.filter((pad) => pad.mapping === "standard");
+
+        if (this.#config.padIndex != null) {
+            const byIndexHint = eligible.find((pad) => pad.index === this.#config.padIndex);
+            if (byIndexHint) {
+                return this.#rememberSelectedPad(byIndexHint);
+            }
         }
-        return candidates[0] ?? null;
+
+        return this.#rememberSelectedPad(eligible[0]);
+    }
+
+    #rememberSelectedPad(pad) {
+        this.#selectedPadId = pad.id;
+        this.#selectedPadIndex = pad.index;
+        return pad;
     }
 
     #formatPadList(gamepads) {
         const connected = gamepads.filter((pad) => pad != null && pad.connected);
+        const signature = connected
+            .map((pad) => `${pad.index}|${pad.id}|${pad.mapping}|${pad.connected ? 1 : 0}`)
+            .join("||");
         if (connected.length === 0) {
+            if (this.#lastPadListSignature !== signature) {
+                console.info("[pads] none connected");
+            }
+            this.#lastPadListSignature = signature;
             return "PADS none";
         }
-        if (this.#config.listPads) {
-            console.table(connected.map((pad) => ({
-                index: pad.index,
-                id: pad.id,
-                mapping: pad.mapping,
-                connected: pad.connected,
-                timestamp: pad.timestamp,
-            })));
+        if (this.#lastPadListSignature !== signature) {
+            console.info("[pads] connected controllers:");
+            for (const pad of connected) {
+                const line = [
+                    `id=\"${pad.id}\"`,
+                    `mapping=${pad.mapping || ""}`,
+                    `index=${pad.index}`,
+                    `connected=${pad.connected ? "yes" : "no"}`,
+                ].join(" | ");
+                console.info(`  - ${line}`);
+            }
+            console.info("[pads] Tip: use the exact id string (or a unique contiguous substring) with padIdContains=<value> to prefer a controller.");
         }
+        this.#lastPadListSignature = signature;
         return `PADS ${connected.map((pad) => `${pad.index}:${pad.id}`).join(" | ")}`;
     }
 }
@@ -450,8 +505,17 @@ class GamepadOverlayRenderer {
     }
 }
 
-function createGamepadSource({mode, wsUrl, pollMs, padIndex, padIdContains, padRequireStandard, listPads, onState, onStatus}) {
-    const config = {wsUrl, pollMs, padIndex, padIdContains, padRequireStandard, listPads, onState, onStatus};
+function createGamepadSource({
+    mode,
+    wsUrl,
+    pollMs,
+    padIndex = null,
+    padIdContains = "",
+    padRequireStandard = true,
+    onState,
+    onStatus,
+}) {
+    const config = {wsUrl, pollMs, padIndex, padIdContains, padRequireStandard, onState, onStatus};
     if (mode === "websocket") {
         return new WebSocketGamepadSource(config);
     }

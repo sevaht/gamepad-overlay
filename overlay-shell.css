@@ -3,9 +3,7 @@ body {
     background: transparent;
 }
 
-#overlayRoot,
-#overlayCanvas,
-#overlayWebgl {
+#overlayRoot {
     display: block;
     background: transparent;
 }
