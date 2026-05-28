@@ -70,11 +70,10 @@ const PressFillDirection = Object.freeze({
     UP: Symbol("UP"),
     RIGHT: Symbol("RIGHT"),
     LEFT: Symbol("LEFT"),
-    OUTWARD: Symbol("OUTWARD"),
 });
 
-const DomainShapeModel = OverlayDomain.ShapeModel;
-const DomainBorderModel = OverlayDomain.BorderModel;
+const DomainShapeModel = OverlaySpec.ShapeModel;
+const DomainBorderModel = OverlaySpec.BorderModel;
 
 function createSvgPolygon(points, attributes = {}) {
     return createSvgElement("polygon", {
@@ -265,17 +264,6 @@ class SvgContext {
         this.addDefinition(mask);
         return mask;
     }
-
-    // TODO: masks? use refs?
-    // the general principle will be that a given mask maps to a specific
-    // def, and any updates need to be made on that definition.
-    // ... so masks will just be two uses; everything rect + target
-    // and each target will be moved, but as only a single mask can apply
-    // to something I may need a mechanism to combine masks/append to them.
-
-
-
-    // equivalent to appendEntity, or implement that some other way?
 }
 
 class GamepadEntity {
@@ -292,7 +280,6 @@ class GamepadEntity {
     #layerElements;
     #pressMode;
     #digitalThreshold;
-    #digitalRenderMode;
     #transformFramePending;
     #pressedClassName;
     #isPressed;
@@ -303,9 +290,9 @@ class GamepadEntity {
     #styleSourceMaskId;
     #classToggleFramePending;
     #pendingClassTogglePressed;
+    #analogIdleClipRect;
 
     constructor({context, element, parent, layers=[{}], offset=Vector2.ZERO, themeVariables = {}, pressFillShapeId = null}) {
-        // TODO: null validation?
         this.#context = context;
         this.#element = element;
         this.#connectedElements = [this.#element];
@@ -313,13 +300,12 @@ class GamepadEntity {
         this.#translation = Vector2.ZERO;
         this.#layerParent = parent;
         this.#pressFillVisual = null;
-        this.#pressFillDirection = PressFillDirection.OUTWARD;
+        this.#pressFillDirection = PressFillDirection.DOWN;
         this.#styleSourceElement = null;
         this.#layerElements = [];
         this.#pressMode = "digital";
         this.#digitalThreshold = 0.5;
         this.#transformFramePending = false;
-        this.#digitalRenderMode = "fill";
         this.#pressedClassName = "is-pressed";
         this.#isPressed = false;
         this.#themeVariables = {...themeVariables};
@@ -329,6 +315,7 @@ class GamepadEntity {
         this.#styleSourceMaskId = null;
         this.#classToggleFramePending = false;
         this.#pendingClassTogglePressed = null;
+        this.#analogIdleClipRect = null;
         this.setTranslation(offset);
         this.#context.addDefinition(this.#element);
         const connectedSourceIds = new Set([this.element.id]);
@@ -410,39 +397,52 @@ class GamepadEntity {
         if (this.#styleSourceMaskId != null) {
             setMask(useElement, this.#styleSourceMaskId);
         }
-        this.#context.addChild(useElement, {parent: this.#layerParent, prepend});
-
-        if (fillDirection === PressFillDirection.OUTWARD) {
-            this.connect(useElement, {
-                extraTransform: () => this.#resolveOutwardTransform(this.#pressFillVisual?.amount ?? 0),
-                includeTranslation: false,
-            });
-            this.#pressFillVisual = {
-                mode: "outward",
-                amount: 0,
-            };
+        const strokeLayer = this.#layerElements.find((element) => element.classList.contains("black-border-stroke"));
+        if (strokeLayer != null && strokeLayer.parentNode === this.#layerParent) {
+            this.#layerParent.insertBefore(useElement, strokeLayer);
         } else {
-            const clipPath = createSvgElement("clipPath", {
-                id: monotonicId(`press-clip-${this.element.id}-`),
+            this.#context.addChild(useElement, {parent: this.#layerParent, prepend});
+        }
+
+        const clipPath = createSvgElement("clipPath", {
+            id: monotonicId(`press-clip-${this.element.id}-`),
+            clipPathUnits: "objectBoundingBox",
+        });
+        const clipRect = createSvgElement("rect", {
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 0,
+        });
+        clipPath.appendChild(clipRect);
+        this.#context.addDefinition(clipPath);
+        setAttributes(useElement, {
+            "clip-path": `url(#${clipPath.id})`,
+        });
+        this.#pressFillVisual = {
+            mode: "directional",
+            clipRect,
+            amount: 0,
+            fillDirection,
+        };
+
+        if (this.#pressMode === "analog" && this.#styleSourceElement != null) {
+            const idleClipPath = createSvgElement("clipPath", {
+                id: monotonicId(`idle-clip-${this.element.id}-`),
                 clipPathUnits: "objectBoundingBox",
             });
-            const clipRect = createSvgElement("rect", {
+            const idleClipRect = createSvgElement("rect", {
                 x: 0,
                 y: 0,
                 width: 1,
-                height: 0,
+                height: 1,
             });
-            clipPath.appendChild(clipRect);
-            this.#context.addDefinition(clipPath);
-            setAttributes(useElement, {
-                "clip-path": `url(#${clipPath.id})`,
+            idleClipPath.appendChild(idleClipRect);
+            this.#context.addDefinition(idleClipPath);
+            setAttributes(this.#styleSourceElement, {
+                "clip-path": `url(#${idleClipPath.id})`,
             });
-            this.#pressFillVisual = {
-                mode: "directional",
-                clipRect,
-                amount: 0,
-                fillDirection,
-            };
+            this.#analogIdleClipRect = idleClipRect;
         }
 
         this.#applyTransforms();
@@ -455,11 +455,13 @@ class GamepadEntity {
             return this;
         }
         this.#pressFillVisual.amount = amount;
-        if (this.#pressFillVisual.mode === "outward") {
-            this.#applyTransforms();
-        } else {
-            const attributes = this.#resolvePressFillAttributes(amount, this.#pressFillVisual.fillDirection);
-            setAttributes(this.#pressFillVisual.clipRect, attributes);
+        // Seam overlap is only needed for analog dual-layer compositing (pressed+idle clips).
+        const seamOverlap = this.#analogIdleClipRect != null ? this.#directionalClipSeamOverlap(this.#pressFillVisual.fillDirection) : 0;
+        const attributes = this.#resolvePressFillAttributes(amount, this.#pressFillVisual.fillDirection, seamOverlap);
+        setAttributes(this.#pressFillVisual.clipRect, attributes);
+        if (this.#analogIdleClipRect != null) {
+            const idleAttributes = this.#resolveIdleFillAttributes(amount, this.#pressFillVisual.fillDirection, seamOverlap);
+            setAttributes(this.#analogIdleClipRect, idleAttributes);
         }
         return this;
     }
@@ -474,18 +476,13 @@ class GamepadEntity {
     setPressBehavior({
         mode = this.#pressMode,
         threshold = this.#digitalThreshold,
-        digitalRenderMode = this.#digitalRenderMode,
         pressedClassName = this.#pressedClassName,
     } = {}) {
         if (mode !== "analog" && mode !== "digital") {
             throw new Error(`Unknown press mode: ${String(mode)}`);
         }
-        if (digitalRenderMode !== "fill" && digitalRenderMode !== "class-toggle") {
-            throw new Error(`Unknown digital render mode: ${String(digitalRenderMode)}`);
-        }
         this.#pressMode = mode;
         this.#digitalThreshold = Math.max(0, Math.min(1, assertFiniteNumber(threshold, "threshold")));
-        this.#digitalRenderMode = digitalRenderMode;
         this.#pressedClassName = String(pressedClassName || "is-pressed");
         return this;
     }
@@ -495,26 +492,23 @@ class GamepadEntity {
             return this.setPressAmount(amount);
         }
         const isPressed = amount >= this.#digitalThreshold;
-        if (this.#digitalRenderMode === "class-toggle") {
-            if (this.#isPressed === isPressed) {
-                return this;
-            }
-            this.#pendingClassTogglePressed = isPressed;
-            if (!this.#classToggleFramePending) {
-                this.#classToggleFramePending = true;
-                requestAnimationFrame(() => {
-                    this.#classToggleFramePending = false;
-                    if (this.#pendingClassTogglePressed == null) {
-                        return;
-                    }
-                    this.#isPressed = this.#pendingClassTogglePressed;
-                    this.#pendingClassTogglePressed = null;
-                    this.#styleSourceElement?.classList.toggle(this.#pressedClassName, this.#isPressed);
-                });
-            }
+        if (this.#isPressed === isPressed) {
             return this;
         }
-        return this.setPressAmount(isPressed ? 1 : 0);
+        this.#pendingClassTogglePressed = isPressed;
+        if (!this.#classToggleFramePending) {
+            this.#classToggleFramePending = true;
+            requestAnimationFrame(() => {
+                this.#classToggleFramePending = false;
+                if (this.#pendingClassTogglePressed == null) {
+                    return;
+                }
+                this.#isPressed = this.#pendingClassTogglePressed;
+                this.#pendingClassTogglePressed = null;
+                this.#styleSourceElement?.classList.toggle(this.#pressedClassName, this.#isPressed);
+            });
+        }
+        return this;
     }
     bringLayersToFront() {
         for (const element of this.#layerElements) {
@@ -523,28 +517,52 @@ class GamepadEntity {
         return this;
     }
 
-    #resolvePressFillAttributes(amount, fillDirection) {
+    #resolvePressFillAttributes(amount, fillDirection, seamOverlap = 0) {
+        if (amount <= 0) {
+            return {x: 0, y: 0, width: 0, height: 0};
+        }
+        if (amount >= 1) {
+            return {x: 0, y: 0, width: 1, height: 1};
+        }
         switch (fillDirection) {
             case PressFillDirection.DOWN:
-                return {x: 0, y: 0, width: 1, height: amount};
+                return {x: 0, y: 0, width: 1, height: Math.min(1, amount + seamOverlap)};
             case PressFillDirection.UP:
-                return {x: 0, y: 1 - amount, width: 1, height: amount};
+                return {x: 0, y: Math.max(0, 1 - amount - seamOverlap), width: 1, height: Math.min(1, amount + seamOverlap)};
             case PressFillDirection.RIGHT:
-                return {x: 0, y: 0, width: amount, height: 1};
+                return {x: 0, y: 0, width: Math.min(1, amount + seamOverlap), height: 1};
             case PressFillDirection.LEFT:
-                return {x: 1 - amount, y: 0, width: amount, height: 1};
-            case PressFillDirection.OUTWARD: {
-                const half = amount / 2;
-                return {
-                    x: 0.5 - half,
-                    y: 0.5 - half,
-                    width: amount,
-                    height: amount,
-                };
-            }
+                return {x: Math.max(0, 1 - amount - seamOverlap), y: 0, width: Math.min(1, amount + seamOverlap), height: 1};
             default:
                 throw new Error(`Unknown fillDirection: ${String(fillDirection.description ?? fillDirection)}`);
         }
+    }
+    #resolveIdleFillAttributes(amount, fillDirection, seamOverlap = 0) {
+        if (amount <= 0) {
+            return {x: 0, y: 0, width: 1, height: 1};
+        }
+        if (amount >= 1) {
+            return {x: 0, y: 0, width: 0, height: 0};
+        }
+        switch (fillDirection) {
+            case PressFillDirection.DOWN:
+                return {x: 0, y: Math.max(0, amount - seamOverlap), width: 1, height: Math.min(1, Math.max(0, 1 - amount + seamOverlap))};
+            case PressFillDirection.UP:
+                return {x: 0, y: 0, width: 1, height: Math.min(1, Math.max(0, 1 - amount + seamOverlap))};
+            case PressFillDirection.RIGHT:
+                return {x: Math.max(0, amount - seamOverlap), y: 0, width: Math.min(1, Math.max(0, 1 - amount + seamOverlap)), height: 1};
+            case PressFillDirection.LEFT:
+                return {x: 0, y: 0, width: Math.min(1, Math.max(0, 1 - amount + seamOverlap)), height: 1};
+            default:
+                return {x: 0, y: 0, width: 1, height: 1};
+        }
+    }
+    #directionalClipSeamOverlap(fillDirection) {
+        const bbox = this.#element.getBBox();
+        const axisPixels = (fillDirection === PressFillDirection.LEFT || fillDirection === PressFillDirection.RIGHT)
+            ? Math.max(1, bbox.width)
+            : Math.max(1, bbox.height);
+        return Math.min(0.02, 1 / axisPixels);
     }
     #applyThemeVariablesToElement(element) {
         for (const [name, value] of Object.entries(this.#themeVariables)) {
@@ -624,13 +642,6 @@ class GamepadEntity {
         }
         this.#cutoutMasksBySourceId.set(String(this.element.id), this.#mask);
         return this.#mask;
-    }
-
-    #resolveOutwardTransform(amount) {
-        const bbox = this.#element.getBBox();
-        const cx = bbox.x + bbox.width / 2;
-        const cy = bbox.y + bbox.height / 2;
-        return `translate(${cx} ${cy}) scale(${amount}) translate(${-cx} ${-cy})`;
     }
 
     #applyTransforms() {
@@ -733,7 +744,7 @@ class CompositeControl {
 //
 
 
-class SvgGamepadOverlay {
+class GamepadOverlay {
     #context;
     #model;
     #leftLayout;
@@ -744,63 +755,32 @@ class SvgGamepadOverlay {
     #innerBorderSize;
     #region;
     #digitalThreshold;
-    #digitalRenderMode;
     #themeVariables;
     #prewarmPressFillVisuals;
-
-    static #parseCssNumber(value, fallback = 0) {
-        const parsed = Number.parseFloat(String(value ?? "").trim());
-        return Number.isFinite(parsed) ? parsed : fallback;
-    }
-
-    static #resolveBorderWidthFromCss(context) {
-        const styles = getComputedStyle(context.svg);
-        const inner = this.#parseCssNumber(styles.getPropertyValue("--overlay-border-inner-size"));
-        const outer = this.#parseCssNumber(styles.getPropertyValue("--overlay-border-outer-size"));
-        return inner + outer;
-    }
-
-    static #resolveInnerBorderSizeFromCss(context) {
-        const styles = getComputedStyle(context.svg);
-        return Math.max(0, this.#parseCssNumber(styles.getPropertyValue("--overlay-border-inner-size"), 0));
-    }
+    #drawLeftOriginRingWithoutStick;
 
     constructor({
         context,
-        model = null,
-        buttonLength,
-        buttonWidth,
         topLeft,
-        borderWidth = null,
-        gap,
-        betweenHalvesGap = 0,
+        model,
+        gap = 1,
         digitalThreshold = 0.5,
-        digitalRenderMode = "fill",
         themeVariables = {},
         prewarmPressFillVisuals = true,
         hasAnalogStick = true,
-        leftSide = {},
-        rightSide = {},
+        drawLeftOriginRingWithoutStick = true,
     }) {
         this.#context = context;
-        borderWidth ??= this.constructor.#resolveBorderWidthFromCss(context);
-        this.#innerBorderSize = this.constructor.#resolveInnerBorderSizeFromCss(context);
-        if (model == null) {
-            model = createRasterOverlayModel({
-                buttonLength,
-                buttonWidth,
-                borderWidth,
-                innerBorderSize: this.#innerBorderSize,
-                gap,
-                betweenHalvesGap,
-            });
+        if (!model) {
+            throw new Error("GamepadOverlay requires model");
         }
+        this.#innerBorderSize = Math.max(0, Number(model?.innerBorderSize) || 0);
         this.#model = model;
         this.#borderWidth = this.#model.borderWidth;
         this.#digitalThreshold = digitalThreshold;
-        this.#digitalRenderMode = digitalRenderMode;
         this.#themeVariables = {...themeVariables};
         this.#prewarmPressFillVisuals = Boolean(prewarmPressFillVisuals);
+        this.#drawLeftOriginRingWithoutStick = Boolean(drawLeftOriginRingWithoutStick);
         this.#cornerCompensation = (gap * this.#model.borderWidth) + this.#model.borderWidth * 2;
         this.#leftLayout = this.#model.leftLayout;
         this.#rightLayout = this.#model.rightLayout;
@@ -944,6 +924,12 @@ class SvgGamepadOverlay {
             attributes: semanticAttributes,
             styleSource: true,
         }));
+        if (includeBorderStroke) {
+            layers.push(new LayerSpec({
+                classes: ["black-border-stroke", "gamepad-button-bordered"],
+                attributes: semanticAttributes,
+            }));
+        }
         return layers;
     }
 
@@ -960,9 +946,8 @@ class SvgGamepadOverlay {
         semanticAttributes = {},
         pressMode = "digital",
         digitalThreshold = this.#digitalThreshold,
-        digitalRenderMode = this.#digitalRenderMode,
         themeVariables = this.#resolveThemeVariables(semanticAttributes),
-        prewarmPressFillVisual = this.#prewarmPressFillVisuals && pressMode === "digital" && digitalRenderMode === "fill",
+        prewarmPressFillVisual = this.#prewarmPressFillVisuals && pressMode === "analog",
     }) {
         const shapeModel = new DomainShapeModel({region, shapeType, cornerRadiusPercent});
         const borderModel = new DomainBorderModel({innerSize: this.#innerBorderSize});
@@ -977,7 +962,7 @@ class SvgGamepadOverlay {
             fillShapeId: fillCutoutShapeId ?? id,
             includeBorderStroke,
             includeOuterBorder,
-            faceClasses: [].concat(buttonClasses, semanticClasses, includeBorderStroke ? ["gamepad-button-bordered"] : []),
+            faceClasses: [].concat(buttonClasses, semanticClasses),
             semanticAttributes,
         });
         if (fillCutoutShapeId != null) {
@@ -1010,7 +995,6 @@ class SvgGamepadOverlay {
         entity.setPressBehavior({
             mode: pressMode,
             threshold: digitalThreshold,
-            digitalRenderMode,
         });
         if (prewarmPressFillVisual) {
             entity.enablePressVisual();
@@ -1092,11 +1076,11 @@ class SvgGamepadOverlay {
             semanticAttributes: {"data-side": sideName, "data-role": roleName},
             pressMode,
             digitalThreshold,
-            prewarmPressFillVisual: pressFillDirection == null,
+            prewarmPressFillVisual: this.#prewarmPressFillVisuals && pressMode === "analog",
         });
         if (pressFillDirection != null) {
             button.setPressFillDirection(pressFillDirection);
-            if (this.#prewarmPressFillVisuals && pressMode === "digital" && this.#digitalRenderMode === "fill") {
+            if (this.#prewarmPressFillVisuals && pressMode === "analog") {
                 button.enablePressVisual();
             }
         }
@@ -1206,6 +1190,15 @@ class SvgGamepadOverlay {
             if (!spec) {
                 return null;
             }
+            const pressFillDirection = (() => {
+                switch (spec.pressFillDirection || "down") {
+                    case "up": return PressFillDirection.UP;
+                    case "down": return PressFillDirection.DOWN;
+                    case "left": return PressFillDirection.LEFT;
+                    case "right": return PressFillDirection.RIGHT;
+                    default: return PressFillDirection.DOWN;
+                }
+            })();
             const button = this.#createButton({
                 group,
                 id: `${sidePrefix}${idSuffix}`,
@@ -1217,20 +1210,13 @@ class SvgGamepadOverlay {
                 semanticClasses: [`side-${sideName}`, `role-${roleName}`],
                 semanticAttributes: {"data-side": sideName, "data-role": roleName},
                 pressMode: spec.pressMode === "analog" ? "analog" : "digital",
-                digitalRenderMode: "class-toggle",
                 digitalThreshold: spec.pressMode === "none" ? 2 : this.#digitalThreshold,
+                prewarmPressFillVisual: false,
             });
-            const pressFillDirection = (() => {
-                switch (spec.pressFillDirection || "outward") {
-                    case "up": return PressFillDirection.UP;
-                    case "down": return PressFillDirection.DOWN;
-                    case "left": return PressFillDirection.LEFT;
-                    case "right": return PressFillDirection.RIGHT;
-                    case "outward": return PressFillDirection.OUTWARD;
-                    default: return PressFillDirection.OUTWARD;
-                }
-            })();
             button.setPressFillDirection(pressFillDirection);
+            if (this.#prewarmPressFillVisuals && spec.pressMode === "analog") {
+                button.enablePressVisual();
+            }
             return button;
         };
 
@@ -1239,7 +1225,7 @@ class SvgGamepadOverlay {
             id: `${sidePrefix}LeftButton`,
             region: sideButtons.left.region,
             shapeType: toSvgShapeType(sideButtons.left.shape),
-            includeBorder: true,
+            includeBorder: !drawCrossBorder,
             includeOuterBorder: sideButtons.left.includeOuterBorder !== false,
             semanticClasses: [`side-${sideName}`, "role-left"],
             semanticAttributes: {"data-side": sideName, "data-role": "left"},
@@ -1249,7 +1235,7 @@ class SvgGamepadOverlay {
             id: `${sidePrefix}UpButton`,
             region: sideButtons.up.region,
             shapeType: toSvgShapeType(sideButtons.up.shape),
-            includeBorder: true,
+            includeBorder: !drawCrossBorder,
             includeOuterBorder: sideButtons.up.includeOuterBorder !== false,
             semanticClasses: [`side-${sideName}`, "role-up"],
             semanticAttributes: {"data-side": sideName, "data-role": "up"},
@@ -1259,7 +1245,7 @@ class SvgGamepadOverlay {
             id: `${sidePrefix}RightButton`,
             region: sideButtons.right.region,
             shapeType: toSvgShapeType(sideButtons.right.shape),
-            includeBorder: true,
+            includeBorder: !drawCrossBorder,
             includeOuterBorder: sideButtons.right.includeOuterBorder !== false,
             semanticClasses: [`side-${sideName}`, "role-right"],
             semanticAttributes: {"data-side": sideName, "data-role": "right"},
@@ -1269,7 +1255,7 @@ class SvgGamepadOverlay {
             id: `${sidePrefix}DownButton`,
             region: sideButtons.down.region,
             shapeType: toSvgShapeType(sideButtons.down.shape),
-            includeBorder: true,
+            includeBorder: !drawCrossBorder,
             includeOuterBorder: sideButtons.down.includeOuterBorder !== false,
             semanticClasses: [`side-${sideName}`, "role-down"],
             semanticAttributes: {"data-side": sideName, "data-role": "down"},
@@ -1280,7 +1266,7 @@ class SvgGamepadOverlay {
                 id: `${sidePrefix}OriginButton`,
                 region: sideButtons.origin.region,
                 shapeType: toSvgShapeType(sideButtons.origin.shape),
-                includeBorder: true,
+                includeBorder: false,
                 includeOuterBorder: sideButtons.origin.includeOuterBorder !== false,
                 semanticClasses: [`side-${sideName}`, "role-origin"],
                 semanticAttributes: {"data-side": sideName, "data-role": "origin"},
@@ -1302,6 +1288,7 @@ class SvgGamepadOverlay {
         let analogStick = null;
         let analogStickRing = null;
         let analogStickControl = null;
+        let staticLeftRing = null;
 
         if (hasAnalogStick) {
             analogAreaGroup = this.#context.addChild(
@@ -1322,7 +1309,6 @@ class SvgGamepadOverlay {
                 semanticClasses: [`side-${sideName}`, "role-analog-area"],
                 semanticAttributes: {"data-side": sideName, "data-role": "analog-area"},
                 pressMode: "digital",
-                digitalRenderMode: "class-toggle",
             });
 
             setMask(dpadGroup, analogArea.mask.id);
@@ -1342,7 +1328,6 @@ class SvgGamepadOverlay {
                 semanticAttributes: {"data-side": sideName, "data-role": "analog-stick"},
                 // Stick movement is analog; stick click state (LS/RS) is digital.
                 pressMode: "digital",
-                digitalRenderMode: "class-toggle",
             });
             analogStickRing = this.#createButton({
                 group: analogStickGroup,
@@ -1355,7 +1340,6 @@ class SvgGamepadOverlay {
                 semanticClasses: [`side-${sideName}`, "role-analog-stick-ring"],
                 semanticAttributes: {"data-side": sideName, "data-role": "analog-stick-ring"},
                 pressMode: "digital",
-                digitalRenderMode: "class-toggle",
                 digitalThreshold: 0.01,
             });
             for (const connectedElement of analogStickRing.getConnectedDefinitionElements()) {
@@ -1368,6 +1352,21 @@ class SvgGamepadOverlay {
                 layerTargets: [new RenderableControl(analogStickRing)],
             });
             setMask(backgroundGroup, analogStick.mask.id);
+        } else if (drawCrossBorder && sideName === "left" && this.#drawLeftOriginRingWithoutStick) {
+            staticLeftRing = this.#createButton({
+                group: dpadGroup,
+                id: `${sidePrefix}StaticAnalogRing`,
+                region: sideButtons.analogStickRing.region,
+                shapeType: ShapeType.ELLIPSE,
+                includeBorder: true,
+                includeOuterBorder: sideButtons.analogStickRing.includeOuterBorder === true,
+                buttonClasses: "gamepad-button",
+                semanticClasses: ["side-left", "role-analog-stick-ring", "role-analog-stick-ring-static"],
+                semanticAttributes: {"data-side": "left", "data-role": "analog-stick-ring"},
+                pressMode: "digital",
+                digitalThreshold: 2,
+            });
+            staticLeftRing.bringLayersToFront();
         }
 
         dpadBorder?.bringLayersToFront();
@@ -1393,6 +1392,7 @@ class SvgGamepadOverlay {
                 analogStick,
                 analogStickRing,
                 analogStickControl,
+                staticLeftRing,
             },
         };
     }
@@ -1424,5 +1424,3 @@ class SvgGamepadOverlay {
     }
 
 }
-
-const GamepadOverlay = SvgGamepadOverlay;
