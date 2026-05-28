@@ -170,6 +170,7 @@
                 hasAnalogStick: controls.hasAnalogStick !== false,
                 leftTriggerMode: normalizeTriggerMode(controls.leftTriggerMode, "analog"),
                 rightTriggerMode: normalizeTriggerMode(controls.rightTriggerMode, "analog"),
+                drawLeftOriginRingWithoutStick: controls.drawLeftOriginRingWithoutStick !== false,
             },
         };
     }
@@ -230,6 +231,7 @@
             prewarmPressFillVisuals: true,
             themeVariables: {},
             hasAnalogStick: layoutProfile.controls.hasAnalogStick,
+            drawLeftOriginRingWithoutStick: layoutProfile.controls.drawLeftOriginRingWithoutStick,
         });
 
         const overlayRegion = overlay.region;

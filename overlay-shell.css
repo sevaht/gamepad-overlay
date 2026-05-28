@@ -48,3 +48,7 @@ body {
 #overlayRoot [data-role="analog-area"] {
     --btn-idle: rgba(0, 0, 0, 1);
 }
+
+#overlayRoot .role-analog-stick-ring-static {
+    fill: none;
+}

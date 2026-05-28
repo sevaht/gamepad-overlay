@@ -757,6 +757,7 @@ class GamepadOverlay {
     #digitalThreshold;
     #themeVariables;
     #prewarmPressFillVisuals;
+    #drawLeftOriginRingWithoutStick;
 
     constructor({
         context,
@@ -767,6 +768,7 @@ class GamepadOverlay {
         themeVariables = {},
         prewarmPressFillVisuals = true,
         hasAnalogStick = true,
+        drawLeftOriginRingWithoutStick = true,
     }) {
         this.#context = context;
         if (!model) {
@@ -778,6 +780,7 @@ class GamepadOverlay {
         this.#digitalThreshold = digitalThreshold;
         this.#themeVariables = {...themeVariables};
         this.#prewarmPressFillVisuals = Boolean(prewarmPressFillVisuals);
+        this.#drawLeftOriginRingWithoutStick = Boolean(drawLeftOriginRingWithoutStick);
         this.#cornerCompensation = (gap * this.#model.borderWidth) + this.#model.borderWidth * 2;
         this.#leftLayout = this.#model.leftLayout;
         this.#rightLayout = this.#model.rightLayout;
@@ -1285,6 +1288,7 @@ class GamepadOverlay {
         let analogStick = null;
         let analogStickRing = null;
         let analogStickControl = null;
+        let staticLeftRing = null;
 
         if (hasAnalogStick) {
             analogAreaGroup = this.#context.addChild(
@@ -1348,6 +1352,21 @@ class GamepadOverlay {
                 layerTargets: [new RenderableControl(analogStickRing)],
             });
             setMask(backgroundGroup, analogStick.mask.id);
+        } else if (drawCrossBorder && sideName === "left" && this.#drawLeftOriginRingWithoutStick) {
+            staticLeftRing = this.#createButton({
+                group: dpadGroup,
+                id: `${sidePrefix}StaticAnalogRing`,
+                region: sideButtons.analogStickRing.region,
+                shapeType: ShapeType.ELLIPSE,
+                includeBorder: true,
+                includeOuterBorder: sideButtons.analogStickRing.includeOuterBorder === true,
+                buttonClasses: "gamepad-button",
+                semanticClasses: ["side-left", "role-analog-stick-ring", "role-analog-stick-ring-static"],
+                semanticAttributes: {"data-side": "left", "data-role": "analog-stick-ring"},
+                pressMode: "digital",
+                digitalThreshold: 2,
+            });
+            staticLeftRing.bringLayersToFront();
         }
 
         dpadBorder?.bringLayersToFront();
@@ -1373,6 +1392,7 @@ class GamepadOverlay {
                 analogStick,
                 analogStickRing,
                 analogStickControl,
+                staticLeftRing,
             },
         };
     }

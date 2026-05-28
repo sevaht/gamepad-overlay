@@ -11,5 +11,6 @@ window.OverlayLayoutProfile = Object.freeze({
         hasAnalogStick: false,
         leftTriggerMode: "none",
         rightTriggerMode: "none",
+        drawLeftOriginRingWithoutStick: true,
     }),
 });
