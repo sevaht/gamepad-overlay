@@ -435,8 +435,8 @@ class GamepadOverlayRenderer {
             [overlay.entities.left.entities.downButton, (state) => (state.DY > 0 ? 1 : 0)],
         ];
 
-        this.leftStickControl.bringLayersToFront?.();
-        this.rightStickControl.bringLayersToFront?.();
+        this.leftStickControl?.bringLayersToFront?.();
+        this.rightStickControl?.bringLayersToFront?.();
 
         this.applyNormalizedState(normalizeGamepadState(createEmptyGamepadState(), this.#deadzone));
     }
@@ -470,19 +470,19 @@ class GamepadOverlayRenderer {
     }
 
     #applyStickPositions(state) {
-        this.leftStick.setTranslation(clampToEllipseInput({
+        this.leftStick?.setTranslation(clampToEllipseInput({
             offset: {x: state.LX, y: state.LY},
             halfSize: this.#overlay.leftAnalogClampHalfSize,
         }));
-        this.rightStick.setTranslation(clampToEllipseInput({
+        this.rightStick?.setTranslation(clampToEllipseInput({
             offset: {x: state.RX, y: state.RY},
             halfSize: this.#overlay.rightAnalogClampHalfSize,
         }));
     }
 
     #applyAnalogPressAmounts(state) {
-        this.leftTrigger.setInputAmount(state.LT);
-        this.rightTrigger.setInputAmount(state.RT);
+        this.leftTrigger?.setInputAmount(state.LT);
+        this.rightTrigger?.setInputAmount(state.RT);
     }
 
     #applyDigitalInputs(state) {

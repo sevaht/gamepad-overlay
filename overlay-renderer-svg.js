@@ -264,17 +264,6 @@ class SvgContext {
         this.addDefinition(mask);
         return mask;
     }
-
-    // TODO: masks? use refs?
-    // the general principle will be that a given mask maps to a specific
-    // def, and any updates need to be made on that definition.
-    // ... so masks will just be two uses; everything rect + target
-    // and each target will be moved, but as only a single mask can apply
-    // to something I may need a mechanism to combine masks/append to them.
-
-
-
-    // equivalent to appendEntity, or implement that some other way?
 }
 
 class GamepadEntity {
@@ -304,7 +293,6 @@ class GamepadEntity {
     #analogIdleClipRect;
 
     constructor({context, element, parent, layers=[{}], offset=Vector2.ZERO, themeVariables = {}, pressFillShapeId = null}) {
-        // TODO: null validation?
         this.#context = context;
         this.#element = element;
         this.#connectedElements = [this.#element];
@@ -1234,7 +1222,7 @@ class GamepadOverlay {
             id: `${sidePrefix}LeftButton`,
             region: sideButtons.left.region,
             shapeType: toSvgShapeType(sideButtons.left.shape),
-            includeBorder: true,
+            includeBorder: !drawCrossBorder,
             includeOuterBorder: sideButtons.left.includeOuterBorder !== false,
             semanticClasses: [`side-${sideName}`, "role-left"],
             semanticAttributes: {"data-side": sideName, "data-role": "left"},
@@ -1244,7 +1232,7 @@ class GamepadOverlay {
             id: `${sidePrefix}UpButton`,
             region: sideButtons.up.region,
             shapeType: toSvgShapeType(sideButtons.up.shape),
-            includeBorder: true,
+            includeBorder: !drawCrossBorder,
             includeOuterBorder: sideButtons.up.includeOuterBorder !== false,
             semanticClasses: [`side-${sideName}`, "role-up"],
             semanticAttributes: {"data-side": sideName, "data-role": "up"},
@@ -1254,7 +1242,7 @@ class GamepadOverlay {
             id: `${sidePrefix}RightButton`,
             region: sideButtons.right.region,
             shapeType: toSvgShapeType(sideButtons.right.shape),
-            includeBorder: true,
+            includeBorder: !drawCrossBorder,
             includeOuterBorder: sideButtons.right.includeOuterBorder !== false,
             semanticClasses: [`side-${sideName}`, "role-right"],
             semanticAttributes: {"data-side": sideName, "data-role": "right"},
@@ -1264,7 +1252,7 @@ class GamepadOverlay {
             id: `${sidePrefix}DownButton`,
             region: sideButtons.down.region,
             shapeType: toSvgShapeType(sideButtons.down.shape),
-            includeBorder: true,
+            includeBorder: !drawCrossBorder,
             includeOuterBorder: sideButtons.down.includeOuterBorder !== false,
             semanticClasses: [`side-${sideName}`, "role-down"],
             semanticAttributes: {"data-side": sideName, "data-role": "down"},
@@ -1275,7 +1263,7 @@ class GamepadOverlay {
                 id: `${sidePrefix}OriginButton`,
                 region: sideButtons.origin.region,
                 shapeType: toSvgShapeType(sideButtons.origin.shape),
-                includeBorder: true,
+                includeBorder: false,
                 includeOuterBorder: sideButtons.origin.includeOuterBorder !== false,
                 semanticClasses: [`side-${sideName}`, "role-origin"],
                 semanticAttributes: {"data-side": sideName, "data-role": "origin"},

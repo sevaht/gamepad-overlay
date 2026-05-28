@@ -109,7 +109,16 @@ class OverlayBorderModel {
     }
 }
 
-function createOverlayModel({buttonLength = 132, buttonWidth = 132, borderWidth = 8, innerBorderSize = null, gap = 1, betweenHalvesGap = 0}) {
+function createOverlayModel({
+    buttonLength = 132,
+    buttonWidth = 132,
+    borderWidth = 8,
+    innerBorderSize = null,
+    gap = 1,
+    betweenHalvesGap = 0,
+    leftTriggerMode = "analog",
+    rightTriggerMode = "analog",
+}) {
     const resolvedInnerBorderSize = Math.max(0, Number(innerBorderSize) || (Number(borderWidth) || 0) / 2);
     const topLeft = new OverlayModelCore.Vector2({x: 0, y: 0});
     const gapPixels = gap * borderWidth;
@@ -185,7 +194,9 @@ function createOverlayModel({buttonLength = 132, buttonWidth = 132, borderWidth 
             origin: {region: leftLayout.origin, shape: "rect", pressMode: "digital", cornerRadiusPercent: 0},
             leftBumper: {region: cornerButtonRegion(leftLayout, "topLeft", 0.9, 0.6), shape: "rect", pressMode: "digital", cornerRadiusPercent: 0.25},
             select: {region: cornerButtonRegion(leftLayout, "topRight", 0.7, 0.7), shape: "ellipse", pressMode: "digital"},
-            leftTrigger: {region: cornerButtonRegion(leftLayout, "bottomLeft", 1.0, 1.0), shape: "triDown", pressMode: "analog", pressFillDirection: "down"},
+            leftTrigger: leftTriggerMode === "none"
+                ? null
+                : {region: cornerButtonRegion(leftLayout, "bottomLeft", 1.0, 1.0), shape: "triDown", pressMode: leftTriggerMode, pressFillDirection: "down"},
             analogArea: {region: OverlayModelCore.Region.fromCenter({center: leftLayout.analogRegion.center, size: leftLayout.analogRegion.size.clone()}), shape: "ellipse", pressMode: "none"},
             analogStick: {
                 region: OverlayModelCore.Region.fromCenter({
@@ -214,7 +225,9 @@ function createOverlayModel({buttonLength = 132, buttonWidth = 132, borderWidth 
             origin: null,
             start: {region: cornerButtonRegion(rightLayout, "topLeft", 0.7, 0.7), shape: "ellipse", pressMode: "digital"},
             rightBumper: {region: cornerButtonRegion(rightLayout, "topRight", 0.9, 0.6), shape: "rect", pressMode: "digital", cornerRadiusPercent: 0.25},
-            rightTrigger: {region: cornerButtonRegion(rightLayout, "bottomRight", 1.0, 1.0), shape: "triDown", pressMode: "analog", pressFillDirection: "down"},
+            rightTrigger: rightTriggerMode === "none"
+                ? null
+                : {region: cornerButtonRegion(rightLayout, "bottomRight", 1.0, 1.0), shape: "triDown", pressMode: rightTriggerMode, pressFillDirection: "down"},
             analogArea: {region: OverlayModelCore.Region.fromCenter({center: rightLayout.analogRegion.center, size: rightLayout.analogRegion.size.clone()}), shape: "ellipse", pressMode: "none"},
             analogStick: {
                 region: OverlayModelCore.Region.fromCenter({
@@ -254,15 +267,9 @@ function createOverlayModel({buttonLength = 132, buttonWidth = 132, borderWidth 
     };
 }
 
-function applyGamepadStateToModel(model, partialState) {
-    const s = normalizeGamepadState(partialState, {deadzoneMode: "none", fixedDeadzone: 0.0});
-    Object.assign(model.state, s);
-}
-
 window.OverlaySpec = Object.freeze({
     ShapeModel: OverlayShapeModel,
     BorderModel: OverlayBorderModel,
     createOverlayModel,
-    applyGamepadStateToModel,
 });
 })();
