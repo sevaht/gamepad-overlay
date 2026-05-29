@@ -72,7 +72,7 @@
 
 (() => {
     const DEFAULTS = Object.freeze({
-        digitalThreshold: 0.55,
+        digitalThreshold: 0.2,
         topLeftX: 0,
         topLeftY: 0,
         wsPort: 8765,
@@ -220,6 +220,7 @@
                 leftTriggerMode: normalizeTriggerMode(controls.leftTriggerMode, "analog"),
                 rightTriggerMode: normalizeTriggerMode(controls.rightTriggerMode, "analog"),
                 drawLeftOriginRingWithoutStick: controls.drawLeftOriginRingWithoutStick !== false,
+                digitalThreshold: Math.max(0, Math.min(1, Number(controls.digitalThreshold) || DEFAULTS.digitalThreshold)),
             },
         };
     }
@@ -278,6 +279,9 @@
         const theme = hasExplicitTheme
             ? (query.get("theme") || "")
             : layoutProfile.defaultTheme;
+        const digitalThreshold = query.has("digitalThreshold")
+            ? Math.max(0, Math.min(1, queryNumber(query, "digitalThreshold", layoutProfile.controls.digitalThreshold)))
+            : layoutProfile.controls.digitalThreshold;
         await loadThemeCss(theme);
         OverlayTheme.applyCssDefaults(document.documentElement);
         OverlayTheme.normalizeButtonColorVars(document.documentElement);
@@ -292,7 +296,7 @@
                 y: DEFAULTS.topLeftY,
             }),
             gap: layoutProfile.model.gap,
-            digitalThreshold: Math.max(0, Math.min(1, queryNumber(query, "digitalThreshold", DEFAULTS.digitalThreshold))),
+            digitalThreshold,
             prewarmPressFillVisuals: true,
             themeVariables: {},
             hasAnalogStick: layoutProfile.controls.hasAnalogStick,
