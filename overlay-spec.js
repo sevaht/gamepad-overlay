@@ -109,16 +109,32 @@ class OverlayBorderModel {
     }
 }
 
-function createOverlayModel({
-    buttonLength = 132,
-    buttonWidth = 132,
-    borderWidth = 8,
-    innerBorderSize = null,
-    gap = 1,
-    betweenHalvesGap = 0,
-    leftTriggerMode = "analog",
-    rightTriggerMode = "analog",
-}) {
+const MODEL_DEFAULTS = Object.freeze({
+    buttonLength: 132,
+    buttonWidth: 132,
+    borderWidth: 8,
+    innerBorderSize: null,
+    gap: 1,
+    betweenHalvesGap: 0,
+    leftTriggerMode: "analog",
+    rightTriggerMode: "analog",
+    analogStickRingPercent: 70,
+    leftDpadOriginRingPercent: 70,
+});
+
+function createOverlayModel(config = {}) {
+    const {
+        buttonLength,
+        buttonWidth,
+        borderWidth,
+        innerBorderSize,
+        gap,
+        betweenHalvesGap,
+        leftTriggerMode,
+        rightTriggerMode,
+        analogStickRingPercent,
+        leftDpadOriginRingPercent,
+    } = {...MODEL_DEFAULTS, ...config};
     const resolvedInnerBorderSize = Math.max(0, Number(innerBorderSize) || (Number(borderWidth) || 0) / 2);
     const topLeft = new OverlayModelCore.Vector2({x: 0, y: 0});
     const gapPixels = gap * borderWidth;
@@ -185,6 +201,9 @@ function createOverlayModel({
         return half(compensated, sx, sy);
     };
 
+    const analogStickRingScale = Math.max(0, Number(analogStickRingPercent) || 70) / 100;
+    const leftOriginRingScale = Math.max(0, Number(leftDpadOriginRingPercent) || 70) / 100;
+
     const buttons = {
         left: {
             up: {region: leftLayout.up, shape: "rect", pressMode: "digital", cornerRadiusPercent: 0},
@@ -210,12 +229,13 @@ function createOverlayModel({
             analogStickRing: {
                 region: OverlayModelCore.Region.fromCenter({
                     center: leftLayout.analogRegion.center,
-                    size: leftLayout.analogRegion.size.clone().multiply(OverlayModelCore.Vector2.splat(0.65 * 0.75)),
+                    size: leftLayout.analogRegion.size.clone().multiply(OverlayModelCore.Vector2.splat(0.65 * analogStickRingScale)),
                 }),
                 shape: "ellipse",
                 pressMode: "none",
                 includeOuterBorder: true,
             },
+            originRingPercent: leftOriginRingScale * 100,
         },
         right: {
             up: {region: rightLayout.up, shape: "ellipse", pressMode: "digital"},
@@ -241,7 +261,7 @@ function createOverlayModel({
             analogStickRing: {
                 region: OverlayModelCore.Region.fromCenter({
                     center: rightLayout.analogRegion.center,
-                    size: rightLayout.analogRegion.size.clone().multiply(OverlayModelCore.Vector2.splat(0.65 * 0.75)),
+                    size: rightLayout.analogRegion.size.clone().multiply(OverlayModelCore.Vector2.splat(0.65 * analogStickRingScale)),
                 }),
                 shape: "ellipse",
                 pressMode: "none",
@@ -268,6 +288,7 @@ function createOverlayModel({
 }
 
 window.OverlaySpec = Object.freeze({
+    MODEL_DEFAULTS,
     ShapeModel: OverlayShapeModel,
     BorderModel: OverlayBorderModel,
     createOverlayModel,

@@ -26,10 +26,6 @@
 
 (() => {
     const DEFAULTS = Object.freeze({
-        buttonLength: 132,
-        buttonWidth: 132,
-        gap: 1,
-        betweenHalvesGap: 0,
         digitalThreshold: 0.55,
         topLeftX: 0,
         topLeftY: 0,
@@ -149,15 +145,21 @@
     function resolveLayoutProfile(profile) {
         const model = profile?.model ?? {};
         const controls = profile?.controls ?? {};
-        const buttonLength = Math.max(1, Number(model.buttonLength) || DEFAULTS.buttonLength);
-        const buttonWidth = Math.max(1, Number(model.buttonWidth) || DEFAULTS.buttonWidth);
-        const gap = Number.isFinite(Number(model.gap)) ? Number(model.gap) : DEFAULTS.gap;
+        const defaultTheme = sanitizeThemeName(profile?.defaultTheme) ?? "xbox";
+        const modelDefaults = OverlaySpec.MODEL_DEFAULTS;
+        const buttonLength = Math.max(1, Number(model.buttonLength) || modelDefaults.buttonLength);
+        const buttonWidth = Math.max(1, Number(model.buttonWidth) || modelDefaults.buttonWidth);
+        const gap = Number.isFinite(Number(model.gap)) ? Number(model.gap) : modelDefaults.gap;
         const betweenHalvesGap = Number.isFinite(Number(model.betweenHalvesGap))
             ? Number(model.betweenHalvesGap)
-            : DEFAULTS.betweenHalvesGap;
-        const borderInnerSize = Math.max(0, Number(model.borderInnerSize) || 4);
-        const borderOuterSize = Math.max(0, Number(model.borderOuterSize) || 4);
+            : modelDefaults.betweenHalvesGap;
+        const defaultInnerBorderSize = (Number(modelDefaults.innerBorderSize) || Number(modelDefaults.borderWidth) / 2);
+        const borderInnerSize = Math.max(0, Number(model.borderInnerSize) || defaultInnerBorderSize);
+        const borderOuterSize = Math.max(0, Number(model.borderOuterSize) || defaultInnerBorderSize);
+        const analogStickRingPercent = Math.max(0, Number(model.analogStickRingPercent) || modelDefaults.analogStickRingPercent);
+        const leftDpadOriginRingPercent = Math.max(0, Number(model.leftDpadOriginRingPercent) || modelDefaults.leftDpadOriginRingPercent);
         return {
+            defaultTheme,
             model: {
                 buttonLength,
                 buttonWidth,
@@ -165,6 +167,8 @@
                 betweenHalvesGap,
                 borderInnerSize,
                 borderOuterSize,
+                analogStickRingPercent,
+                leftDpadOriginRingPercent,
             },
             controls: {
                 hasAnalogStick: controls.hasAnalogStick !== false,
@@ -207,16 +211,31 @@
             betweenHalvesGap: layoutProfile.model.betweenHalvesGap,
             leftTriggerMode: layoutProfile.controls.leftTriggerMode,
             rightTriggerMode: layoutProfile.controls.rightTriggerMode,
+            analogStickRingPercent: layoutProfile.model.analogStickRingPercent,
+            leftDpadOriginRingPercent: layoutProfile.model.leftDpadOriginRingPercent,
         });
+    }
+
+    function applyLayoutCssOverrides(layoutProfile, element = document.documentElement) {
+        element.style.setProperty("--overlay-border-inner-size", String(layoutProfile.model.borderInnerSize));
+        element.style.setProperty("--overlay-border-outer-size", String(layoutProfile.model.borderOuterSize));
     }
 
     async function init({svgId}) {
         const query = new URLSearchParams(window.location.search);
-        const theme = (query.get("theme") || "xbox").toLowerCase();
         const layout = (query.get("layout") || "xbox").toLowerCase();
+        const background = query.get("background");
+        if (background != null && background.trim() !== "") {
+            document.body.style.background = background;
+        }
+        const layoutProfile = await loadLayoutProfile(layout);
+        const hasExplicitTheme = query.has("theme");
+        const theme = hasExplicitTheme
+            ? (query.get("theme") || "")
+            : layoutProfile.defaultTheme;
         await loadThemeCss(theme);
         OverlayTheme.applyCssDefaults(document.documentElement);
-        const layoutProfile = await loadLayoutProfile(layout);
+        applyLayoutCssOverrides(layoutProfile, document.documentElement);
         const model = createSharedModel(layoutProfile);
         const context = new SvgContext(document.getElementById(svgId));
         const overlay = new GamepadOverlay({

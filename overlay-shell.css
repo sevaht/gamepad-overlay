@@ -52,3 +52,12 @@ body {
 #overlayRoot .role-analog-stick-ring-static {
     fill: none;
 }
+
+#overlayRoot .dpad-press-only {
+    fill: none;
+}
+
+#overlayRoot .dpad-press-only.is-pressed {
+    fill: var(--btn-pressed, #c00);
+    fill-opacity: 1;
+}

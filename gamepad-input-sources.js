@@ -321,9 +321,11 @@ class DemoGamepadSource {
     }
     start() {
         this.#config.onStatus?.({connected: true, pad: "OK"});
+        const DEMO_DIGITAL_PULSE_CHANCE = 0.992;
         const leftButtonHoldFrames = {up: 0, left: 0, down: 0, right: 0};
         const rightButtonHoldFrames = {up: 0, left: 0, down: 0, right: 0};
         const cornerButtonHoldFrames = {LB: 0, RB: 0, SELECT: 0, START: 0};
+        const stickClickHoldFrames = {LS: 0, RS: 0};
         const leftStickState = {x: 0, y: 0, targetX: 0, targetY: 0};
         const rightStickState = {x: 0, y: 0, targetX: 0, targetY: 0};
         const triggerState = {left: {value: 0, target: 0}, right: {value: 0, target: 0}};
@@ -366,16 +368,16 @@ class DemoGamepadSource {
                 RY: rightStickState.y,
                 LT: triggerState.left.value,
                 RT: triggerState.right.value,
-                LS: Math.min(1, Math.hypot(leftStickState.x, leftStickState.y)),
-                RS: Math.min(1, Math.hypot(rightStickState.x, rightStickState.y)),
+                LS: holdPulse(stickClickHoldFrames, "LS", DEMO_DIGITAL_PULSE_CHANCE),
+                RS: holdPulse(stickClickHoldFrames, "RS", DEMO_DIGITAL_PULSE_CHANCE),
                 A: holdPulse(rightButtonHoldFrames, "down"),
                 B: holdPulse(rightButtonHoldFrames, "right"),
                 X: holdPulse(rightButtonHoldFrames, "left"),
                 Y: holdPulse(rightButtonHoldFrames, "up"),
-                SELECT: holdPulse(cornerButtonHoldFrames, "SELECT", 0.992),
-                START: holdPulse(cornerButtonHoldFrames, "START", 0.992),
-                LB: holdPulse(cornerButtonHoldFrames, "LB", 0.992),
-                RB: holdPulse(cornerButtonHoldFrames, "RB", 0.992),
+                SELECT: holdPulse(cornerButtonHoldFrames, "SELECT", DEMO_DIGITAL_PULSE_CHANCE),
+                START: holdPulse(cornerButtonHoldFrames, "START", DEMO_DIGITAL_PULSE_CHANCE),
+                LB: holdPulse(cornerButtonHoldFrames, "LB", DEMO_DIGITAL_PULSE_CHANCE),
+                RB: holdPulse(cornerButtonHoldFrames, "RB", DEMO_DIGITAL_PULSE_CHANCE),
                 DX: holdPulse(leftButtonHoldFrames, "right") - holdPulse(leftButtonHoldFrames, "left"),
                 DY: holdPulse(leftButtonHoldFrames, "down") - holdPulse(leftButtonHoldFrames, "up"),
             });

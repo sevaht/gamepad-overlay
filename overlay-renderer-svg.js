@@ -910,16 +910,25 @@ class GamepadOverlay {
         });
     }
 
-    #createBorderedLayerSpecs({fillShapeId, includeBorderStroke, includeOuterBorder, faceClasses, semanticAttributes}) {
+    #createBorderedLayerSpecs({
+        fillShapeId,
+        includeBorderStroke,
+        includeOuterBorder,
+        faceClasses,
+        semanticAttributes,
+        faceSourceId = null,
+        outerBorderCutoutSourceId = null,
+    }) {
         const layers = [];
         if (includeBorderStroke && includeOuterBorder) {
             layers.push(new LayerSpec({
                 classes: "outer-border",
                 cutout: true,
-                cutoutSourceId: fillShapeId,
+                cutoutSourceId: outerBorderCutoutSourceId ?? fillShapeId,
             }));
         }
         layers.push(new LayerSpec({
+            sourceId: faceSourceId,
             classes: faceClasses,
             attributes: semanticAttributes,
             styleSource: true,
@@ -955,22 +964,24 @@ class GamepadOverlay {
         const borderExpandAmount = borderModel.expandAmount();
         const trianglePoints = shapeModel.trianglePoints();
         const expandedShapeModel = borderModel.expandedShape(shapeModel, includeBorder);
-        const fillCutoutShapeId = includeBorderStroke
+        const faceShapeId = includeBorderStroke
             ? monotonicId(`${id}-cutout-`)
             : null;
         const layers = this.#createBorderedLayerSpecs({
-            fillShapeId: fillCutoutShapeId ?? id,
+            fillShapeId: faceShapeId ?? id,
             includeBorderStroke,
             includeOuterBorder,
             faceClasses: [].concat(buttonClasses, semanticClasses),
             semanticAttributes,
+            faceSourceId: id,
+            outerBorderCutoutSourceId: includeBorderStroke ? id : (faceShapeId ?? id),
         });
-        if (fillCutoutShapeId != null) {
+        if (faceShapeId != null) {
             this.#context.addDefinition(createSvgShape({
                 region: shapeModel.region,
                 shapeType: shapeModel.shapeType,
                 cornerRadiusPercent: shapeModel.cornerRadiusPercent,
-            }, {id: fillCutoutShapeId}));
+            }, {id: faceShapeId}));
         }
         const element = (() => {
             if (includeBorderStroke && trianglePoints != null) {
@@ -990,7 +1001,7 @@ class GamepadOverlay {
             layers,
             parent: group,
             themeVariables,
-            pressFillShapeId: fillCutoutShapeId ?? id,
+            pressFillShapeId: faceShapeId ?? id,
         });
         entity.setPressBehavior({
             mode: pressMode,
@@ -1018,20 +1029,21 @@ class GamepadOverlay {
     }
 
     #createCrossBorder({group, id, layout}) {
-        const innerCrossId = monotonicId(`${id}-inner-cross-`);
-        this.#context.addDefinition(createSvgPolygon(layout.crossPoints, {id: innerCrossId}));
         const expandedPoints = this.#offsetConvexPolygon(layout.crossPoints, this.#innerBorderSize / 2);
         return new GamepadEntity({
             context: this.#context,
             element: createSvgPolygon(expandedPoints, {id}),
             layers: this.#createBorderedLayerSpecs({
-                fillShapeId: innerCrossId,
+                fillShapeId: id,
                 includeBorderStroke: true,
-                faceClasses: "black-border-stroke",
-                semanticAttributes: null,
+                includeOuterBorder: true,
+                faceClasses: ["gamepad-button", "side-left", "role-dpad-cross"],
+                semanticAttributes: {"data-side": "left", "data-role": "dpad-cross"},
+                faceSourceId: id,
+                outerBorderCutoutSourceId: id,
             }),
             parent: group,
-            pressFillShapeId: innerCrossId,
+            pressFillShapeId: id,
         });
     }
 
@@ -1227,7 +1239,7 @@ class GamepadOverlay {
             shapeType: toSvgShapeType(sideButtons.left.shape),
             includeBorder: !drawCrossBorder,
             includeOuterBorder: sideButtons.left.includeOuterBorder !== false,
-            semanticClasses: [`side-${sideName}`, "role-left"],
+            semanticClasses: [`side-${sideName}`, "role-left", ...(drawCrossBorder ? ["dpad-press-only"] : [])],
             semanticAttributes: {"data-side": sideName, "data-role": "left"},
         });
         const upButton = this.#createButton({
@@ -1237,7 +1249,7 @@ class GamepadOverlay {
             shapeType: toSvgShapeType(sideButtons.up.shape),
             includeBorder: !drawCrossBorder,
             includeOuterBorder: sideButtons.up.includeOuterBorder !== false,
-            semanticClasses: [`side-${sideName}`, "role-up"],
+            semanticClasses: [`side-${sideName}`, "role-up", ...(drawCrossBorder ? ["dpad-press-only"] : [])],
             semanticAttributes: {"data-side": sideName, "data-role": "up"},
         });
         const rightButton = this.#createButton({
@@ -1247,7 +1259,7 @@ class GamepadOverlay {
             shapeType: toSvgShapeType(sideButtons.right.shape),
             includeBorder: !drawCrossBorder,
             includeOuterBorder: sideButtons.right.includeOuterBorder !== false,
-            semanticClasses: [`side-${sideName}`, "role-right"],
+            semanticClasses: [`side-${sideName}`, "role-right", ...(drawCrossBorder ? ["dpad-press-only"] : [])],
             semanticAttributes: {"data-side": sideName, "data-role": "right"},
         });
         const downButton = this.#createButton({
@@ -1257,21 +1269,10 @@ class GamepadOverlay {
             shapeType: toSvgShapeType(sideButtons.down.shape),
             includeBorder: !drawCrossBorder,
             includeOuterBorder: sideButtons.down.includeOuterBorder !== false,
-            semanticClasses: [`side-${sideName}`, "role-down"],
+            semanticClasses: [`side-${sideName}`, "role-down", ...(drawCrossBorder ? ["dpad-press-only"] : [])],
             semanticAttributes: {"data-side": sideName, "data-role": "down"},
         });
-        const originButton = drawCrossBorder
-            ? this.#createButton({
-                group: dpadGroup,
-                id: `${sidePrefix}OriginButton`,
-                region: sideButtons.origin.region,
-                shapeType: toSvgShapeType(sideButtons.origin.shape),
-                includeBorder: false,
-                includeOuterBorder: sideButtons.origin.includeOuterBorder !== false,
-                semanticClasses: [`side-${sideName}`, "role-origin"],
-                semanticAttributes: {"data-side": sideName, "data-role": "origin"},
-            })
-            : null;
+        const originButton = null;
 
         const leftBumper = makeButton({group: dpadGroup, idSuffix: "LeftBumperButton", spec: sideButtons.leftBumper, roleName: "left-bumper"});
         const select = makeButton({group: dpadGroup, idSuffix: "SelectButton", spec: sideButtons.select, roleName: "select"});
@@ -1340,7 +1341,6 @@ class GamepadOverlay {
                 semanticClasses: [`side-${sideName}`, "role-analog-stick-ring"],
                 semanticAttributes: {"data-side": sideName, "data-role": "analog-stick-ring"},
                 pressMode: "digital",
-                digitalThreshold: 0.01,
             });
             for (const connectedElement of analogStickRing.getConnectedDefinitionElements()) {
                 analogStick.connect(connectedElement);
@@ -1353,10 +1353,16 @@ class GamepadOverlay {
             });
             setMask(backgroundGroup, analogStick.mask.id);
         } else if (drawCrossBorder && sideName === "left" && this.#drawLeftOriginRingWithoutStick) {
+            const originRingPercent = Math.max(0, Number(sideButtons.originRingPercent) || 45);
+            const originRingScale = originRingPercent / 100;
+            const staticRingRegion = Region.fromCenter({
+                center: sideButtons.origin.region.center,
+                size: sideButtons.origin.region.size.clone().multiply(Vector2.splat(originRingScale)),
+            });
             staticLeftRing = this.#createButton({
                 group: dpadGroup,
                 id: `${sidePrefix}StaticAnalogRing`,
-                region: sideButtons.analogStickRing.region,
+                region: staticRingRegion,
                 shapeType: ShapeType.ELLIPSE,
                 includeBorder: true,
                 includeOuterBorder: sideButtons.analogStickRing.includeOuterBorder === true,
@@ -1368,8 +1374,6 @@ class GamepadOverlay {
             });
             staticLeftRing.bringLayersToFront();
         }
-
-        dpadBorder?.bringLayersToFront();
 
         return {
             groups: {backgroundGroup, dpadGroup, analogAreaGroup, analogStickGroup},
