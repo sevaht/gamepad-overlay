@@ -1,28 +1,28 @@
-:root {
-    --btn-idle: rgba(44, 47, 51, 0.7);
-    --btn-pressed: #3f8cff;
-}
+/*:root {
+    --btn-idle: rgb(44, 47, 51);
+    --btn-pressed: rgb(63, 140, 255);
+}*/
 
 .gamepad-button[data-side="right"][data-role="up"],
 .gamepad-button-pressed-fill[data-side="right"][data-role="up"] {
-    --btn-idle: rgba(95, 95, 31, 0.7);
-    --btn-pressed: #ffff33;
+    --btn-idle: rgb(95, 95, 31);
+    --btn-pressed: rgb(255, 255, 51);
 }
 
 .gamepad-button[data-side="right"][data-role="right"],
 .gamepad-button-pressed-fill[data-side="right"][data-role="right"] {
-    --btn-idle: rgba(95, 31, 31, 0.7);
-    --btn-pressed: #ff3333;
+    --btn-idle: rgb(95, 31, 31);
+    --btn-pressed: rgb(255, 51, 51);
 }
 
 .gamepad-button[data-side="right"][data-role="left"],
 .gamepad-button-pressed-fill[data-side="right"][data-role="left"] {
-    --btn-idle: rgba(31, 31, 95, 0.7);
-    --btn-pressed: #3377ff;
+    --btn-idle: rgb(31, 31, 95);
+    --btn-pressed: rgb(51, 119, 255);
 }
 
 .gamepad-button[data-side="right"][data-role="down"],
 .gamepad-button-pressed-fill[data-side="right"][data-role="down"] {
-    --btn-idle: rgba(31, 79, 32, 0.7);
-    --btn-pressed: #3fcf3f;
+    --btn-idle: rgb(31, 79, 32);
+    --btn-pressed: rgb(63, 207, 63);
 }

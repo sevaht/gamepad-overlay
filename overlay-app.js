@@ -1,7 +1,9 @@
 (() => {
     const CSS_DEFAULTS = Object.freeze({
-        "--btn-idle": "rgba(44, 47, 51, 0.7)",
-        "--btn-pressed": "#3f8cff",
+        "--btn-idle": "rgb(44, 47, 51)",
+        "--btn-pressed": "rgb(63, 140, 255)",
+        "--btn-idle-default-alpha": "0.7",
+        "--btn-pressed-default-alpha": "1",
         "--overlay-border-inner-size": "4",
         "--overlay-border-outer-size": "4",
     });
@@ -16,9 +18,55 @@
         }
     }
 
+    function clamp01(value) {
+        return Math.max(0, Math.min(1, Number(value) || 0));
+    }
+
+    function clamp255(value) {
+        return Math.max(0, Math.min(255, Number(value) || 0));
+    }
+
+    function parseColorToRgba(value, fallbackAlpha) {
+        const raw = String(value || "").trim();
+        if (!raw) {
+            return null;
+        }
+        const rgbMatch = raw.match(/^rgb\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*\)$/i);
+        if (rgbMatch) {
+            return `rgba(${clamp255(rgbMatch[1])}, ${clamp255(rgbMatch[2])}, ${clamp255(rgbMatch[3])}, ${clamp01(fallbackAlpha)})`;
+        }
+        const rgbaMatch = raw.match(/^rgba\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*\)$/i);
+        if (rgbaMatch) {
+            return `rgba(${clamp255(rgbaMatch[1])}, ${clamp255(rgbaMatch[2])}, ${clamp255(rgbaMatch[3])}, ${clamp01(rgbaMatch[4])})`;
+        }
+        const csv = raw.split(",").map((part) => part.trim());
+        if (csv.length === 3) {
+            return `rgba(${clamp255(csv[0])}, ${clamp255(csv[1])}, ${clamp255(csv[2])}, ${clamp01(fallbackAlpha)})`;
+        }
+        if (csv.length === 4) {
+            return `rgba(${clamp255(csv[0])}, ${clamp255(csv[1])}, ${clamp255(csv[2])}, ${clamp01(csv[3])})`;
+        }
+        return raw;
+    }
+
+    function normalizeButtonColorVars(element = document.documentElement) {
+        const styles = getComputedStyle(element);
+        const idleDefaultAlpha = Number.parseFloat(styles.getPropertyValue("--btn-idle-default-alpha")) || 0.7;
+        const pressedDefaultAlpha = Number.parseFloat(styles.getPropertyValue("--btn-pressed-default-alpha")) || 1;
+        const idleResolved = parseColorToRgba(styles.getPropertyValue("--btn-idle"), idleDefaultAlpha);
+        const pressedResolved = parseColorToRgba(styles.getPropertyValue("--btn-pressed"), pressedDefaultAlpha);
+        if (idleResolved != null) {
+            element.style.setProperty("--btn-idle", idleResolved);
+        }
+        if (pressedResolved != null) {
+            element.style.setProperty("--btn-pressed", pressedResolved);
+        }
+    }
+
     window.OverlayTheme = Object.freeze({
         CSS_DEFAULTS,
         applyCssDefaults,
+        normalizeButtonColorVars,
     });
 })();
 
@@ -232,6 +280,7 @@
             : layoutProfile.defaultTheme;
         await loadThemeCss(theme);
         OverlayTheme.applyCssDefaults(document.documentElement);
+        OverlayTheme.normalizeButtonColorVars(document.documentElement);
         applyLayoutCssOverrides(layoutProfile, document.documentElement);
         const model = createSharedModel(layoutProfile);
         const context = new SvgContext(document.getElementById(svgId));
