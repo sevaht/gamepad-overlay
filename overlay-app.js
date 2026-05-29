@@ -1,7 +1,5 @@
 (() => {
     const CSS_DEFAULTS = Object.freeze({
-        "--btn-idle-rgb": "44, 47, 51",
-        "--btn-idle-alpha": "0.7",
         "--btn-idle": "rgba(44, 47, 51, 0.7)",
         "--btn-pressed": "#3f8cff",
         "--overlay-border-inner-size": "4",
@@ -53,7 +51,7 @@
         return Number.isFinite(value) ? value : fallback;
     }
 
-    function createSource({query, mode, renderer, onStatus = () => {}}) {
+    function createSource({query, mode, renderer}) {
         const pollHz = Math.max(1, queryInt(query, "pollHz", DEFAULTS.pollHz));
         return createGamepadSource({
             mode,
@@ -66,7 +64,6 @@
             padIdContains: (query.get("padIdContains") || "").trim(),
             padRequireStandard: query.get("padAllowAll") !== "1",
             onState: (state) => renderer.applyState(state),
-            onStatus,
         });
     }
 
@@ -261,17 +258,8 @@
         context.svg.setAttribute("width", String(overlay.width));
         context.svg.setAttribute("height", String(overlay.height));
 
-        const sourceStatus = {
-            source: parseInputSource(query).toUpperCase(),
-            pad: "WAIT",
-            connected: false,
-            lastUpdateMs: 0,
-            selectedPadLabel: "none",
-            listedPadsText: "",
-        };
         const renderer = new GamepadOverlayRenderer({
             overlay,
-            sourceStatus,
             deadzoneMode: "none",
             fixedDeadzone: 0,
         });
@@ -279,7 +267,6 @@
             query,
             mode: parseInputSource(query),
             renderer,
-            onStatus: (patch) => Object.assign(sourceStatus, patch),
         });
         source.start();
     }

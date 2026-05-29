@@ -107,7 +107,6 @@ class BrowserGamepadSource {
 
     start() {
         const onConnect = () => {
-            this.#config.onStatus?.({connected: true});
             if (this.#pollTimer == null) {
                 this.#schedule();
             }
@@ -115,7 +114,6 @@ class BrowserGamepadSource {
         const onDisconnect = () => {
             const gamepads = navigator.getGamepads?.() ?? [];
             if (!gamepads[0]) {
-                this.#config.onStatus?.({connected: false, pad: "DISC", selectedPadLabel: "none"});
                 this.#config.onState(createEmptyGamepadState());
             }
         };
@@ -143,12 +141,7 @@ class BrowserGamepadSource {
     #tick() {
         const gamepads = Array.from(navigator.getGamepads?.() ?? []);
         const selected = this.#selectGamepad(gamepads);
-        this.#config.onStatus?.({
-            connected: true,
-            pad: selected ? "OK" : "WAIT",
-            selectedPadLabel: selected ? String(selected.index) : "none",
-            listedPadsText: this.#formatPadList(gamepads),
-        });
+        this.#formatPadList(gamepads);
 
         if (!selected) {
             this.#config.onState(createEmptyGamepadState());
@@ -284,7 +277,6 @@ class WebSocketGamepadSource {
         this.#ws = ws;
         let firstMessage = true;
         ws.onopen = () => {
-            this.#config.onStatus?.({connected: true, pad: "WAIT"});
             this.#retryDelay = 1000;
         };
         ws.onmessage = (event) => {
@@ -294,14 +286,11 @@ class WebSocketGamepadSource {
             }
             try {
                 this.#config.onState(JSON.parse(event.data));
-                this.#config.onStatus?.({pad: "OK"});
             } catch {
                 this.#config.onState(createEmptyGamepadState());
-                this.#config.onStatus?.({pad: "ERR"});
             }
         };
         ws.onclose = () => {
-            this.#config.onStatus?.({connected: false, pad: "DISC"});
             this.#config.onState(createEmptyGamepadState());
             if (!this.#stopped) {
                 setTimeout(() => this.#connect(), this.#retryDelay);
@@ -320,7 +309,6 @@ class DemoGamepadSource {
         this.#raf = null;
     }
     start() {
-        this.#config.onStatus?.({connected: true, pad: "OK"});
         const DEMO_DIGITAL_PULSE_CHANCE = 0.992;
         const leftButtonHoldFrames = {up: 0, left: 0, down: 0, right: 0};
         const rightButtonHoldFrames = {up: 0, left: 0, down: 0, right: 0};
@@ -394,16 +382,14 @@ class DemoGamepadSource {
 
 class GamepadOverlayRenderer {
     #overlay;
-    #sourceStatus;
     #lastAppliedState;
     #queuedState;
     #renderScheduled;
     #deadzone;
     #digitalBindings;
 
-    constructor({overlay, sourceStatus, deadzoneMode = "none", fixedDeadzone = 0.0}) {
+    constructor({overlay, deadzoneMode = "none", fixedDeadzone = 0.0}) {
         this.#overlay = overlay;
-        this.#sourceStatus = sourceStatus;
         this.#deadzone = {deadzoneMode, fixedDeadzone};
         this.#lastAppliedState = null;
         this.#queuedState = null;
@@ -413,8 +399,6 @@ class GamepadOverlayRenderer {
         this.rightStick = overlay.entities.right.entities.analogStick;
         this.leftStickControl = overlay.entities.left.entities.analogStickControl ?? this.leftStick;
         this.rightStickControl = overlay.entities.right.entities.analogStickControl ?? this.rightStick;
-        this.leftStickRing = overlay.entities.left.entities.analogStickRing;
-        this.rightStickRing = overlay.entities.right.entities.analogStickRing;
         this.leftTrigger = overlay.entities.left.entities.leftTrigger;
         this.rightTrigger = overlay.entities.right.entities.rightTrigger;
 
@@ -464,7 +448,6 @@ class GamepadOverlayRenderer {
 
     applyNormalizedState(state) {
         this.#lastAppliedState = state;
-        this.#sourceStatus.lastUpdateMs = performance.now();
 
         this.#applyStickPositions(state);
         this.#applyAnalogPressAmounts(state);
@@ -515,9 +498,8 @@ function createGamepadSource({
     padIdContains = "",
     padRequireStandard = true,
     onState,
-    onStatus,
 }) {
-    const config = {wsUrl, pollMs, padIndex, padIdContains, padRequireStandard, onState, onStatus};
+    const config = {wsUrl, pollMs, padIndex, padIdContains, padRequireStandard, onState};
     if (mode === "websocket") {
         return new WebSocketGamepadSource(config);
     }
