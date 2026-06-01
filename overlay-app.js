@@ -2,9 +2,9 @@
     const CSS_DEFAULTS = Object.freeze({
         "--btn-released": "rgb(44, 47, 51)",
         "--btn-pressed": "rgb(63, 140, 255)",
+        "--btn-analog-area": "rgb(0, 0, 0)",
         "--btn-released-default-alpha": "0.8",
         "--btn-pressed-default-alpha": "1",
-        "--btn-analog-area": "rgb(0, 0, 0)",
         "--btn-analog-area-default-alpha": "0.925",
         "--overlay-border-inner-size": "4",
         "--overlay-border-outer-size": "4",
