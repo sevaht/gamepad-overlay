@@ -50,6 +50,51 @@ function setTranslation(element, offset) {
     });
 }
 
+function clamp01(value) {
+    return Math.max(0, Math.min(1, Number(value) || 0));
+}
+
+function clamp255(value) {
+    return Math.max(0, Math.min(255, Number(value) || 0));
+}
+
+function parseColorToRgba(value, fallbackAlpha) {
+    const raw = String(value || "").trim();
+    if (!raw) {
+        return null;
+    }
+    const rgbMatch = raw.match(/^rgb\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*\)$/i);
+    if (rgbMatch) {
+        return `rgba(${clamp255(rgbMatch[1])}, ${clamp255(rgbMatch[2])}, ${clamp255(rgbMatch[3])}, ${clamp01(fallbackAlpha)})`;
+    }
+    const rgbaMatch = raw.match(/^rgba\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*\)$/i);
+    if (rgbaMatch) {
+        return `rgba(${clamp255(rgbaMatch[1])}, ${clamp255(rgbaMatch[2])}, ${clamp255(rgbaMatch[3])}, ${clamp01(rgbaMatch[4])})`;
+    }
+    const csv = raw.split(",").map((part) => part.trim());
+    if (csv.length === 3) {
+        return `rgba(${clamp255(csv[0])}, ${clamp255(csv[1])}, ${clamp255(csv[2])}, ${clamp01(fallbackAlpha)})`;
+    }
+    if (csv.length === 4) {
+        return `rgba(${clamp255(csv[0])}, ${clamp255(csv[1])}, ${clamp255(csv[2])}, ${clamp01(csv[3])})`;
+    }
+    return raw;
+}
+
+function normalizeButtonColorVarsOnElement(element) {
+    const style = getComputedStyle(element);
+    const releasedDefaultAlpha = Number.parseFloat(style.getPropertyValue("--btn-released-default-alpha")) || 0.7;
+    const pressedDefaultAlpha = Number.parseFloat(style.getPropertyValue("--btn-pressed-default-alpha")) || 1;
+    const releasedResolved = parseColorToRgba(style.getPropertyValue("--btn-released"), releasedDefaultAlpha);
+    const pressedResolved = parseColorToRgba(style.getPropertyValue("--btn-pressed"), pressedDefaultAlpha);
+    if (releasedResolved != null) {
+        element.style.setProperty("--btn-released", releasedResolved);
+    }
+    if (pressedResolved != null) {
+        element.style.setProperty("--btn-pressed", pressedResolved);
+    }
+}
+
 const assertFiniteNumber = OverlayCore.assertFiniteNumber;
 const Vector2 = OverlayCore.Vector2;
 const Region = OverlayCore.Region;
@@ -365,6 +410,7 @@ class GamepadEntity {
             if (layer.styleSource) {
                 this.#styleSourceElement = useElement;
                 this.#applyThemeVariablesToElement(this.#styleSourceElement);
+                normalizeButtonColorVarsOnElement(this.#styleSourceElement);
             }
         }
     }
@@ -394,6 +440,7 @@ class GamepadEntity {
 
         }
         this.#applyThemeVariablesToElement(useElement);
+        normalizeButtonColorVarsOnElement(useElement);
         if (this.#styleSourceMaskId != null) {
             setMask(useElement, this.#styleSourceMaskId);
         }

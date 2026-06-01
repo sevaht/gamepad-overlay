@@ -1,9 +1,11 @@
 (() => {
     const CSS_DEFAULTS = Object.freeze({
-        "--btn-idle": "rgb(44, 47, 51)",
+        "--btn-released": "rgb(44, 47, 51)",
         "--btn-pressed": "rgb(63, 140, 255)",
-        "--btn-idle-default-alpha": "0.7",
+        "--btn-released-default-alpha": "0.8",
         "--btn-pressed-default-alpha": "1",
+        "--btn-analog-area": "rgb(0, 0, 0)",
+        "--btn-analog-area-default-alpha": "0.925",
         "--overlay-border-inner-size": "4",
         "--overlay-border-outer-size": "4",
     });
@@ -51,12 +53,12 @@
 
     function normalizeButtonColorVars(element = document.documentElement) {
         const styles = getComputedStyle(element);
-        const idleDefaultAlpha = Number.parseFloat(styles.getPropertyValue("--btn-idle-default-alpha")) || 0.7;
+        const releasedDefaultAlpha = Number.parseFloat(styles.getPropertyValue("--btn-released-default-alpha")) || 0.7;
         const pressedDefaultAlpha = Number.parseFloat(styles.getPropertyValue("--btn-pressed-default-alpha")) || 1;
-        const idleResolved = parseColorToRgba(styles.getPropertyValue("--btn-idle"), idleDefaultAlpha);
+        const releasedResolved = parseColorToRgba(styles.getPropertyValue("--btn-released"), releasedDefaultAlpha);
         const pressedResolved = parseColorToRgba(styles.getPropertyValue("--btn-pressed"), pressedDefaultAlpha);
-        if (idleResolved != null) {
-            element.style.setProperty("--btn-idle", idleResolved);
+        if (releasedResolved != null) {
+            element.style.setProperty("--btn-released", releasedResolved);
         }
         if (pressedResolved != null) {
             element.style.setProperty("--btn-pressed", pressedResolved);
@@ -97,6 +99,13 @@
     function queryInt(query, key, fallback) {
         const value = Number.parseInt(query.get(key) || "", 10);
         return Number.isFinite(value) ? value : fallback;
+    }
+
+    function resolvePreserveAspectRatio(query) {
+        if (query.get("stretch") === "1") {
+            return "none";
+        }
+        return "xMidYMid meet";
     }
 
     function createSource({query, mode, renderer}) {
@@ -308,8 +317,8 @@
             "viewBox",
             `${overlayRegion.topLeft.x} ${overlayRegion.topLeft.y} ${overlay.width} ${overlay.height}`
         );
-        context.svg.setAttribute("width", String(overlay.width));
-        context.svg.setAttribute("height", String(overlay.height));
+        context.svg.setAttribute("preserveAspectRatio", resolvePreserveAspectRatio(query));
+        context.svg.style.setProperty("shape-rendering", "geometricPrecision");
 
         const renderer = new GamepadOverlayRenderer({
             overlay,
