@@ -34,17 +34,9 @@ Platform notes:
 - Windows: `uv sync` should install the required SDL2 DLL package automatically.
 - Linux: you still need an SDL2-compatible runtime on the system. A normal SDL2 package works, and `sdl2-compat` should also be fine if it provides the SDL2 library that `pysdl2` loads.
 
-Linux:
+Run the same commands on Linux or Windows (for example in PowerShell on Windows):
 
 ```bash
-cd server
-uv sync
-uv run gamepad-websocket-server
-```
-
-Windows (PowerShell):
-
-```powershell
 cd server
 uv sync
 uv run gamepad-websocket-server
@@ -106,8 +98,8 @@ These are not the intended OBS workflow, but they are useful for experimentation
 
 ## More Detailed Documentation
 
-- `overlay/README.md`
+- [`overlay/README.md`](overlay/README.md)
   Overlay URL parameters, input sources, layouts, themes, and example URLs.
 
-- `server/README.md`
+- [`server/README.md`](server/README.md)
   Server-focused commands, controller selection, and runtime details.
