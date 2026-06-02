@@ -48,6 +48,24 @@ The server listens on:
 - port: `8765`
 - path: `/gamepad-overlay`
 
+Optional: if you have multiple controllers connected and want to choose one up front, run:
+
+```bash
+cd server
+uv run gamepad-websocket-server --select-controller
+```
+
+That saves the preferred controller for later normal launches.
+
+If you prefer a desktop selector, you can also run:
+
+```bash
+cd server
+uv run gamepad-websocket-server-tray
+```
+
+The tray selector saves the preferred controller, and a normally launched websocket server will switch to the new selection automatically.
+
 ### 2. Point OBS at the Overlay
 
 Use a Browser Source in OBS and point it at:

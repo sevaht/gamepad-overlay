@@ -47,6 +47,73 @@ ws://localhost:8765/gamepad-overlay
 
 ## Useful Commands
 
+## Selecting a Controller
+
+The server supports both interactive and explicit controller selection.
+
+### Interactive Selection
+
+To list currently connected controllers and choose one interactively:
+
+```bash
+uv run gamepad-websocket-server --select-controller
+```
+
+This saves the preferred controller so later normal launches will reuse it.
+
+If the websocket server is already running without an explicit `--controller-guid` or `--controller-name` override, changing the saved selection will cause the running server to switch targets automatically.
+
+### Tray Selector
+
+For a desktop-oriented selector, you can run the tray utility:
+
+```bash
+uv run gamepad-websocket-server-tray
+```
+
+This launcher will start the websocket server if one is not already running.
+
+The tray menu will:
+
+- list currently visible compatible controllers
+- save the selected controller
+- allow clearing the selection back to "any controller"
+- allow refresh of the visible controller list
+- show or hide the selector window on left click
+- stop the managed server when you choose `Quit`
+
+The tray is implemented with Qt via `PySide6`, which provides the same tray behavior on Linux and Windows. Closing the selector window hides it; use the tray menu's `Quit` action to stop the managed server and exit the tray app.
+
+If the websocket server is already running in its normal config-driven mode, picking a controller from the tray will update the running server automatically.
+
+### Inspect Available Controllers
+
+To print the currently visible controllers without selecting one:
+
+```bash
+uv run gamepad-websocket-server --list-controllers
+```
+
+### Explicit Selection by GUID
+
+If you already know the controller GUID:
+
+```bash
+uv run gamepad-websocket-server --controller-guid <guid>
+```
+
+### Explicit Selection by Name Substring
+
+If you want to match a controller by a case-insensitive name substring:
+
+```bash
+uv run gamepad-websocket-server --controller-name "Xbox"
+```
+
+### Persistence
+
+Controller selection is persisted and reused on future launches. Running one of the explicit selection commands also updates the saved preference.
+
 List controllers:
 
 ```bash

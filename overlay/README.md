@@ -37,6 +37,36 @@ Experimental/testing mode.
 - Not the intended OBS workflow
 - Logs discovered browser controllers to the console when the set of connected controllers changes
 
+#### Selecting a Controller in `source=browser`
+
+When using `source=browser`, the overlay will log the set of detected browser controllers to the browser console whenever that set changes.
+
+Recommended selector:
+
+- use `padIdContains=<substring>`
+
+This is the preferred selector because browser controller indexes are less stable than controller IDs.
+
+Example:
+
+```text
+overlay/index.html?source=browser&padIdContains=8BitDo
+```
+
+You can also provide:
+
+- `padIndex=<number>`
+
+but this should be treated as a hint for testing/debugging, not as a durable identity.
+
+If you want to allow non-standard browser mappings, add:
+
+```text
+padAllowAll=1
+```
+
+There is currently no separate GUI selector for `source=browser`; browser-mode selection is controlled by the URL parameters above.
+
 ## GET Parameters
 
 ### Overlay / Display

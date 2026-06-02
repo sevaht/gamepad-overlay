@@ -205,6 +205,7 @@ class SDLGameController:
     _dpad_right: bool = field(default=False, init=False)
     _dpad_up: bool = field(default=False, init=False)
     _dpad_down: bool = field(default=False, init=False)
+    _selection_mtime_ns: int | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         if sdl2.SDL_Init(sdl2.SDL_INIT_GAMECONTROLLER) != 0:
@@ -295,6 +296,48 @@ class SDLGameController:
             return True
         return False
 
+    def _selection_signature(self) -> tuple[str | None, str | None]:
+        return (self.preferred_guid, self.name_filter)
+
+    def _apply_selection(
+        self,
+        guid: str | None,
+        name_filter: str | None,
+        *,
+        announce_change: bool,
+    ) -> None:
+        normalized_guid = guid or None
+        normalized_name = name_filter or None
+        old_signature = self._selection_signature()
+        new_signature = (normalized_guid, normalized_name)
+        if new_signature == old_signature:
+            return
+        self.preferred_guid = normalized_guid
+        self.name_filter = normalized_name
+        if announce_change:
+            announce(
+                f"Controller target changed to: {self._target_description()}",
+                logger,
+            )
+        if self._controller is not None:
+            sdl2.SDL_GameControllerClose(self._controller)
+            self._controller = None
+            self._instance_id = None
+
+    def reload_selection_from_config(self, path: Path) -> None:
+        try:
+            stat = path.stat()
+            mtime_ns: int | None = stat.st_mtime_ns
+        except FileNotFoundError:
+            mtime_ns = None
+        if mtime_ns == self._selection_mtime_ns:
+            return
+        self._selection_mtime_ns = mtime_ns
+        selected = _load_selected_controller(path)
+        guid = selected.get("guid") if selected else None
+        name_filter = selected.get("name") if selected else None
+        self._apply_selection(guid, name_filter, announce_change=True)
+
     def close(self) -> None:
         if self._controller:
             sdl2.SDL_GameControllerClose(self._controller)
@@ -302,11 +345,15 @@ class SDLGameController:
             self._instance_id = None
         sdl2.SDL_QuitSubSystem(sdl2.SDL_INIT_GAMECONTROLLER)
 
-    def read_loop(self, monitor: GamepadMonitor) -> None:
+    def read_loop(
+        self, monitor: GamepadMonitor, *, selection_path: Path | None = None
+    ) -> None:
         event = sdl2.SDL_Event()
         announced_waiting = False
         announce(f"Controller target: {self._target_description()}", logger)
         while True:
+            if selection_path is not None:
+                self.reload_selection_from_config(selection_path)
             if self._controller is None:
                 if self._try_open_controller():
                     monitor.on_start(self, list(self.inputs.values()))
@@ -604,8 +651,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     controller = SDLGameController(
         preferred_guid=selected_guid or None, name_filter=selected_name or None
     )
+    selection_watch_path = (
+        None if args.controller_guid or args.controller_name else config_path
+    )
     try:
-        controller.read_loop(monitor)
+        controller.read_loop(monitor, selection_path=selection_watch_path)
     except KeyboardInterrupt:
         announce("\nExiting.", logger)
     finally:
@@ -641,6 +691,13 @@ def _save_selected_controller(path: Path, selected: dict[str, object]) -> None:
         "name": str(selected.get("name", "")).strip(),
     }
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
+def _clear_selected_controller(path: Path) -> None:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return
 
 
 def _interactive_select_controller() -> dict[str, object] | None:
