@@ -128,31 +128,59 @@ def _selected_controller_index(
     return None
 
 
-def _create_tray_icon() -> QIcon:
+def _new_icon_pixmap() -> QtGui.QPixmap:
     pixmap = QtGui.QPixmap(64, 64)
     pixmap.fill(QtCore.Qt.GlobalColor.transparent)
+    return pixmap
 
+
+def _new_icon_painter(pixmap: QtGui.QPixmap) -> QtGui.QPainter:
     painter = QtGui.QPainter(pixmap)
     painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+    return painter
 
-    outer_rect = QtCore.QRectF(8, 18, 48, 28)
-    inner_rect = QtCore.QRectF(10, 20, 44, 24)
 
-    painter.setPen(QtCore.Qt.PenStyle.NoPen)
-    painter.setBrush(QtGui.QColor(44, 47, 51, 255))
-    painter.drawRoundedRect(outer_rect, 10, 10)
+def _draw_outlined_ellipse(
+    painter: QtGui.QPainter,
+    rect: QtCore.QRectF,
+    fill: QtGui.QColor,
+    *,
+    stroke_width: float = 3.0,
+) -> None:
+    painter.setPen(QtGui.QPen(QtGui.QColor(0, 0, 0, 255), stroke_width))
+    painter.setBrush(fill)
+    painter.drawEllipse(rect)
 
-    painter.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 255), 2))
-    painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
-    painter.drawRoundedRect(inner_rect, 8, 8)
 
-    painter.setPen(QtCore.Qt.PenStyle.NoPen)
-    painter.setBrush(QtGui.QColor(63, 140, 255, 255))
-    painter.drawEllipse(QtCore.QRectF(16, 25, 8, 8))
-    painter.drawEllipse(QtCore.QRectF(40, 25, 8, 8))
+def _create_face_buttons_icon() -> QIcon:
+    pixmap = _new_icon_pixmap()
+    painter = _new_icon_painter(pixmap)
+
+    button_size = 24
+    centers = {
+        "Y": (32.0, 14.0, QtGui.QColor(255, 255, 51, 255)),
+        "B": (50.0, 32.0, QtGui.QColor(255, 51, 51, 255)),
+        "A": (32.0, 50.0, QtGui.QColor(63, 207, 63, 255)),
+        "X": (14.0, 32.0, QtGui.QColor(51, 119, 255, 255)),
+    }
+    for center_x, center_y, color in centers.values():
+        _draw_outlined_ellipse(
+            painter,
+            QtCore.QRectF(
+                center_x - button_size / 2,
+                center_y - button_size / 2,
+                button_size,
+                button_size,
+            ),
+            color,
+        )
+
     painter.end()
-
     return QtGui.QIcon(pixmap)
+
+
+def _create_tray_icon() -> QIcon:
+    return _create_face_buttons_icon()
 
 
 def _list_available_controllers() -> list[dict[str, object]]:
