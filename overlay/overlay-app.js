@@ -83,9 +83,6 @@
 
     function parseInputSource(query) {
         const source = (query.get("source") || "websocket").toLowerCase();
-        if (source === "ws") {
-            return "websocket";
-        }
         return ["browser", "websocket", "demo"].includes(source)
             ? source
             : "browser";
