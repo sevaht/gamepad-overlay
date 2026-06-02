@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-import subprocess
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
-from gamepad_websocket_server.application import _save_selected_controller
+from gamepad_websocket_server.application import (
+    ServerRunConfig,
+    _save_selected_controller,
+)
 from gamepad_websocket_server.tray import (
-    ManagedServerProcess,
+    ManagedServerBackend,
     _controller_matches_selection,
     _controller_menu_label,
     _current_selection_label,
@@ -13,7 +16,7 @@ from gamepad_websocket_server.tray import (
 )
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from threading import Event
 
     from pytest import MonkeyPatch
 
@@ -64,73 +67,74 @@ def test_selected_controller_index_returns_none_for_any_controller() -> None:
     assert _selected_controller_index(controllers, None) is None
 
 
-def test_managed_server_process_uses_existing_server(
+def test_managed_server_backend_starts_in_process_server(
     monkeypatch: MonkeyPatch,
 ) -> None:
+    calls: list[object] = []
+
+    def fake_run_server(config: ServerRunConfig) -> None:
+        calls.append(config)
+
     monkeypatch.setattr(
-        "gamepad_websocket_server.tray._is_local_server_running", lambda: True
+        "gamepad_websocket_server.tray.run_server", fake_run_server
     )
 
-    process = ManagedServerProcess()
-    process.ensure_started()
-
-    assert process.process is None
-    assert not process.owns_process
-    assert (
-        process.status_label() == "Server: using an already running instance"
+    backend = ManagedServerBackend(
+        config_path=Path("controller-selection.json")
     )
+    backend.ensure_started()
+    backend.thread.join(timeout=1) if backend.thread is not None else None
+
+    assert calls
+    assert backend.status_label() == "Server: stopped"
 
 
-def test_managed_server_process_starts_server_when_missing(
+def test_managed_server_backend_status_is_running_while_thread_alive(
     monkeypatch: MonkeyPatch,
 ) -> None:
-    started: list[object] = []
+    started = False
 
-    class FakeProcess:
-        def poll(self) -> None:
-            return None
-
-    def fake_popen(*_args: object, **_kwargs: object) -> FakeProcess:
-        process = FakeProcess()
-        started.append(process)
-        return process
+    def fake_run_server(config: ServerRunConfig) -> None:
+        nonlocal started
+        started = True
+        stop_event = cast("Event", config.stop_event)
+        stop_event.wait(timeout=1)
 
     monkeypatch.setattr(
-        "gamepad_websocket_server.tray._is_local_server_running", lambda: False
+        "gamepad_websocket_server.tray.run_server", fake_run_server
     )
-    monkeypatch.setattr("subprocess.Popen", fake_popen)
 
-    process = ManagedServerProcess()
-    process.ensure_started()
+    backend = ManagedServerBackend(
+        config_path=Path("controller-selection.json")
+    )
+    backend.ensure_started()
 
-    assert process.process is started[0]
-    assert process.owns_process
-    assert process.status_label() == "Server: running"
+    assert started
+    assert backend.status_label() == "Server: running"
+
+    backend.stop()
 
 
-def test_managed_server_process_kills_if_terminate_does_not_finish() -> None:
-    calls: list[str] = []
+def test_managed_server_backend_stop_signals_thread(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    stopped = False
 
-    class FakeProcess:
-        returncode: int | None = None
+    def fake_run_server(config: ServerRunConfig) -> None:
+        nonlocal stopped
+        stop_event = cast("Event", config.stop_event)
+        stop_event.wait(timeout=1)
+        stopped = stop_event.is_set()
 
-        def poll(self) -> int | None:
-            return self.returncode
+    monkeypatch.setattr(
+        "gamepad_websocket_server.tray.run_server", fake_run_server
+    )
 
-        def terminate(self) -> None:
-            calls.append("terminate")
+    backend = ManagedServerBackend(
+        config_path=Path("controller-selection.json")
+    )
+    backend.ensure_started()
+    backend.stop()
+    backend.thread.join(timeout=1) if backend.thread is not None else None
 
-        def wait(self, timeout: float | None = None) -> int | None:
-            calls.append(f"wait:{timeout}")
-            if timeout is not None and timeout < 1:
-                raise subprocess.TimeoutExpired(cmd="server", timeout=timeout)
-            self.returncode = -9
-            return self.returncode
-
-        def kill(self) -> None:
-            calls.append("kill")
-
-    process = ManagedServerProcess(process=FakeProcess(), owns_process=True)
-    process.stop()
-
-    assert calls == ["terminate", "wait:0.2", "kill", "wait:5"]
+    assert stopped

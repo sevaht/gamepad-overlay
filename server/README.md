@@ -33,7 +33,13 @@ uv sync
 uv run gamepad-websocket-server
 ```
 
-The server listens on:
+By default, this opens the Qt system tray controller selector and starts the websocket server. For environments without a desktop tray, run the server directly with `--headless`:
+
+```bash
+uv run gamepad-websocket-server --headless
+```
+
+The websocket server listens on:
 
 - host: `localhost` by default
 - port: `8765`
@@ -65,10 +71,10 @@ If the websocket server is already running without an explicit `--controller-gui
 
 ### Tray Selector
 
-For a desktop-oriented selector, you can run the tray utility:
+The default command runs the desktop tray selector:
 
 ```bash
-uv run gamepad-websocket-server-tray
+uv run gamepad-websocket-server
 ```
 
 This launcher will start the websocket server if one is not already running.
@@ -85,6 +91,12 @@ The tray menu will:
 The tray is implemented with Qt via `PySide6`, which provides the same tray behavior on Linux and Windows. Closing the selector window hides it; use the tray menu's `Quit` action to stop the managed server and exit the tray app.
 
 If the websocket server is already running in its normal config-driven mode, picking a controller from the tray will update the running server automatically.
+
+To run without tray integration:
+
+```bash
+uv run gamepad-websocket-server --headless
+```
 
 ### Inspect Available Controllers
 

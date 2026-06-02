@@ -57,14 +57,14 @@ uv run gamepad-websocket-server --select-controller
 
 That saves the preferred controller for later normal launches.
 
-If you prefer a desktop selector, you can also run:
+The default server command opens a desktop tray selector:
 
 ```bash
 cd server
-uv run gamepad-websocket-server-tray
+uv run gamepad-websocket-server
 ```
 
-The tray selector saves the preferred controller, and a normally launched websocket server will switch to the new selection automatically.
+The tray selector saves the preferred controller and starts the websocket server. If you need to run without tray integration, use `uv run gamepad-websocket-server --headless`.
 
 ### 2. Point OBS at the Overlay
 

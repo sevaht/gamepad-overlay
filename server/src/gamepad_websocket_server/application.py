@@ -19,6 +19,7 @@ from .websocket_server import WebSocketBroadcaster
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from threading import Event
 
 logger = logging.getLogger(__name__)
 
@@ -346,12 +347,16 @@ class SDLGameController:
         sdl2.SDL_QuitSubSystem(sdl2.SDL_INIT_GAMECONTROLLER)
 
     def read_loop(
-        self, monitor: GamepadMonitor, *, selection_path: Path | None = None
+        self,
+        monitor: GamepadMonitor,
+        *,
+        selection_path: Path | None = None,
+        stop_event: Event | None = None,
     ) -> None:
         event = sdl2.SDL_Event()
         announced_waiting = False
         announce(f"Controller target: {self._target_description()}", logger)
-        while True:
+        while stop_event is None or not stop_event.is_set():
             if selection_path is not None:
                 self.reload_selection_from_config(selection_path)
             if self._controller is None:
@@ -479,6 +484,16 @@ class SDLGameController:
 
 
 @dataclass
+class ServerRunConfig:
+    config_path: Path
+    controller_guid: str | None = None
+    controller_name: str | None = None
+    lan: bool = False
+    terminal: bool = False
+    stop_event: Event | None = None
+
+
+@dataclass
 class TerminalGamepadMonitor:
     state: dict[str, float] = field(default_factory=dict)
 
@@ -555,7 +570,7 @@ class WebSocketGamepadMonitor:
         )
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=importlib.metadata.metadata(__package__).get("summary")
     )
@@ -585,46 +600,44 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="Interactively select a connected controller and save it.",
     )
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Run the websocket server directly without the Qt tray.",
+    )
     add_log_arguments(parser)
-    args = parser.parse_args(args=argv)
-    configure_logging(args)
+    return parser
 
-    config_path = _controller_config_path()
 
-    if args.list_controllers:
-        controllers = SDLGameController.list_available_controllers()
-        if not controllers:
-            print("No compatible controllers detected.")
-            return 0
-        for controller_info in controllers:
-            print(
-                f"[{controller_info['index']}] {controller_info['name']}"
-                f" guid={controller_info['guid']}"
-            )
+def _print_available_controllers() -> int:
+    controllers = SDLGameController.list_available_controllers()
+    if not controllers:
+        print("No compatible controllers detected.")
         return 0
-
-    if args.select_controller:
-        selected = _interactive_select_controller()
-        if selected is None:
-            print("No controller selected.")
-            return 1
-        _save_selected_controller(config_path, selected)
+    for controller_info in controllers:
         print(
-            "Saved preferred controller: "
-            f"{selected['name']} (guid={selected['guid']})"
+            f"[{controller_info['index']}] {controller_info['name']}"
+            f" guid={controller_info['guid']}"
         )
-        return 0
+    return 0
 
-    selected_config = _load_selected_controller(config_path)
-    selected_guid = args.controller_guid or (
-        selected_config.get("guid") if selected_config else None
-    )
-    selected_name = (
-        args.controller_name
-        if args.controller_name is not None
-        else (selected_config.get("name") if selected_config else None)
-    )
 
+def _select_and_save_controller(config_path: Path) -> int:
+    selected = _interactive_select_controller()
+    if selected is None:
+        print("No controller selected.")
+        return 1
+    _save_selected_controller(config_path, selected)
+    print(
+        "Saved preferred controller: "
+        f"{selected['name']} (guid={selected['guid']})"
+    )
+    return 0
+
+
+def _save_explicit_selection(
+    args: argparse.Namespace, config_path: Path
+) -> None:
     if args.controller_guid:
         _save_selected_controller(
             config_path,
@@ -634,10 +647,31 @@ def main(argv: Sequence[str] | None = None) -> int:
         _save_selected_controller(
             config_path, {"guid": "", "name": args.controller_name}
         )
-    if args.terminal:
+
+
+def _run_tray(args: argparse.Namespace, config_path: Path) -> int:
+    from .tray import run_tray
+
+    return run_tray(
+        config_path=config_path, lan=args.lan, terminal=args.terminal
+    )
+
+
+def run_server(config: ServerRunConfig) -> int:
+    selected_config = _load_selected_controller(config.config_path)
+    selected_guid = config.controller_guid or (
+        selected_config.get("guid") if selected_config else None
+    )
+    selected_name = (
+        config.controller_name
+        if config.controller_name is not None
+        else (selected_config.get("name") if selected_config else None)
+    )
+
+    if config.terminal:
         monitor: GamepadMonitor = TerminalGamepadMonitor()
     else:
-        bind_host = "0.0.0.0" if args.lan else "localhost"  # noqa: S104
+        bind_host = "0.0.0.0" if config.lan else "localhost"  # noqa: S104
         websocket_broadcaster = WebSocketBroadcaster(
             8765,
             host=bind_host,
@@ -652,15 +686,54 @@ def main(argv: Sequence[str] | None = None) -> int:
         preferred_guid=selected_guid or None, name_filter=selected_name or None
     )
     selection_watch_path = (
-        None if args.controller_guid or args.controller_name else config_path
+        None
+        if config.controller_guid or config.controller_name
+        else config.config_path
     )
     try:
-        controller.read_loop(monitor, selection_path=selection_watch_path)
+        controller.read_loop(
+            monitor,
+            selection_path=selection_watch_path,
+            stop_event=config.stop_event,
+        )
     except KeyboardInterrupt:
         announce("\nExiting.", logger)
     finally:
         controller.close()
     return 0
+
+
+def _run_headless_server(args: argparse.Namespace, config_path: Path) -> int:
+    return run_server(
+        ServerRunConfig(
+            config_path=config_path,
+            controller_guid=args.controller_guid,
+            controller_name=args.controller_name,
+            lan=args.lan,
+            terminal=args.terminal,
+        )
+    )
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = _build_parser()
+    args = parser.parse_args(args=argv)
+    configure_logging(args)
+
+    config_path = _controller_config_path()
+
+    if args.list_controllers:
+        return _print_available_controllers()
+
+    if args.select_controller:
+        return _select_and_save_controller(config_path)
+
+    _save_explicit_selection(args, config_path)
+
+    if not args.headless:
+        return _run_tray(args, config_path)
+
+    return _run_headless_server(args, config_path)
 
 
 def _controller_config_path() -> Path:

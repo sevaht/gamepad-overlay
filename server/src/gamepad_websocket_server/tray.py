@@ -3,10 +3,9 @@ from __future__ import annotations
 import argparse
 import logging
 import signal
-import socket
-import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from threading import Event, Thread
 from typing import TYPE_CHECKING, Protocol
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -15,10 +14,12 @@ from PySide6.QtWidgets import QApplication
 
 from .application import (
     SDLGameController,
+    ServerRunConfig,
     _clear_selected_controller,
     _controller_config_path,
     _load_selected_controller,
     _save_selected_controller,
+    run_server,
 )
 
 logger = logging.getLogger(__name__)
@@ -31,59 +32,60 @@ if TYPE_CHECKING:
     from PySide6.QtGui import QCloseEvent, QIcon
 
 
-class ServerProcess(Protocol):
-    def poll(self) -> int | None: ...
+class ServerBackend(Protocol):
+    def ensure_started(self) -> None: ...
 
-    def terminate(self) -> None: ...
+    def status_label(self) -> str: ...
 
-    def wait(self, timeout: float | None = None) -> int | None: ...
-
-    def kill(self) -> None: ...
-
-
-def _is_local_server_running() -> bool:
-    try:
-        with socket.create_connection(("127.0.0.1", 8765), timeout=0.2):
-            return True
-    except OSError:
-        return False
+    def stop(self) -> None: ...
 
 
 @dataclass
-class ManagedServerProcess:
-    process: ServerProcess | None = None
-    owns_process: bool = False
+class ManagedServerBackend:
+    config_path: Path
+    lan: bool = False
+    terminal: bool = False
+    thread: Thread | None = field(default=None, init=False)
+    stop_event: Event = field(default_factory=Event, init=False)
+    failed: bool = field(default=False, init=False)
 
     def ensure_started(self) -> None:
-        if self.process is not None and self.process.poll() is None:
+        if self.thread is not None and self.thread.is_alive():
             return
-        if _is_local_server_running():
-            self.process = None
-            self.owns_process = False
-            return
-        self.process = subprocess.Popen(
-            [sys.executable, "-m", "gamepad_websocket_server"], close_fds=True
+        self.failed = False
+        self.stop_event.clear()
+        self.thread = Thread(
+            target=self._run_server,
+            name="gamepad-websocket-server",
+            daemon=True,
         )
-        self.owns_process = True
+        self.thread.start()
+
+    def _run_server(self) -> None:
+        try:
+            run_server(
+                ServerRunConfig(
+                    config_path=self.config_path,
+                    lan=self.lan,
+                    terminal=self.terminal,
+                    stop_event=self.stop_event,
+                )
+            )
+        except Exception:
+            self.failed = True
+            logger.exception("Managed gamepad server stopped unexpectedly")
 
     def status_label(self) -> str:
-        if self.process is None:
-            return "Server: using an already running instance"
-        if self.process.poll() is None:
+        if self.thread is not None and self.thread.is_alive():
             return "Server: running"
-        return "Server: stopped unexpectedly"
+        if self.failed:
+            return "Server: stopped unexpectedly"
+        return "Server: stopped"
 
     def stop(self) -> None:
-        if not self.owns_process or self.process is None:
-            return
-        if self.process.poll() is not None:
-            return
-        self.process.terminate()
-        try:
-            self.process.wait(timeout=0.2)
-        except subprocess.TimeoutExpired:
-            self.process.kill()
-            self.process.wait(timeout=5)
+        self.stop_event.set()
+        if self.thread is not None:
+            self.thread.join(timeout=0.2)
 
 
 def _current_selection_label(config_path: Path) -> str:
@@ -162,12 +164,12 @@ class ControllerSelectorWindow:
         self,
         config_path: Path,
         *,
-        server_process: ManagedServerProcess | None = None,
+        server_backend: ServerBackend | None = None,
         hide_on_close: bool,
         quit_callback: Callable[[], None] | None = None,
     ) -> None:
         self.config_path = config_path
-        self.server_process = server_process
+        self.server_backend = server_backend
         self.hide_on_close = hide_on_close
         self.quit_callback = quit_callback
         self.controllers: list[dict[str, object]] = []
@@ -279,11 +281,11 @@ class ControllerSelectorWindow:
 
     def refresh(self) -> None:
         self.current_label.setText(_current_selection_label(self.config_path))
-        if self.server_process is None:
+        if self.server_backend is None:
             self.server_label.setText("")
         else:
-            self.server_process.ensure_started()
-            self.server_label.setText(self.server_process.status_label())
+            self.server_backend.ensure_started()
+            self.server_label.setText(self.server_backend.status_label())
 
         self.controller_list.clear()
         try:
@@ -329,14 +331,22 @@ class ControllerSelectorWindow:
 
 
 class ControllerSelectorTray:
-    def __init__(self, config_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        config_path: Path | None = None,
+        *,
+        lan: bool = False,
+        terminal: bool = False,
+    ) -> None:
         self.config_path = config_path or _controller_config_path()
-        self.server_process = ManagedServerProcess()
-        self.server_process.ensure_started()
+        self.server_backend = ManagedServerBackend(
+            config_path=self.config_path, lan=lan, terminal=terminal
+        )
+        self.server_backend.ensure_started()
 
         self.window = ControllerSelectorWindow(
             self.config_path,
-            server_process=self.server_process,
+            server_backend=self.server_backend,
             hide_on_close=True,
             quit_callback=self._request_quit,
         )
@@ -367,7 +377,7 @@ class ControllerSelectorTray:
         self.rebuild_menu()
 
     def rebuild_menu(self) -> None:
-        self.server_process.ensure_started()
+        self.server_backend.ensure_started()
         self.menu.clear()
 
         current_action = self.menu.addAction(
@@ -375,7 +385,7 @@ class ControllerSelectorTray:
         )
         current_action.setEnabled(False)
 
-        server_action = self.menu.addAction(self.server_process.status_label())
+        server_action = self.menu.addAction(self.server_backend.status_label())
         server_action.setEnabled(False)
 
         self.menu.addSeparator()
@@ -450,7 +460,7 @@ class ControllerSelectorTray:
             self._quit()
 
     def _quit(self) -> None:
-        self.server_process.stop()
+        self.server_backend.stop()
         self.tray.hide()
         app = QApplication.instance()
         if app is not None:
@@ -478,7 +488,7 @@ class ControllerSelectorTray:
 def _create_application() -> QApplication:
     app = QApplication.instance()
     if app is None:
-        app = QApplication(sys.argv)
+        app = QApplication([sys.argv[0]])
     elif not isinstance(app, QApplication):
         msg = "A non-widget Qt application already exists."
         raise TypeError(msg)
@@ -506,11 +516,26 @@ def _run_popup(config_path: Path) -> int:
     app = _create_application()
     signal_timer = _install_signal_handlers(app.quit)
     window = ControllerSelectorWindow(
-        config_path, server_process=None, hide_on_close=False
+        config_path, server_backend=None, hide_on_close=False
     )
     window.show()
     try:
         return app.exec()
+    finally:
+        signal_timer.stop()
+
+
+def run_tray(
+    *,
+    config_path: Path | None = None,
+    lan: bool = False,
+    terminal: bool = False,
+) -> int:
+    _create_application()
+    tray = ControllerSelectorTray(config_path, lan=lan, terminal=terminal)
+    signal_timer = _install_signal_handlers(tray._quit)
+    try:
+        return tray.run()
     finally:
         signal_timer.stop()
 
@@ -527,13 +552,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.popup:
             return _run_popup(_controller_config_path())
-        _create_application()
-        tray = ControllerSelectorTray()
-        signal_timer = _install_signal_handlers(tray._quit)
-        try:
-            return tray.run()
-        finally:
-            signal_timer.stop()
+        return run_tray()
     except (RuntimeError, TypeError) as exc:
         print(str(exc), file=sys.stderr)
         return 1

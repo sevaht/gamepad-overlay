@@ -22,7 +22,6 @@ dependencies = [
 
 [project.scripts]
 gamepad-websocket-server = "gamepad_websocket_server.__main__:main"
-gamepad-websocket-server-tray = "gamepad_websocket_server.tray:main"
 
 [dependency-groups]
 dev = [
