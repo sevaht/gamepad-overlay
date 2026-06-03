@@ -65,7 +65,17 @@ To list currently connected controllers and choose one interactively:
 uv run gamepad-websocket-server --select-controller
 ```
 
-This saves the preferred controller so later normal launches will reuse it.
+This saves the preferred controller so later normal launches will reuse it. You can also choose `0` to select "any controller", which clears the saved preference.
+
+### Use Any Controller
+
+To clear the saved preference and accept any connected controller:
+
+```bash
+uv run gamepad-websocket-server --any-controller
+```
+
+This removes the persisted selection so the server will accept any available controller on next launch.
 
 If the websocket server is already running without an explicit `--controller-guid` or `--controller-name` override, changing the saved selection will cause the running server to switch targets automatically.
 
@@ -132,10 +142,16 @@ List controllers:
 uv run gamepad-websocket-server --list-controllers
 ```
 
-Interactively select and save a preferred controller:
+Interactively select and save a preferred controller (choose `0` to use any):
 
 ```bash
 uv run gamepad-websocket-server --select-controller
+```
+
+Clear the saved preference and use any controller:
+
+```bash
+uv run gamepad-websocket-server --any-controller
 ```
 
 Select controller by GUID:

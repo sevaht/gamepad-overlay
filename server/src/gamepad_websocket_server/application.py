@@ -745,6 +745,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Select controller by case-insensitive name substring.",
     )
     parser.add_argument(
+        "--any-controller",
+        action="store_true",
+        help="Clear the preferred controller selection and use any controller.",
+    )
+    parser.add_argument(
         "--select-controller",
         action="store_true",
         help="Interactively select a connected controller and save it.",
@@ -818,6 +823,10 @@ def _select_and_save_controller(config_path: Path) -> int:
     if selected is None:
         print("No controller selected.")
         return 1
+    if not selected:
+        _clear_selected_controller(config_path)
+        print("Will use any controller.")
+        return 0
     _save_selected_controller(config_path, selected)
     print(
         "Saved preferred controller: "
@@ -927,6 +936,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.list_controllers:
         return _print_available_controllers()
 
+    if args.any_controller:
+        _clear_selected_controller(config_path)
+        print("Will use any controller.")
+        return 0
+
     if args.select_controller:
         return _select_and_save_controller(config_path)
 
@@ -990,11 +1004,12 @@ def _interactive_select_controller() -> dict[str, object] | None:
         )
         if metadata:
             print(f"     - {metadata}")
+    print("  0) (any controller)")
     print()
     while True:
         try:
             choice = input(
-                "Select controller number (or blank to cancel): "
+                "Select controller number (0 for any, or blank to cancel): "
             ).strip()
         except KeyboardInterrupt:
             print()
@@ -1005,6 +1020,8 @@ def _interactive_select_controller() -> dict[str, object] | None:
             print("Invalid selection. Enter a number.")
             continue
         selected_index = int(choice)
+        if selected_index == 0:
+            return {}  # signal "use any"
         if 1 <= selected_index <= len(controllers):
             return controllers[selected_index - 1]
         print("Selection out of range.")

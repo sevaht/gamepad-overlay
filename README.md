@@ -64,7 +64,7 @@ cd server
 uv run gamepad-websocket-server
 ```
 
-The selector saves the preferred controller and starts the websocket server. If you want the app to start with only the tray icon visible, use `uv run gamepad-websocket-server --hide`. If you need to run without tray integration, use `uv run gamepad-websocket-server --headless`.
+The selector saves the preferred controller and starts the websocket server. Use `uv run gamepad-websocket-server --any-controller` to clear the saved preference (the next launch will accept any controller). If you want the app to start with only the tray icon visible, use `uv run gamepad-websocket-server --hide`. If you need to run without tray integration, use `uv run gamepad-websocket-server --headless`.
 
 ### 2. Point OBS at the Overlay
 
