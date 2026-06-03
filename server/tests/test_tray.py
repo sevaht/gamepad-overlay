@@ -120,7 +120,7 @@ def test_controller_row_badges_mark_saved_controller_preferred() -> None:
 def test_controller_row_badges_mark_active_controller() -> None:
     assert _controller_row_badges(
         {"name": "Pad", "guid": "guid-1"}, None, {"guid": "guid-1", "name": ""}
-    ) == ("Active",)
+    ) == ("★",)
 
 
 def test_controller_row_badges_combine_active_and_preferred() -> None:
@@ -128,7 +128,7 @@ def test_controller_row_badges_combine_active_and_preferred() -> None:
         {"name": "Pad", "guid": "guid-1"},
         {"guid": "guid-1", "name": ""},
         {"guid": "guid-1", "name": ""},
-    ) == ("Active", "Preferred")
+    ) == ("★", "Preferred")
 
 
 def test_controller_row_badges_omit_unmatched_controller() -> None:

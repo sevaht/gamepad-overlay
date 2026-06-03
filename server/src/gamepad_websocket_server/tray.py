@@ -32,7 +32,7 @@ CONTROLLER_ROW_VERTICAL_PADDING = 6
 CONTROLLER_ROW_LINE_GAP = 2
 CONTROLLER_NAME_POINT_SIZE_INCREMENT = 2
 CONTROLLER_BADGE_GAP = 6
-ACTIVE_CONTROLLER_BADGE = "Active"
+ACTIVE_CONTROLLER_BADGE = "★"
 PREFERRED_CONTROLLER_BADGE = "Preferred"
 ICON_BUTTON_SIZE = 24
 ICON_BUTTON_STROKE_WIDTH = 3.0
@@ -235,10 +235,6 @@ def _controller_detail_font(base_font: QtGui.QFont) -> QtGui.QFont:
     return font
 
 
-def _controller_badge_font(base_font: QtGui.QFont) -> QtGui.QFont:
-    return _controller_detail_font(base_font)
-
-
 def _controller_row_height(base_font: QtGui.QFont) -> int:
     name_height = QtGui.QFontMetrics(_controller_name_font(base_font)).height()
     detail_height = QtGui.QFontMetrics(
@@ -301,21 +297,52 @@ class ControllerItemDelegate(QtWidgets.QStyledItemDelegate):
         )
 
         name_font = _controller_name_font(item_option.font)
-        painter.setFont(name_font)
         name_metrics = QtGui.QFontMetrics(name_font)
-        badge_font = _controller_badge_font(item_option.font)
-        badge_metrics = QtGui.QFontMetrics(badge_font)
-        badge_width = sum(
-            badge_metrics.horizontalAdvance(badge) for badge in badges
+        detail_font = _controller_detail_font(item_option.font)
+        detail_metrics = QtGui.QFontMetrics(detail_font)
+
+        # Separate badges: star (active) on left, text (preferred) on right
+        left_badges = [b for b in badges if b == ACTIVE_CONTROLLER_BADGE]
+        right_badges = [b for b in badges if b == PREFERRED_CONTROLLER_BADGE]
+
+        left_badge_width = sum(
+            detail_metrics.horizontalAdvance(b) for b in left_badges
         )
-        if badges:
-            badge_width += CONTROLLER_BADGE_GAP * (len(badges) - 1)
+        right_badge_width = sum(
+            name_metrics.horizontalAdvance(b) for b in right_badges
+        )
+        right_badge_width += CONTROLLER_BADGE_GAP * max(
+            0, len(right_badges) - 1
+        )
+
+        name_left = text_rect.left() + (
+            left_badge_width + CONTROLLER_BADGE_GAP if left_badges else 0
+        )
+        name_right = text_rect.right() - (
+            right_badge_width + CONTROLLER_BADGE_GAP if right_badges else 0
+        )
+
         name_rect = QtCore.QRect(
-            text_rect.left(),
+            name_left,
             text_rect.top(),
-            max(0, text_rect.width() - badge_width - CONTROLLER_BADGE_GAP),
+            max(0, name_right - name_left),
             name_metrics.height(),
         )
+
+        if left_badges:
+            painter.setFont(detail_font)
+            badge_x = text_rect.left()
+            for badge in left_badges:
+                width = detail_metrics.horizontalAdvance(badge)
+                badge_rect = QtCore.QRect(
+                    badge_x, name_rect.top(), width, name_rect.height()
+                )
+                painter.drawText(
+                    badge_rect, QtCore.Qt.AlignmentFlag.AlignCenter, badge
+                )
+                badge_x += width + CONTROLLER_BADGE_GAP
+
+        painter.setFont(name_font)
         elided_name = name_metrics.elidedText(
             name, QtCore.Qt.TextElideMode.ElideRight, name_rect.width()
         )
@@ -326,11 +353,10 @@ class ControllerItemDelegate(QtWidgets.QStyledItemDelegate):
             elided_name,
         )
 
-        if badges:
-            painter.setFont(badge_font)
-            badge_x = text_rect.right() - badge_width + 1
-            for badge in badges:
-                width = badge_metrics.horizontalAdvance(badge)
+        if right_badges:
+            badge_x = text_rect.right() - right_badge_width + 1
+            for badge in right_badges:
+                width = name_metrics.horizontalAdvance(badge)
                 badge_rect = QtCore.QRect(
                     badge_x, name_rect.top(), width, name_rect.height()
                 )
@@ -339,9 +365,7 @@ class ControllerItemDelegate(QtWidgets.QStyledItemDelegate):
                 )
                 badge_x += width + CONTROLLER_BADGE_GAP
 
-        detail_font = _controller_detail_font(item_option.font)
         painter.setFont(detail_font)
-        detail_metrics = QtGui.QFontMetrics(detail_font)
         detail_rect = QtCore.QRect(
             text_rect.left(),
             name_rect.bottom() + CONTROLLER_ROW_LINE_GAP,
@@ -606,6 +630,8 @@ class ControllerSelectorWindow:
         if self.server_backend is not None:
             self.server_backend.ensure_started()
 
+        previous_row = self.controller_list.currentRow()
+
         self.controller_list.clear()
         try:
             self.controllers = _list_available_controllers()
@@ -651,6 +677,8 @@ class ControllerSelectorWindow:
 
         if selected_row is not None:
             self.controller_list.setCurrentRow(selected_row)
+        elif previous_row >= 0 and previous_row < len(self.controllers):
+            self.controller_list.setCurrentRow(previous_row)
         self._update_select_button_state()
 
     def select_current_controller(self) -> None:
