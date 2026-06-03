@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import argparse
 import logging
 import signal
 import sys
 from dataclasses import dataclass, field
 from threading import Event, Thread
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, override
 
 from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import QTimer
@@ -17,6 +16,7 @@ from .application import (
     ServerRunConfig,
     _clear_selected_controller,
     _controller_config_path,
+    _controller_metadata_summary,
     _load_selected_controller,
     _save_selected_controller,
     run_server,
@@ -24,8 +24,40 @@ from .application import (
 
 logger = logging.getLogger(__name__)
 
+CONTROLLER_NAME_ROLE = int(QtCore.Qt.ItemDataRole.UserRole) + 1
+CONTROLLER_DETAIL_ROLE = int(QtCore.Qt.ItemDataRole.UserRole) + 2
+CONTROLLER_BADGES_ROLE = int(QtCore.Qt.ItemDataRole.UserRole) + 3
+CONTROLLER_ROW_HORIZONTAL_PADDING = 8
+CONTROLLER_ROW_VERTICAL_PADDING = 6
+CONTROLLER_ROW_LINE_GAP = 2
+CONTROLLER_NAME_POINT_SIZE_INCREMENT = 2
+CONTROLLER_BADGE_GAP = 6
+ACTIVE_CONTROLLER_BADGE = "Active"
+PREFERRED_CONTROLLER_BADGE = "Preferred"
+ICON_BUTTON_SIZE = 24
+ICON_BUTTON_STROKE_WIDTH = 3.0
+ICON_BUTTON_CENTERS = {
+    "Y": (32.0, 14.0),
+    "B": (50.0, 32.0),
+    "A": (32.0, 50.0),
+    "X": (14.0, 32.0),
+}
+XBOX_FACE_BUTTON_PRESSED_COLORS = {
+    "Y": (255, 255, 51),
+    "B": (255, 51, 51),
+    "A": (63, 207, 63),
+    "X": (51, 119, 255),
+}
+XBOX_FACE_BUTTON_RELEASED_COLORS = {
+    "Y": (95, 95, 31),
+    "B": (95, 31, 31),
+    "A": (31, 79, 32),
+    "X": (31, 31, 95),
+}
+TRAY_ICONS: dict[bool, QIcon] = {}
+
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable
     from pathlib import Path
 
     from PySide6.QtCore import QEvent
@@ -37,7 +69,16 @@ class ServerBackend(Protocol):
 
     def status_label(self) -> str: ...
 
+    def is_controller_connected(self) -> bool: ...
+
+    def active_controller(self) -> dict[str, object] | None: ...
+
     def stop(self) -> None: ...
+
+
+class BackendSignals(QtCore.QObject):
+    controllers_changed = QtCore.Signal()
+    active_controller_changed = QtCore.Signal(object)
 
 
 @dataclass
@@ -45,9 +86,16 @@ class ManagedServerBackend:
     config_path: Path
     lan: bool = False
     terminal: bool = False
+    device_change_callback: Callable[[], None] | None = None
+    active_controller_callback: (
+        Callable[[dict[str, object] | None], None] | None
+    ) = None
     thread: Thread | None = field(default=None, init=False)
     stop_event: Event = field(default_factory=Event, init=False)
     failed: bool = field(default=False, init=False)
+    active_controller_info: dict[str, object] | None = field(
+        default=None, init=False
+    )
 
     def ensure_started(self) -> None:
         if self.thread is not None and self.thread.is_alive():
@@ -69,6 +117,8 @@ class ManagedServerBackend:
                     lan=self.lan,
                     terminal=self.terminal,
                     stop_event=self.stop_event,
+                    device_change_callback=self.device_change_callback,
+                    active_controller_callback=self.active_controller_callback,
                 )
             )
         except Exception:
@@ -82,10 +132,17 @@ class ManagedServerBackend:
             return "Server: stopped unexpectedly"
         return "Server: stopped"
 
+    def is_controller_connected(self) -> bool:
+        return self.active_controller_info is not None
+
+    def active_controller(self) -> dict[str, object] | None:
+        return self.active_controller_info
+
     def stop(self) -> None:
         self.stop_event.set()
         if self.thread is not None:
             self.thread.join(timeout=0.2)
+        self.active_controller_info = None
 
 
 def _current_selection_label(config_path: Path) -> str:
@@ -104,24 +161,220 @@ def _current_selection_label(config_path: Path) -> str:
 def _controller_matches_selection(
     controller: dict[str, object], selected: dict[str, str] | None
 ) -> bool:
-    if selected is None:
-        return False
-    selected_guid = selected.get("guid", "")
-    if selected_guid:
-        return str(controller.get("guid", "")).strip() == selected_guid
-    selected_name = selected.get("name", "").strip().lower()
-    if selected_name:
-        return selected_name in str(controller.get("name", "")).lower()
-    return False
+    return SDLGameController._matches_selected_controller(controller, selected)
 
 
-def _controller_menu_label(controller: dict[str, object]) -> str:
-    return f"{controller['name']} (guid={controller['guid']})"
+def _controller_selection_identity(
+    controller: dict[str, object],
+) -> dict[str, str]:
+    return {
+        field_name: str(controller.get(field_name, "")).strip()
+        for field_name in ("guid", "vendor", "product", "name")
+    }
+
+
+def _controller_identity_hint(controller: dict[str, object]) -> str:
+    metadata = _controller_metadata_summary(controller, version_first=True)
+    return metadata or "No stable identifier exposed"
+
+
+def _controller_display_names(
+    controllers: list[dict[str, object]],
+) -> list[str]:
+    names = [
+        str(controller.get("name", "unknown")) for controller in controllers
+    ]
+    duplicates = {name for name in names if names.count(name) > 1}
+    if not duplicates:
+        return names
+
+    duplicate_counts: dict[str, int] = {}
+    display_names: list[str] = []
+    for name in names:
+        if name not in duplicates:
+            display_names.append(name)
+            continue
+        duplicate_counts[name] = duplicate_counts.get(name, 0) + 1
+        display_names.append(f"{name} [{duplicate_counts[name]}]")
+    return display_names
+
+
+def _controller_row_label(
+    controller: dict[str, object], display_name: str
+) -> str:
+    return f"{display_name}\n{_controller_identity_hint(controller)}"
+
+
+def _controller_row_badges(
+    controller: dict[str, object],
+    selected: dict[str, str] | None,
+    active_controller: dict[str, object] | None,
+) -> tuple[str, ...]:
+    badges: list[str] = []
+    if active_controller is not None and _controller_matches_selection(
+        controller, _controller_selection_identity(active_controller)
+    ):
+        badges.append(ACTIVE_CONTROLLER_BADGE)
+    if selected is not None and _controller_matches_selection(
+        controller, selected
+    ):
+        badges.append(PREFERRED_CONTROLLER_BADGE)
+    return tuple(badges)
+
+
+def _controller_name_font(base_font: QtGui.QFont) -> QtGui.QFont:
+    font = QtGui.QFont(base_font)
+    font.setBold(True)
+    font.setPointSize(font.pointSize() + CONTROLLER_NAME_POINT_SIZE_INCREMENT)
+    return font
+
+
+def _controller_detail_font(base_font: QtGui.QFont) -> QtGui.QFont:
+    font = QtGui.QFont(base_font)
+    font.setBold(False)
+    return font
+
+
+def _controller_badge_font(base_font: QtGui.QFont) -> QtGui.QFont:
+    return _controller_detail_font(base_font)
+
+
+def _controller_row_height(base_font: QtGui.QFont) -> int:
+    name_height = QtGui.QFontMetrics(_controller_name_font(base_font)).height()
+    detail_height = QtGui.QFontMetrics(
+        _controller_detail_font(base_font)
+    ).height()
+    return (
+        CONTROLLER_ROW_VERTICAL_PADDING
+        + name_height
+        + CONTROLLER_ROW_LINE_GAP
+        + detail_height
+        + CONTROLLER_ROW_VERTICAL_PADDING
+    )
+
+
+class ControllerItemDelegate(QtWidgets.QStyledItemDelegate):
+    @override
+    def paint(
+        self,
+        painter: QtGui.QPainter,
+        option: QtWidgets.QStyleOptionViewItem,
+        index: QtCore.QModelIndex | QtCore.QPersistentModelIndex,
+    ) -> None:
+        item_option = QtWidgets.QStyleOptionViewItem(option)
+        self.initStyleOption(item_option, index)
+        item_option.text = ""
+
+        widget = item_option.widget
+        style = (
+            widget.style()
+            if widget is not None
+            else QtWidgets.QApplication.style()
+        )
+        style.drawControl(
+            QtWidgets.QStyle.ControlElement.CE_ItemViewItem,
+            item_option,
+            painter,
+            widget,
+        )
+
+        name = str(index.data(CONTROLLER_NAME_ROLE) or "")
+        detail = str(index.data(CONTROLLER_DETAIL_ROLE) or "")
+        badges = tuple(
+            str(badge) for badge in (index.data(CONTROLLER_BADGES_ROLE) or ())
+        )
+        text_rect = item_option.rect.adjusted(
+            CONTROLLER_ROW_HORIZONTAL_PADDING,
+            CONTROLLER_ROW_VERTICAL_PADDING,
+            -CONTROLLER_ROW_HORIZONTAL_PADDING,
+            -CONTROLLER_ROW_VERTICAL_PADDING,
+        )
+
+        painter.save()
+        text_role = QtGui.QPalette.ColorRole.Text
+        if item_option.state & QtWidgets.QStyle.StateFlag.State_Selected:
+            text_role = QtGui.QPalette.ColorRole.HighlightedText
+        painter.setPen(
+            item_option.palette.color(
+                item_option.palette.currentColorGroup(), text_role
+            )
+        )
+
+        name_font = _controller_name_font(item_option.font)
+        painter.setFont(name_font)
+        name_metrics = QtGui.QFontMetrics(name_font)
+        badge_font = _controller_badge_font(item_option.font)
+        badge_metrics = QtGui.QFontMetrics(badge_font)
+        badge_width = sum(
+            badge_metrics.horizontalAdvance(badge) for badge in badges
+        )
+        if badges:
+            badge_width += CONTROLLER_BADGE_GAP * (len(badges) - 1)
+        name_rect = QtCore.QRect(
+            text_rect.left(),
+            text_rect.top(),
+            max(0, text_rect.width() - badge_width - CONTROLLER_BADGE_GAP),
+            name_metrics.height(),
+        )
+        elided_name = name_metrics.elidedText(
+            name, QtCore.Qt.TextElideMode.ElideRight, name_rect.width()
+        )
+        painter.drawText(
+            name_rect,
+            QtCore.Qt.AlignmentFlag.AlignLeft
+            | QtCore.Qt.AlignmentFlag.AlignVCenter,
+            elided_name,
+        )
+
+        if badges:
+            painter.setFont(badge_font)
+            badge_x = text_rect.right() - badge_width + 1
+            for badge in badges:
+                width = badge_metrics.horizontalAdvance(badge)
+                badge_rect = QtCore.QRect(
+                    badge_x, name_rect.top(), width, name_rect.height()
+                )
+                painter.drawText(
+                    badge_rect, QtCore.Qt.AlignmentFlag.AlignCenter, badge
+                )
+                badge_x += width + CONTROLLER_BADGE_GAP
+
+        detail_font = _controller_detail_font(item_option.font)
+        painter.setFont(detail_font)
+        detail_metrics = QtGui.QFontMetrics(detail_font)
+        detail_rect = QtCore.QRect(
+            text_rect.left(),
+            name_rect.bottom() + CONTROLLER_ROW_LINE_GAP,
+            text_rect.width(),
+            detail_metrics.height(),
+        )
+        elided_detail = detail_metrics.elidedText(
+            detail, QtCore.Qt.TextElideMode.ElideLeft, detail_rect.width()
+        )
+        painter.drawText(
+            detail_rect,
+            QtCore.Qt.AlignmentFlag.AlignRight
+            | QtCore.Qt.AlignmentFlag.AlignVCenter,
+            elided_detail,
+        )
+        painter.restore()
+
+    @override
+    def sizeHint(
+        self,
+        option: QtWidgets.QStyleOptionViewItem,
+        index: QtCore.QModelIndex | QtCore.QPersistentModelIndex,
+    ) -> QtCore.QSize:
+        size = super().sizeHint(option, index)
+        size.setHeight(_controller_row_height(option.font))
+        return size
 
 
 def _selected_controller_index(
     controllers: list[dict[str, object]], selected: dict[str, str] | None
 ) -> int | None:
+    if selected is None:
+        return None
     for index, controller in enumerate(controllers):
         if _controller_matches_selection(controller, selected):
             return index
@@ -145,42 +398,49 @@ def _draw_outlined_ellipse(
     rect: QtCore.QRectF,
     fill: QtGui.QColor,
     *,
-    stroke_width: float = 3.0,
+    stroke_width: float = ICON_BUTTON_STROKE_WIDTH,
 ) -> None:
     painter.setPen(QtGui.QPen(QtGui.QColor(0, 0, 0, 255), stroke_width))
     painter.setBrush(fill)
     painter.drawEllipse(rect)
 
 
-def _create_face_buttons_icon() -> QIcon:
+def _qcolor(rgb: tuple[int, int, int]) -> QtGui.QColor:
+    red, green, blue = rgb
+    return QtGui.QColor(red, green, blue, 255)
+
+
+def _create_face_buttons_icon(*, connected: bool) -> QIcon:
     pixmap = _new_icon_pixmap()
     painter = _new_icon_painter(pixmap)
 
-    button_size = 24
-    centers = {
-        "Y": (32.0, 14.0, QtGui.QColor(255, 255, 51, 255)),
-        "B": (50.0, 32.0, QtGui.QColor(255, 51, 51, 255)),
-        "A": (32.0, 50.0, QtGui.QColor(63, 207, 63, 255)),
-        "X": (14.0, 32.0, QtGui.QColor(51, 119, 255, 255)),
-    }
-    for center_x, center_y, color in centers.values():
+    colors = (
+        XBOX_FACE_BUTTON_PRESSED_COLORS
+        if connected
+        else XBOX_FACE_BUTTON_RELEASED_COLORS
+    )
+    for button_name, (center_x, center_y) in ICON_BUTTON_CENTERS.items():
         _draw_outlined_ellipse(
             painter,
             QtCore.QRectF(
-                center_x - button_size / 2,
-                center_y - button_size / 2,
-                button_size,
-                button_size,
+                center_x - ICON_BUTTON_SIZE / 2,
+                center_y - ICON_BUTTON_SIZE / 2,
+                ICON_BUTTON_SIZE,
+                ICON_BUTTON_SIZE,
             ),
-            color,
+            _qcolor(colors[button_name]),
         )
 
     painter.end()
     return QtGui.QIcon(pixmap)
 
 
-def _create_tray_icon() -> QIcon:
-    return _create_face_buttons_icon()
+def _create_tray_icon(*, connected: bool = False) -> QIcon:
+    icon = TRAY_ICONS.get(connected)
+    if icon is None:
+        icon = _create_face_buttons_icon(connected=connected)
+        TRAY_ICONS[connected] = icon
+    return icon
 
 
 def _list_available_controllers() -> list[dict[str, object]]:
@@ -195,12 +455,15 @@ class ControllerSelectorWindow:
         server_backend: ServerBackend | None = None,
         hide_on_close: bool,
         quit_callback: Callable[[], None] | None = None,
+        selection_changed_callback: Callable[[], None] | None = None,
     ) -> None:
         self.config_path = config_path
         self.server_backend = server_backend
         self.hide_on_close = hide_on_close
         self.quit_callback = quit_callback
+        self.selection_changed_callback = selection_changed_callback
         self.controllers: list[dict[str, object]] = []
+        self.icon_connected: bool | None = None
 
         owner = self
 
@@ -213,38 +476,46 @@ class ControllerSelectorWindow:
                 owner._handle_change_event(event)
 
         self.widget = _Window()
-        self.widget.setWindowTitle("Gamepad Controller Selector")
-        self.widget.setWindowIcon(_create_tray_icon())
-        self.widget.resize(540, 360)
+        self.widget.setWindowTitle("Gamepad Server")
+        self._update_window_icon()
+        self.widget.resize(640, 460)
+        self.widget.setMinimumSize(520, 380)
 
         layout = QtWidgets.QVBoxLayout(self.widget)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(12)
 
-        self.current_label = QtWidgets.QLabel()
-        layout.addWidget(self.current_label)
+        self._build_controller_list(layout)
+        self._build_buttons(layout)
 
-        self.server_label = QtWidgets.QLabel()
-        layout.addWidget(self.server_label)
+        self.refresh()
 
-        self.status_label = QtWidgets.QLabel()
-        layout.addWidget(self.status_label)
-
+    def _build_controller_list(self, layout: QtWidgets.QVBoxLayout) -> None:
         self.controller_list = QtWidgets.QListWidget()
+        self.controller_list.setObjectName("controllerList")
+        self.controller_list.setSpacing(2)
+        self.controller_list.setWordWrap(True)
+        self.controller_list.setItemDelegate(
+            ControllerItemDelegate(self.controller_list)
+        )
         self.controller_list.itemSelectionChanged.connect(
-            self._update_select_button_state
+            self._handle_controller_selection_changed
         )
         self.controller_list.itemDoubleClicked.connect(
             lambda _item: self.select_current_controller()
         )
         layout.addWidget(self.controller_list, stretch=1)
 
+    def _build_buttons(self, layout: QtWidgets.QVBoxLayout) -> None:
         button_row = QtWidgets.QHBoxLayout()
+        button_row.setSpacing(8)
         layout.addLayout(button_row)
 
-        self.select_button = QtWidgets.QPushButton("Select")
+        self.select_button = QtWidgets.QPushButton("Select Controller")
         self.select_button.clicked.connect(self.select_current_controller)
         button_row.addWidget(self.select_button)
 
-        use_any_button = QtWidgets.QPushButton("Use Any Controller")
+        use_any_button = QtWidgets.QPushButton("Use Any")
         use_any_button.clicked.connect(self.use_any_controller)
         button_row.addWidget(use_any_button)
 
@@ -254,15 +525,18 @@ class ControllerSelectorWindow:
 
         button_row.addStretch(1)
 
+        if self.hide_on_close:
+            hide_button = QtWidgets.QPushButton("Hide")
+            hide_button.clicked.connect(self._dismiss)
+            button_row.addWidget(hide_button)
+
         close_button = QtWidgets.QPushButton(
-            "Quit" if hide_on_close else "Close"
+            "Quit" if self.hide_on_close else "Close"
         )
         close_button.clicked.connect(
-            self._request_quit if hide_on_close else self.widget.close
+            self._request_quit if self.hide_on_close else self.widget.close
         )
         button_row.addWidget(close_button)
-
-        self.refresh()
 
     def _dismiss(self) -> None:
         if self.hide_on_close:
@@ -275,6 +549,27 @@ class ControllerSelectorWindow:
         self.select_button.setEnabled(
             0 <= selected_row < len(self.controllers)
         )
+
+    def _handle_controller_selection_changed(self) -> None:
+        self._update_select_button_state()
+
+    def _add_disabled_controller_row(self, text: str) -> None:
+        item = QtWidgets.QListWidgetItem(text)
+        item.setData(CONTROLLER_NAME_ROLE, text)
+        item.setData(CONTROLLER_DETAIL_ROLE, "")
+        item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEnabled)
+        self.controller_list.addItem(item)
+
+    def _update_window_icon(self) -> None:
+        connected = (
+            self.server_backend.is_controller_connected()
+            if self.server_backend is not None
+            else False
+        )
+        if connected == self.icon_connected:
+            return
+        self.icon_connected = connected
+        self.widget.setWindowIcon(_create_tray_icon(connected=connected))
 
     def _handle_close_event(self, event: QCloseEvent) -> None:
         event.accept()
@@ -308,12 +603,8 @@ class ControllerSelectorWindow:
         return self.widget.isVisible()
 
     def refresh(self) -> None:
-        self.current_label.setText(_current_selection_label(self.config_path))
-        if self.server_backend is None:
-            self.server_label.setText("")
-        else:
+        if self.server_backend is not None:
             self.server_backend.ensure_started()
-            self.server_label.setText(self.server_backend.status_label())
 
         self.controller_list.clear()
         try:
@@ -321,23 +612,43 @@ class ControllerSelectorWindow:
         except RuntimeError as exc:
             logger.exception("Failed to refresh controllers")
             self.controllers = []
-            self.status_label.setText(str(exc))
+            self._update_window_icon()
+            self._add_disabled_controller_row(str(exc))
             self.select_button.setEnabled(False)
             return
 
+        selected = _load_selected_controller(self.config_path)
+        active_controller = (
+            self.server_backend.active_controller()
+            if self.server_backend is not None
+            else None
+        )
+        self._update_window_icon()
+
         if not self.controllers:
-            self.status_label.setText("No compatible controllers detected.")
+            self._add_disabled_controller_row("No controllers found")
             self._update_select_button_state()
             return
 
-        selected = _load_selected_controller(self.config_path)
         selected_row = _selected_controller_index(self.controllers, selected)
-        for controller in self.controllers:
-            self.controller_list.addItem(_controller_menu_label(controller))
+        display_names = _controller_display_names(self.controllers)
+        for controller, display_name in zip(
+            self.controllers, display_names, strict=True
+        ):
+            row_label = _controller_row_label(controller, display_name)
+            item = QtWidgets.QListWidgetItem(row_label)
+            item.setData(CONTROLLER_NAME_ROLE, row_label.split("\n", 1)[0])
+            item.setData(
+                CONTROLLER_DETAIL_ROLE, _controller_identity_hint(controller)
+            )
+            item.setData(
+                CONTROLLER_BADGES_ROLE,
+                _controller_row_badges(
+                    controller, selected, active_controller
+                ),
+            )
+            self.controller_list.addItem(item)
 
-        self.status_label.setText(
-            f"Detected {len(self.controllers)} compatible controller(s)."
-        )
         if selected_row is not None:
             self.controller_list.setCurrentRow(selected_row)
         self._update_select_button_state()
@@ -350,12 +661,14 @@ class ControllerSelectorWindow:
             self.config_path, self.controllers[selected_row]
         )
         self.refresh()
-        self._dismiss()
+        if self.selection_changed_callback is not None:
+            self.selection_changed_callback()
 
     def use_any_controller(self) -> None:
         _clear_selected_controller(self.config_path)
         self.refresh()
-        self._dismiss()
+        if self.selection_changed_callback is not None:
+            self.selection_changed_callback()
 
 
 class ControllerSelectorTray:
@@ -367,8 +680,17 @@ class ControllerSelectorTray:
         terminal: bool = False,
     ) -> None:
         self.config_path = config_path or _controller_config_path()
+        self.signals = BackendSignals()
+        self.signals.controllers_changed.connect(self._refresh_from_backend)
+        self.signals.active_controller_changed.connect(
+            self._handle_active_controller_changed
+        )
         self.server_backend = ManagedServerBackend(
-            config_path=self.config_path, lan=lan, terminal=terminal
+            config_path=self.config_path,
+            lan=lan,
+            terminal=terminal,
+            device_change_callback=self.signals.controllers_changed.emit,
+            active_controller_callback=self.signals.active_controller_changed.emit,
         )
         self.server_backend.ensure_started()
 
@@ -377,9 +699,11 @@ class ControllerSelectorTray:
             server_backend=self.server_backend,
             hide_on_close=True,
             quit_callback=self._request_quit,
+            selection_changed_callback=self._update_tray_icon,
         )
 
         self.tray = QtWidgets.QSystemTrayIcon(_create_tray_icon())
+        self.tray_icon_connected: bool | None = False
         self.tray.setToolTip(_current_selection_label(self.config_path))
         self.menu = QtWidgets.QMenu()
         self.menu.aboutToShow.connect(self.rebuild_menu)
@@ -394,86 +718,39 @@ class ControllerSelectorTray:
         }:
             self.window.show()
 
-    def _select_controller(self, controller: dict[str, object]) -> None:
-        _save_selected_controller(self.config_path, controller)
-        self.window.refresh()
-        self.rebuild_menu()
-
-    def _use_any_controller(self) -> None:
-        _clear_selected_controller(self.config_path)
-        self.window.refresh()
-        self.rebuild_menu()
-
     def rebuild_menu(self) -> None:
         self.server_backend.ensure_started()
         self.menu.clear()
+        self._update_tray_icon()
 
-        current_action = self.menu.addAction(
-            _current_selection_label(self.config_path)
-        )
-        current_action.setEnabled(False)
-
-        server_action = self.menu.addAction(self.server_backend.status_label())
-        server_action.setEnabled(False)
-
-        self.menu.addSeparator()
-
-        try:
-            controllers = _list_available_controllers()
-        except RuntimeError as exc:
-            logger.exception("Failed to rebuild tray menu")
-            error_action = self.menu.addAction(str(exc))
-            error_action.setEnabled(False)
-        else:
-            selected = _load_selected_controller(self.config_path)
-            if controllers:
-                for controller in controllers:
-                    action = self.menu.addAction(
-                        _controller_menu_label(controller)
-                    )
-                    action.setCheckable(True)
-                    action.setChecked(
-                        _controller_matches_selection(controller, selected)
-                    )
-                    action.triggered.connect(
-                        lambda _checked=False, controller=controller: self._select_controller(
-                            controller
-                        )
-                    )
-            else:
-                unavailable_action = self.menu.addAction(
-                    "No compatible controllers detected"
-                )
-                unavailable_action.setEnabled(False)
-
-        self.menu.addSeparator()
-
-        show_hide_text = (
-            "Hide selector" if self.window.is_visible() else "Show selector"
-        )
-        show_hide_action = self.menu.addAction(show_hide_text)
-        show_hide_action.triggered.connect(
-            lambda: (
-                self.window.widget.hide()
-                if self.window.is_visible()
-                else self.window.show()
-            )
-        )
-
-        use_any_action = self.menu.addAction("Use any controller")
-        use_any_action.triggered.connect(self._use_any_controller)
-
-        refresh_action = self.menu.addAction("Refresh")
-        refresh_action.triggered.connect(self._refresh)
+        configure_action = self.menu.addAction("Configure...")
+        configure_action.triggered.connect(self.window.show)
 
         quit_action = self.menu.addAction("Quit")
         quit_action.triggered.connect(self._request_quit)
 
         self.tray.setToolTip(_current_selection_label(self.config_path))
 
-    def _refresh(self) -> None:
+    def _refresh_from_backend(self) -> None:
         self.window.refresh()
         self.rebuild_menu()
+
+    def _handle_active_controller_changed(
+        self, active_controller: object
+    ) -> None:
+        self.server_backend.active_controller_info = (
+            active_controller if isinstance(active_controller, dict) else None
+        )
+        self.window.refresh()
+        self.window._update_window_icon()
+        self._update_tray_icon()
+
+    def _update_tray_icon(self) -> None:
+        connected = self.server_backend.is_controller_connected()
+        if connected == self.tray_icon_connected:
+            return
+        self.tray_icon_connected = connected
+        self.tray.setIcon(_create_tray_icon(connected=connected))
 
     def _request_quit(self) -> None:
         button = QtWidgets.QMessageBox.question(
@@ -494,7 +771,7 @@ class ControllerSelectorTray:
         if app is not None:
             app.quit()
 
-    def run(self) -> int:
+    def run(self, *, start_hidden: bool = False) -> int:
         if not QtWidgets.QSystemTrayIcon.isSystemTrayAvailable():
             msg = "No system tray is available in this desktop session."
             raise RuntimeError(msg)
@@ -510,6 +787,8 @@ class ControllerSelectorTray:
 
         self.rebuild_menu()
         self.tray.show()
+        if not start_hidden:
+            self.window.show()
         return int(app.exec())
 
 
@@ -540,47 +819,17 @@ def _install_signal_handlers(quit_callback: Callable[[], None]) -> QTimer:
     return timer
 
 
-def _run_popup(config_path: Path) -> int:
-    app = _create_application()
-    signal_timer = _install_signal_handlers(app.quit)
-    window = ControllerSelectorWindow(
-        config_path, server_backend=None, hide_on_close=False
-    )
-    window.show()
-    try:
-        return app.exec()
-    finally:
-        signal_timer.stop()
-
-
 def run_tray(
     *,
     config_path: Path | None = None,
     lan: bool = False,
     terminal: bool = False,
+    start_hidden: bool = False,
 ) -> int:
     _create_application()
     tray = ControllerSelectorTray(config_path, lan=lan, terminal=terminal)
     signal_timer = _install_signal_handlers(tray._quit)
     try:
-        return tray.run()
+        return tray.run(start_hidden=start_hidden)
     finally:
         signal_timer.stop()
-
-
-def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--popup",
-        action="store_true",
-        help="Open the controller selector window instead of the tray icon.",
-    )
-    args = parser.parse_args(args=argv)
-
-    try:
-        if args.popup:
-            return _run_popup(_controller_config_path())
-        return run_tray()
-    except (RuntimeError, TypeError) as exc:
-        print(str(exc), file=sys.stderr)
-        return 1

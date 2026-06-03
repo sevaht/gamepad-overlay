@@ -18,8 +18,10 @@ from .cli_output import announce
 from .websocket_server import WebSocketBroadcaster
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
     from threading import Event
+
+CONTROLLER_CONFIG_FIELDS = ("guid", "vendor", "product", "name")
 
 logger = logging.getLogger(__name__)
 
@@ -195,6 +197,7 @@ def _build_inputs() -> dict[GamepadInput, Input]:
 class SDLGameController:
     preferred_guid: str | None = None
     name_filter: str | None = None
+    preferred_selection: dict[str, str] | None = None
     _controller: sdl2.SDL_GameController | None = field(
         default=None, init=False
     )
@@ -207,6 +210,9 @@ class SDLGameController:
     _dpad_up: bool = field(default=False, init=False)
     _dpad_down: bool = field(default=False, init=False)
     _selection_mtime_ns: int | None = field(default=None, init=False)
+    _active_controller_info: dict[str, object] | None = field(
+        default=None, init=False
+    )
 
     def __post_init__(self) -> None:
         if sdl2.SDL_Init(sdl2.SDL_INIT_GAMECONTROLLER) != 0:
@@ -231,6 +237,74 @@ class SDLGameController:
         return buffer.value.decode("utf-8")
 
     @staticmethod
+    def _decode_sdl_string(value: object) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, bytes):
+            return value.decode("utf-8", errors="replace")
+        return str(value)
+
+    @staticmethod
+    def _device_string(joystick_index: int, function_name: str) -> str:
+        function = getattr(sdl2, function_name, None)
+        if not callable(function):
+            return ""
+        return SDLGameController._decode_sdl_string(function(joystick_index))
+
+    @staticmethod
+    def _device_integer(joystick_index: int, function_name: str) -> str:
+        function = getattr(sdl2, function_name, None)
+        if not callable(function):
+            return ""
+        value = int(function(joystick_index))
+        return "" if value <= 0 else str(value)
+
+    @staticmethod
+    def _controller_info(joystick_index: int) -> dict[str, object]:
+        name_ptr = sdl2.SDL_GameControllerNameForIndex(joystick_index)
+        name = "unknown" if name_ptr is None else name_ptr.decode("utf-8")
+        return {
+            "index": joystick_index,
+            "name": name,
+            "guid": SDLGameController._device_guid(joystick_index),
+            "path": SDLGameController._device_string(
+                joystick_index, "SDL_GameControllerPathForIndex"
+            ),
+            "vendor": SDLGameController._device_integer(
+                joystick_index, "SDL_JoystickGetDeviceVendor"
+            ),
+            "product": SDLGameController._device_integer(
+                joystick_index, "SDL_JoystickGetDeviceProduct"
+            ),
+            "product_version": SDLGameController._device_integer(
+                joystick_index, "SDL_JoystickGetDeviceProductVersion"
+            ),
+        }
+
+    @staticmethod
+    def _matches_selected_controller(
+        controller: dict[str, object], selected: dict[str, str] | None
+    ) -> bool:
+        if selected is None:
+            return True
+
+        matched_field = False
+        for field_name in CONTROLLER_CONFIG_FIELDS:
+            selected_value = selected.get(field_name, "")
+            if not selected_value:
+                continue
+            matched_field = True
+            controller_value = str(controller.get(field_name, "")).strip()
+            if not controller_value:
+                return False
+            if field_name == "name":
+                if selected_value.lower() not in controller_value.lower():
+                    return False
+            elif selected_value.lower() != controller_value.lower():
+                return False
+        return matched_field
+
+    @staticmethod
     def list_available_controllers() -> list[dict[str, object]]:
         initialized_here = False
         if sdl2.SDL_WasInit(sdl2.SDL_INIT_GAMECONTROLLER) == 0:
@@ -245,16 +319,8 @@ class SDLGameController:
             for joystick_index in range(count):
                 if sdl2.SDL_IsGameController(joystick_index) == 0:
                     continue
-                name_ptr = sdl2.SDL_GameControllerNameForIndex(joystick_index)
-                name = (
-                    "unknown" if name_ptr is None else name_ptr.decode("utf-8")
-                )
                 controllers.append(
-                    {
-                        "index": joystick_index,
-                        "name": name,
-                        "guid": SDLGameController._device_guid(joystick_index),
-                    }
+                    SDLGameController._controller_info(joystick_index)
                 )
             return controllers
         finally:
@@ -266,9 +332,9 @@ class SDLGameController:
         for joystick_index in range(count):
             if sdl2.SDL_IsGameController(joystick_index) == 0:
                 continue
-            guid = self._device_guid(joystick_index)
-            name_ptr = sdl2.SDL_GameControllerNameForIndex(joystick_index)
-            name = "unknown" if name_ptr is None else name_ptr.decode("utf-8")
+            controller_info = self._controller_info(joystick_index)
+            guid = str(controller_info.get("guid", ""))
+            name = str(controller_info.get("name", "unknown"))
 
             if (
                 self.preferred_guid
@@ -278,6 +344,13 @@ class SDLGameController:
             if (
                 self.name_filter
                 and self.name_filter.lower() not in name.lower()
+            ):
+                continue
+            if (
+                self.preferred_selection is not None
+                and not self._matches_selected_controller(
+                    controller_info, self.preferred_selection
+                )
             ):
                 continue
 
@@ -293,28 +366,35 @@ class SDLGameController:
             joystick = sdl2.SDL_GameControllerGetJoystick(controller)
             self._controller = controller
             self._instance_id = int(sdl2.SDL_JoystickInstanceID(joystick))
+            self._active_controller_info = controller_info
             announce(f"Connected to controller: {name} (guid={guid})", logger)
             return True
         return False
 
-    def _selection_signature(self) -> tuple[str | None, str | None]:
-        return (self.preferred_guid, self.name_filter)
+    def _selection_signature(
+        self,
+    ) -> tuple[str | None, str | None, tuple[str, ...]]:
+        selection_values: tuple[str, ...] = ()
+        if self.preferred_selection is not None:
+            selection_values = tuple(
+                self.preferred_selection.get(field_name, "")
+                for field_name in CONTROLLER_CONFIG_FIELDS
+            )
+        return (self.preferred_guid, self.name_filter, selection_values)
 
     def _apply_selection(
-        self,
-        guid: str | None,
-        name_filter: str | None,
-        *,
-        announce_change: bool,
+        self, selected: dict[str, str] | None, *, announce_change: bool
     ) -> None:
+        guid = selected.get("guid") if selected else None
+        name_filter = selected.get("name") if selected else None
         normalized_guid = guid or None
         normalized_name = name_filter or None
         old_signature = self._selection_signature()
-        new_signature = (normalized_guid, normalized_name)
-        if new_signature == old_signature:
-            return
         self.preferred_guid = normalized_guid
         self.name_filter = normalized_name
+        self.preferred_selection = selected
+        if self._selection_signature() == old_signature:
+            return
         if announce_change:
             announce(
                 f"Controller target changed to: {self._target_description()}",
@@ -324,6 +404,7 @@ class SDLGameController:
             sdl2.SDL_GameControllerClose(self._controller)
             self._controller = None
             self._instance_id = None
+            self._active_controller_info = None
 
     def reload_selection_from_config(self, path: Path) -> None:
         try:
@@ -335,15 +416,64 @@ class SDLGameController:
             return
         self._selection_mtime_ns = mtime_ns
         selected = _load_selected_controller(path)
-        guid = selected.get("guid") if selected else None
-        name_filter = selected.get("name") if selected else None
-        self._apply_selection(guid, name_filter, announce_change=True)
+        self._apply_selection(selected, announce_change=True)
+
+    def _wait_for_controller(
+        self,
+        monitor: GamepadMonitor,
+        *,
+        announced_waiting: bool,
+        report_connection_state: Callable[[], None],
+    ) -> bool:
+        if self._controller is not None:
+            return announced_waiting
+        if self._try_open_controller():
+            report_connection_state()
+            monitor.on_start(self, list(self.inputs.values()))
+            if announced_waiting:
+                announce(
+                    f"Controller reconnected: {self._target_description()}",
+                    logger,
+                )
+            return False
+        if not announced_waiting:
+            announce(
+                "Disconnected, waiting for controller connection: "
+                f"{self._target_description()}",
+                logger,
+            )
+        report_connection_state()
+        return True
+
+    def _handle_read_loop_event(
+        self,
+        event: sdl2.SDL_Event,
+        monitor: GamepadMonitor,
+        *,
+        device_change_callback: Callable[[], None] | None,
+        report_connection_state: Callable[[], None],
+    ) -> None:
+        if (
+            event.type
+            in (
+                sdl2.SDL_CONTROLLERDEVICEADDED,
+                sdl2.SDL_CONTROLLERDEVICEREMOVED,
+            )
+            and device_change_callback is not None
+        ):
+            device_change_callback()
+
+        updated = self._handle_event(event, monitor)
+        report_connection_state()
+        if updated:
+            monitor.on_sync(self)
 
     def close(self) -> None:
         if self._controller:
             sdl2.SDL_GameControllerClose(self._controller)
             self._controller = None
             self._instance_id = None
+            self._active_controller_info = None
         sdl2.SDL_QuitSubSystem(sdl2.SDL_INIT_GAMECONTROLLER)
 
     def read_loop(
@@ -352,36 +482,50 @@ class SDLGameController:
         *,
         selection_path: Path | None = None,
         stop_event: Event | None = None,
+        device_change_callback: Callable[[], None] | None = None,
+        active_controller_callback: (
+            Callable[[dict[str, object] | None], None] | None
+        ) = None,
     ) -> None:
         event = sdl2.SDL_Event()
         announced_waiting = False
+        reported_active_controller: dict[str, object] | None = None
+
+        def report_active_controller() -> None:
+            nonlocal reported_active_controller
+            active_controller = self._active_controller_info
+            if active_controller == reported_active_controller:
+                return
+            reported_active_controller = active_controller
+            if active_controller_callback is not None:
+                active_controller_callback(active_controller)
+
         announce(f"Controller target: {self._target_description()}", logger)
-        while stop_event is None or not stop_event.is_set():
-            if selection_path is not None:
-                self.reload_selection_from_config(selection_path)
-            if self._controller is None:
-                if self._try_open_controller():
-                    monitor.on_start(self, list(self.inputs.values()))
-                    if announced_waiting:
-                        announce(
-                            f"Controller reconnected: {self._target_description()}",
-                            logger,
-                        )
-                    announced_waiting = False
-                elif not announced_waiting:
-                    announce(
-                        "Disconnected, waiting for controller connection: "
-                        f"{self._target_description()}",
-                        logger,
-                    )
-                    announced_waiting = True
+        try:
+            while stop_event is None or not stop_event.is_set():
+                if selection_path is not None:
+                    self.reload_selection_from_config(selection_path)
+                    report_active_controller()
+                announced_waiting = self._wait_for_controller(
+                    monitor,
+                    announced_waiting=announced_waiting,
+                    report_connection_state=report_active_controller,
+                )
 
-            if sdl2.SDL_WaitEventTimeout(event, 2000) == 0:
-                continue
+                if sdl2.SDL_WaitEventTimeout(event, 2000) == 0:
+                    continue
 
-            updated = self._handle_event(event, monitor)
-            if updated:
-                monitor.on_sync(self)
+                self._handle_read_loop_event(
+                    event,
+                    monitor,
+                    device_change_callback=device_change_callback,
+                    report_connection_state=report_active_controller,
+                )
+        finally:
+            if reported_active_controller is not None:
+                reported_active_controller = None
+                if active_controller_callback is not None:
+                    active_controller_callback(None)
 
     def _handle_event(
         self, event: sdl2.SDL_Event, monitor: GamepadMonitor
@@ -410,6 +554,7 @@ class SDLGameController:
                 sdl2.SDL_GameControllerClose(self._controller)
             self._controller = None
             self._instance_id = None
+            self._active_controller_info = None
             return False
 
         if event.type == sdl2.SDL_CONTROLLERDEVICEADDED:
@@ -491,6 +636,10 @@ class ServerRunConfig:
     lan: bool = False
     terminal: bool = False
     stop_event: Event | None = None
+    device_change_callback: Callable[[], None] | None = None
+    active_controller_callback: (
+        Callable[[dict[str, object] | None], None] | None
+    ) = None
 
 
 @dataclass
@@ -605,6 +754,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Run the websocket server directly without the Qt tray.",
     )
+    parser.add_argument(
+        "--hide",
+        action="store_true",
+        help="Start the Qt tray with the selector window hidden.",
+    )
     add_log_arguments(parser)
     return parser
 
@@ -620,6 +774,43 @@ def _print_available_controllers() -> int:
             f" guid={controller_info['guid']}"
         )
     return 0
+
+
+def _format_hex_identifier(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        return f"{int(text):04x}"
+    except ValueError:
+        return text
+
+
+def _controller_vid_pid(controller: dict[str, object]) -> str:
+    vendor = _format_hex_identifier(controller.get("vendor"))
+    product = _format_hex_identifier(controller.get("product"))
+    if vendor and product:
+        return f"{vendor}:{product}"
+    return ""
+
+
+def _controller_metadata_summary(
+    controller: dict[str, object], *, version_first: bool
+) -> str:
+    product_version = str(controller.get("product_version", "")).strip()
+    version_part = f"v{product_version}" if product_version else ""
+    id_parts: list[str] = []
+    vendor_product = _controller_vid_pid(controller)
+    if vendor_product:
+        id_parts.append(f"[{vendor_product}]")
+    guid = str(controller.get("guid", "")).strip()
+    if guid:
+        id_parts.append(f"[{guid}]")
+    if version_first:
+        parts = [version_part, *id_parts]
+    else:
+        parts = [*id_parts, version_part]
+    return " ".join(part for part in parts if part)
 
 
 def _select_and_save_controller(config_path: Path) -> int:
@@ -653,7 +844,10 @@ def _run_tray(args: argparse.Namespace, config_path: Path) -> int:
     from .tray import run_tray
 
     return run_tray(
-        config_path=config_path, lan=args.lan, terminal=args.terminal
+        config_path=config_path,
+        lan=args.lan,
+        terminal=args.terminal,
+        start_hidden=args.hide,
     )
 
 
@@ -683,7 +877,13 @@ def run_server(config: ServerRunConfig) -> int:
         )
 
     controller = SDLGameController(
-        preferred_guid=selected_guid or None, name_filter=selected_name or None
+        preferred_guid=selected_guid or None,
+        name_filter=selected_name or None,
+        preferred_selection=(
+            None
+            if config.controller_guid or config.controller_name
+            else selected_config
+        ),
     )
     selection_watch_path = (
         None
@@ -695,6 +895,8 @@ def run_server(config: ServerRunConfig) -> int:
             monitor,
             selection_path=selection_watch_path,
             stop_event=config.stop_event,
+            device_change_callback=config.device_change_callback,
+            active_controller_callback=config.active_controller_callback,
         )
     except KeyboardInterrupt:
         announce("\nExiting.", logger)
@@ -752,16 +954,18 @@ def _load_selected_controller(path: Path) -> dict[str, str] | None:
         return None
     guid = str(payload.get("guid", "")).strip()
     name = str(payload.get("name", "")).strip()
-    if not guid and not name:
+    vendor = str(payload.get("vendor", "")).strip()
+    product = str(payload.get("product", "")).strip()
+    if not any([guid, name, vendor, product]):
         return None
-    return {"guid": guid, "name": name}
+    return {"guid": guid, "vendor": vendor, "product": product, "name": name}
 
 
 def _save_selected_controller(path: Path, selected: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     data = {
-        "guid": str(selected.get("guid", "")).strip(),
-        "name": str(selected.get("name", "")).strip(),
+        field_name: str(selected.get(field_name, "")).strip()
+        for field_name in CONTROLLER_CONFIG_FIELDS
     }
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
@@ -780,14 +984,21 @@ def _interactive_select_controller() -> dict[str, object] | None:
         return None
     print("Detected controllers:")
     for idx, controller in enumerate(controllers, start=1):
-        print(
-            f"  {idx}) {controller['name']}"
-            f" (index={controller['index']}, guid={controller['guid']})"
+        print(f"  {idx}) {controller['name']}")
+        metadata = _controller_metadata_summary(
+            controller, version_first=False
         )
+        if metadata:
+            print(f"     - {metadata}")
+    print()
     while True:
-        choice = input(
-            "Select controller number (or blank to cancel): "
-        ).strip()
+        try:
+            choice = input(
+                "Select controller number (or blank to cancel): "
+            ).strip()
+        except KeyboardInterrupt:
+            print()
+            return None
         if choice == "":
             return None
         if not choice.isdigit():

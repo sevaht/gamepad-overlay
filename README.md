@@ -57,14 +57,14 @@ uv run gamepad-websocket-server --select-controller
 
 That saves the preferred controller for later normal launches.
 
-The default server command opens a desktop tray selector:
+The default server command opens a desktop controller selector and creates a tray icon:
 
 ```bash
 cd server
 uv run gamepad-websocket-server
 ```
 
-The tray selector saves the preferred controller and starts the websocket server. If you need to run without tray integration, use `uv run gamepad-websocket-server --headless`.
+The selector saves the preferred controller and starts the websocket server. If you want the app to start with only the tray icon visible, use `uv run gamepad-websocket-server --hide`. If you need to run without tray integration, use `uv run gamepad-websocket-server --headless`.
 
 ### 2. Point OBS at the Overlay
 

@@ -33,7 +33,7 @@ uv sync
 uv run gamepad-websocket-server
 ```
 
-By default, this opens the Qt system tray controller selector and starts the websocket server. For environments without a desktop tray, run the server directly with `--headless`:
+By default, this opens the Qt controller selector window, creates a system tray icon, and starts the websocket server. To start in the tray with the selector window hidden, pass `--hide`. For environments without a desktop tray, run the server directly with `--headless`:
 
 ```bash
 uv run gamepad-websocket-server --headless
@@ -77,20 +77,20 @@ The default command runs the desktop tray selector:
 uv run gamepad-websocket-server
 ```
 
-This launcher will start the websocket server if one is not already running.
+This launcher opens the selector window and starts the websocket server if one is not already running. Use `--hide` to start with only the tray icon visible:
 
-The tray menu will:
+```bash
+uv run gamepad-websocket-server --hide
+```
 
-- list currently visible compatible controllers
-- save the selected controller
-- allow clearing the selection back to "any controller"
-- allow refresh of the visible controller list
-- show or hide the selector window on left click
-- stop the managed server when you choose `Quit`
+The tray menu only provides:
 
-The tray is implemented with Qt via `PySide6`, which provides the same tray behavior on Linux and Windows. Closing the selector window hides it; use the tray menu's `Quit` action to stop the managed server and exit the tray app.
+- `Configure...` to open the selector window
+- `Quit` to stop the managed server and exit
 
-If the websocket server is already running in its normal config-driven mode, picking a controller from the tray will update the running server automatically.
+The tray is implemented with Qt via `PySide6`, which provides the same tray behavior on Linux and Windows. Closing the selector window hides it; use the tray menu's `Quit` action or the window's `Quit` button to stop the managed server and exit the tray app.
+
+If the websocket server is already running in its normal config-driven mode, selecting a controller in the window will update the running server automatically.
 
 To run without tray integration:
 
