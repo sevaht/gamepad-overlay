@@ -79,6 +79,8 @@
         topLeftY: 0,
         wsPort: 8765,
         pollHz: 240,
+        blur: 0.5,
+        blurReferenceScale: 2,
     });
 
     function parseInputSource(query) {
@@ -310,19 +312,47 @@
         });
 
         const overlayRegion = overlay.region;
+        const preserveAspectRatio = resolvePreserveAspectRatio(query);
         context.svg.setAttribute(
             "viewBox",
             `${overlayRegion.topLeft.x} ${overlayRegion.topLeft.y} ${overlay.width} ${overlay.height}`
         );
-        context.svg.setAttribute("preserveAspectRatio", resolvePreserveAspectRatio(query));
+        context.svg.setAttribute("preserveAspectRatio", preserveAspectRatio);
         context.svg.style.setProperty("shape-rendering", "geometricPrecision");
 
-        const blur = queryNumber(query, "blur", 0.125);
+        const blur = queryNumber(query, "blur", DEFAULTS.blur);
         if (blur > 0) {
-            const filterId = context.addFilter("overlayBlur", blur).id;
+            const filter = context.addFilter("overlayBlur", blur);
+            const blurNode = filter.querySelector("feGaussianBlur");
             const rootGroup = document.getElementById("gamepadOverlayGroup");
-            if (rootGroup) {
-                rootGroup.setAttribute("filter", `url(#${filterId})`);
+            if (rootGroup && blurNode) {
+                rootGroup.setAttribute("filter", `url(#${filter.id})`);
+
+                function overlayScale() {
+                    const svgRect = context.svg.getBoundingClientRect();
+                    const scaleX = svgRect.width / overlay.width;
+                    const scaleY = svgRect.height / overlay.height;
+                    if (preserveAspectRatio === "none") {
+                        return Math.sqrt(scaleX * scaleY) || 1;
+                    }
+                    return Math.min(scaleX, scaleY) || 1;
+                }
+
+                function updateBlur() {
+                    const scale = overlayScale();
+                    blurNode.setAttribute(
+                        "stdDeviation",
+                        String((blur * DEFAULTS.blurReferenceScale) / scale)
+                    );
+                }
+
+                updateBlur();
+                window.requestAnimationFrame(updateBlur);
+                if (typeof ResizeObserver === "function") {
+                    new ResizeObserver(updateBlur).observe(context.svg);
+                } else {
+                    window.addEventListener("resize", updateBlur);
+                }
             }
         }
 
