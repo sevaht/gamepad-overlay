@@ -317,6 +317,15 @@
         context.svg.setAttribute("preserveAspectRatio", resolvePreserveAspectRatio(query));
         context.svg.style.setProperty("shape-rendering", "geometricPrecision");
 
+        const blur = queryNumber(query, "blur", 0.125);
+        if (blur > 0) {
+            const filterId = context.addFilter("overlayBlur", blur).id;
+            const rootGroup = document.getElementById("gamepadOverlayGroup");
+            if (rootGroup) {
+                rootGroup.setAttribute("filter", `url(#${filterId})`);
+            }
+        }
+
         const renderer = new GamepadOverlayRenderer({
             overlay,
             deadzoneMode: "none",

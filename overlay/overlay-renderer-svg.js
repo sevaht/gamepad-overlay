@@ -309,6 +309,21 @@ class SvgContext {
         this.addDefinition(mask);
         return mask;
     }
+
+    addFilter(id, stdDeviation) {
+        const filter = createSvgElement("filter", {
+            id,
+            x: "-20%",
+            y: "-20%",
+            width: "140%",
+            height: "140%",
+        });
+        filter.appendChild(createSvgElement("feGaussianBlur", {
+            stdDeviation: String(stdDeviation),
+        }));
+        this.addDefinition(filter);
+        return filter;
+    }
 }
 
 class GamepadEntity {
