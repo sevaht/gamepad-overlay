@@ -1,6 +1,6 @@
-# Gamepad WebSocket Server
+# Gamepad Server
 
-Local websocket server for the overlay in `../overlay/`.
+Local server for the overlay in `../overlay/`.
 
 This is the intended production input source for OBS usage.
 
@@ -24,7 +24,7 @@ Linux:
 ```bash
 cd server
 uv sync
-uv run gamepad-websocket-server
+uv run gamepad-server
 ```
 
 Windows (PowerShell):
@@ -32,13 +32,13 @@ Windows (PowerShell):
 ```powershell
 cd server
 uv sync
-uv run gamepad-websocket-server
+uv run gamepad-server
 ```
 
-By default, this opens the Qt controller selector window, creates a system tray icon, and starts the websocket server. To start in the tray with the selector window hidden, pass `--hide`. For environments without a desktop tray, run the server directly with `--headless`:
+By default, this opens the Qt controller selector window, creates a system tray icon, and starts the server. To start in the tray with the selector window hidden, pass `--hide`. For environments without a desktop tray, run the server directly with `--headless`:
 
 ```bash
-uv run gamepad-websocket-server --headless
+uv run gamepad-server --headless
 ```
 
 ## Packaged Releases
@@ -78,7 +78,7 @@ The server supports both interactive and explicit controller selection.
 To list currently connected controllers and choose one interactively:
 
 ```bash
-uv run gamepad-websocket-server --select-controller
+uv run gamepad-server --select-controller
 ```
 
 This saves the selected controller so later normal launches will reuse it. You can also choose `0` to select "any controller", which clears the saved selection.
@@ -88,25 +88,25 @@ This saves the selected controller so later normal launches will reuse it. You c
 To clear the saved selection and accept any connected controller:
 
 ```bash
-uv run gamepad-websocket-server --any-controller
+uv run gamepad-server --any-controller
 ```
 
 This removes the persisted selection so the server will accept any available controller on next launch.
 
-If the websocket server is already running without an explicit `--controller-guid` or `--controller-name` override, changing the saved selection will cause the running server to switch targets automatically.
+If the server is already running without an explicit `--controller-guid` or `--controller-name` override, changing the saved selection will cause the running server to switch targets automatically.
 
 ### Tray Selector
 
 The default command runs the desktop tray selector:
 
 ```bash
-uv run gamepad-websocket-server
+uv run gamepad-server
 ```
 
-This launcher opens the selector window and starts the websocket server if one is not already running. Use `--hide` to start with only the tray icon visible:
+This launcher opens the selector window and starts the server if one is not already running. Use `--hide` to start with only the tray icon visible:
 
 ```bash
-uv run gamepad-websocket-server --hide
+uv run gamepad-server --hide
 ```
 
 The tray menu only provides:
@@ -116,12 +116,12 @@ The tray menu only provides:
 
 The tray is implemented with Qt via `PySide6`, which provides the same tray behavior on Linux and Windows. Closing the selector window hides it; use the tray menu's `Quit` action or the window's `Quit` button to stop the managed server and exit the tray app.
 
-If the websocket server is already running in its normal config-driven mode, selecting a controller in the window will update the running server automatically.
+If the server is already running in its normal config-driven mode, selecting a controller in the window will update the running server automatically.
 
 To run without tray integration:
 
 ```bash
-uv run gamepad-websocket-server --headless
+uv run gamepad-server --headless
 ```
 
 ### Inspect Available Controllers
@@ -129,7 +129,7 @@ uv run gamepad-websocket-server --headless
 To print the currently visible controllers without selecting one:
 
 ```bash
-uv run gamepad-websocket-server --list-controllers
+uv run gamepad-server --list-controllers
 ```
 
 ### Explicit Selection by GUID
@@ -137,7 +137,7 @@ uv run gamepad-websocket-server --list-controllers
 If you already know the controller GUID:
 
 ```bash
-uv run gamepad-websocket-server --controller-guid <guid>
+uv run gamepad-server --controller-guid <guid>
 ```
 
 ### Explicit Selection by Name Substring
@@ -145,7 +145,7 @@ uv run gamepad-websocket-server --controller-guid <guid>
 If you want to match a controller by a case-insensitive name substring:
 
 ```bash
-uv run gamepad-websocket-server --controller-name "Xbox"
+uv run gamepad-server --controller-name "Xbox"
 ```
 
 ### Persistence
@@ -155,51 +155,51 @@ Controller selection is persisted and reused on future launches. Running one of 
 List controllers:
 
 ```bash
-uv run gamepad-websocket-server --list-controllers
+uv run gamepad-server --list-controllers
 ```
 
 Interactively select and save the selected controller (choose `0` to use any):
 
 ```bash
-uv run gamepad-websocket-server --select-controller
+uv run gamepad-server --select-controller
 ```
 
 Clear the saved selection and use any controller:
 
 ```bash
-uv run gamepad-websocket-server --any-controller
+uv run gamepad-server --any-controller
 ```
 
 Select controller by GUID:
 
 ```bash
-uv run gamepad-websocket-server --controller-guid <guid>
+uv run gamepad-server --controller-guid <guid>
 ```
 
 Select controller by name substring:
 
 ```bash
-uv run gamepad-websocket-server --controller-name "Xbox"
+uv run gamepad-server --controller-name "Xbox"
 ```
 
 Allow websocket access from other machines on the LAN:
 
 ```bash
-uv run gamepad-websocket-server --lan
+uv run gamepad-server --lan
 ```
 
 Print controller state to the terminal instead of serving websocket:
 
 ```bash
-uv run gamepad-websocket-server --terminal
+uv run gamepad-server --terminal
 ```
 
 ## Controller Selection Persistence
 
 Selected controller selection is persisted to:
 
-- Linux: `~/.config/gamepad-websocket-server/controller-selection.json` unless `XDG_CONFIG_HOME` is set
-- Windows: under the current user's home directory in `.config/gamepad-websocket-server/controller-selection.json`
+- Linux: `~/.config/gamepad-server/controller-selection.json` unless `XDG_CONFIG_HOME` is set
+- Windows: under the current user's home directory in `.config/gamepad-server/controller-selection.json`
 
 ## Intended Use
 

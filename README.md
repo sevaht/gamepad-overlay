@@ -4,14 +4,14 @@ Gamepad button and stick overlay for OBS.
 
 This repository contains two pieces:
 
-- `server/`: local websocket server that reads controller input
+- `server/`: local Gamepad Server that reads controller input
 - `overlay/`: browser-based overlay UI
 
 The intended production workflow is:
 
-1. run the local websocket server,
+1. run the local Gamepad Server,
 2. load the overlay in an OBS Browser Source,
-3. let the overlay connect to the local websocket server.
+3. let the overlay connect to the local Gamepad Server.
 
 The default input source is `websocket`, which is the intended OBS workflow.
 
@@ -39,7 +39,7 @@ Run the same commands on Linux or Windows (for example in PowerShell on Windows)
 ```bash
 cd server
 uv sync
-uv run gamepad-websocket-server
+uv run gamepad-server
 ```
 
 The server listens on:
@@ -52,7 +52,7 @@ Optional: if you have multiple controllers connected and want to choose one up f
 
 ```bash
 cd server
-uv run gamepad-websocket-server --select-controller
+uv run gamepad-server --select-controller
 ```
 
 That saves the selected controller for later normal launches.
@@ -61,10 +61,10 @@ The default server command opens a desktop controller selector and creates a tra
 
 ```bash
 cd server
-uv run gamepad-websocket-server
+uv run gamepad-server
 ```
 
-The selector saves the selected controller and starts the websocket server. Use `uv run gamepad-websocket-server --any-controller` to clear the saved selection (the next launch will accept any controller). If you want the app to start with only the tray icon visible, use `uv run gamepad-websocket-server --hide`. If you need to run without tray integration, use `uv run gamepad-websocket-server --headless`.
+The selector saves the selected controller and starts the server. Use `uv run gamepad-server --any-controller` to clear the saved selection (the next launch will accept any controller). If you want the app to start with only the tray icon visible, use `uv run gamepad-server --hide`. If you need to run without tray integration, use `uv run gamepad-server --headless`.
 
 ## Packaged Releases
 
@@ -79,7 +79,7 @@ gamepad-overlay-<tag>-<platform>/
 - Run the packaged server app from `server/`.
 - Point OBS at `overlay/index.html` from the extracted `overlay/` directory.
 
-This keeps the websocket server self-contained while still giving OBS a real local file path for the overlay assets.
+This keeps the Gamepad Server self-contained while still giving OBS a real local file path for the overlay assets.
 
 ### 2. Point OBS at the Overlay
 

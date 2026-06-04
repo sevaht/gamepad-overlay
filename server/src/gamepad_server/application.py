@@ -758,7 +758,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--headless",
         action="store_true",
-        help="Run the websocket server directly without the Qt tray.",
+        help="Run the server directly without the Qt tray.",
     )
     parser.add_argument(
         "--hide",
@@ -957,7 +957,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 def _controller_config_path() -> Path:
     config_home = os.environ.get("XDG_CONFIG_HOME")
     base = Path(config_home) if config_home else Path.home() / ".config"
-    return base / "gamepad-websocket-server" / CONFIG_FILE_NAME
+    return base / "gamepad-server" / CONFIG_FILE_NAME
 
 
 def _load_selected_controller(path: Path) -> dict[str, str] | None:

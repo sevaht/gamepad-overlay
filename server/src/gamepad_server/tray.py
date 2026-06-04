@@ -108,9 +108,7 @@ class ManagedServerBackend:
         self.failed = False
         self.stop_event.clear()
         self.thread = Thread(
-            target=self._run_server,
-            name="gamepad-websocket-server",
-            daemon=True,
+            target=self._run_server, name="gamepad-server", daemon=True
         )
         self.thread.start()
 

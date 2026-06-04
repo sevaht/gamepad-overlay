@@ -4,14 +4,14 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from gamepad_websocket_server.application import (
+from gamepad_server.application import (
     SDLGameController,
     ServerRunConfig,
     _clear_selected_controller,
     _controller_metadata_summary,
     _save_selected_controller,
 )
-from gamepad_websocket_server.tray import (
+from gamepad_server.tray import (
     ManagedServerBackend,
     _controller_display_names,
     _controller_matches_selection,
@@ -215,9 +215,7 @@ def test_managed_server_backend_starts_in_process_server(
     def fake_run_server(config: ServerRunConfig) -> None:
         calls.append(config)
 
-    monkeypatch.setattr(
-        "gamepad_websocket_server.tray.run_server", fake_run_server
-    )
+    monkeypatch.setattr("gamepad_server.tray.run_server", fake_run_server)
 
     backend = ManagedServerBackend(
         config_path=Path("controller-selection.json")
@@ -293,9 +291,7 @@ def test_managed_server_backend_status_is_running_while_thread_alive(
         stop_event = cast("Event", config.stop_event)
         stop_event.wait(timeout=1)
 
-    monkeypatch.setattr(
-        "gamepad_websocket_server.tray.run_server", fake_run_server
-    )
+    monkeypatch.setattr("gamepad_server.tray.run_server", fake_run_server)
 
     backend = ManagedServerBackend(
         config_path=Path("controller-selection.json")
@@ -319,9 +315,7 @@ def test_managed_server_backend_stop_signals_thread(
         stop_event.wait(timeout=1)
         stopped = stop_event.is_set()
 
-    monkeypatch.setattr(
-        "gamepad_websocket_server.tray.run_server", fake_run_server
-    )
+    monkeypatch.setattr("gamepad_server.tray.run_server", fake_run_server)
 
     backend = ManagedServerBackend(
         config_path=Path("controller-selection.json")

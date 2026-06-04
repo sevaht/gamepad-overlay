@@ -26,4 +26,4 @@ FROM python-runtime AS final
 WORKDIR /app
 COPY --from=source-prepared /app /app
 ENV PATH="/app/.venv/bin:$PATH"
-CMD ["gamepad-websocket-server"]
+CMD ["gamepad-server"]
