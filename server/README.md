@@ -6,6 +6,8 @@ This is the intended production input source for OBS usage.
 
 ## Requirements
 
+For running from source:
+
 - Python 3.11+
 - `uv`
 - SDL2-compatible runtime available
@@ -39,6 +41,20 @@ By default, this opens the Qt controller selector window, creates a system tray 
 uv run gamepad-websocket-server --headless
 ```
 
+## Packaged Releases
+
+Tagged releases include portable archives for Windows and Linux. Each archive extracts to a directory with:
+
+```text
+server/
+overlay/
+```
+
+- Run the packaged server application from `server/`.
+- Point OBS at `overlay/index.html` from the extracted `overlay/` directory.
+
+This is the recommended path for users who do not want to install Python or `uv`.
+
 The websocket server listens on:
 
 - host: `localhost` by default
@@ -65,11 +81,11 @@ To list currently connected controllers and choose one interactively:
 uv run gamepad-websocket-server --select-controller
 ```
 
-This saves the preferred controller so later normal launches will reuse it. You can also choose `0` to select "any controller", which clears the saved preference.
+This saves the selected controller so later normal launches will reuse it. You can also choose `0` to select "any controller", which clears the saved selection.
 
 ### Use Any Controller
 
-To clear the saved preference and accept any connected controller:
+To clear the saved selection and accept any connected controller:
 
 ```bash
 uv run gamepad-websocket-server --any-controller
@@ -134,7 +150,7 @@ uv run gamepad-websocket-server --controller-name "Xbox"
 
 ### Persistence
 
-Controller selection is persisted and reused on future launches. Running one of the explicit selection commands also updates the saved preference.
+Controller selection is persisted and reused on future launches. Running one of the explicit selection commands also updates the saved selection.
 
 List controllers:
 
@@ -142,13 +158,13 @@ List controllers:
 uv run gamepad-websocket-server --list-controllers
 ```
 
-Interactively select and save a preferred controller (choose `0` to use any):
+Interactively select and save the selected controller (choose `0` to use any):
 
 ```bash
 uv run gamepad-websocket-server --select-controller
 ```
 
-Clear the saved preference and use any controller:
+Clear the saved selection and use any controller:
 
 ```bash
 uv run gamepad-websocket-server --any-controller
@@ -180,7 +196,7 @@ uv run gamepad-websocket-server --terminal
 
 ## Controller Selection Persistence
 
-Preferred controller selection is persisted to:
+Selected controller selection is persisted to:
 
 - Linux: `~/.config/gamepad-websocket-server/controller-selection.json` unless `XDG_CONFIG_HOME` is set
 - Windows: under the current user's home directory in `.config/gamepad-websocket-server/controller-selection.json`

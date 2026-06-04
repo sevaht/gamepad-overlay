@@ -17,8 +17,8 @@ from gamepad_websocket_server.tray import (
     _controller_matches_selection,
     _controller_row_badges,
     _controller_row_label,
-    _current_selection_label,
     _selected_controller_index,
+    _status_text,
 )
 
 if TYPE_CHECKING:
@@ -27,19 +27,22 @@ if TYPE_CHECKING:
     from pytest import MonkeyPatch
 
 
-def test_current_selection_label_defaults_to_any_controller(
-    tmp_path: Path,
-) -> None:
-    assert _current_selection_label(
-        tmp_path / "controller-selection.json"
-    ) == ("Current: any controller")
+def test_status_text_defaults_to_detached() -> None:
+    assert _status_text(attached=False, client_count=0) == (
+        "Gamepad Server - Detached (0 Clients Connected)"
+    )
 
 
-def test_current_selection_label_uses_saved_guid(tmp_path: Path) -> None:
-    path = tmp_path / "controller-selection.json"
-    _save_selected_controller(path, {"guid": "abc123", "name": "Pad"})
+def test_status_text_uses_attached_state_and_client_count() -> None:
+    assert _status_text(attached=True, client_count=2) == (
+        "Gamepad Server - Attached (2 Clients Connected)"
+    )
 
-    assert _current_selection_label(path) == "Current: guid=abc123"
+
+def test_status_text_uses_singular_client_label() -> None:
+    assert _status_text(attached=True, client_count=1) == (
+        "Gamepad Server - Attached (1 Client Connected)"
+    )
 
 
 def test_save_selected_controller_persists_only_match_fields(
@@ -111,10 +114,10 @@ def test_controller_row_label_includes_guid_detail() -> None:
     )
 
 
-def test_controller_row_badges_mark_saved_controller_preferred() -> None:
+def test_controller_row_badges_mark_saved_controller_selected() -> None:
     assert _controller_row_badges(
         {"name": "Pad", "guid": "guid-1"}, {"guid": "guid-1", "name": ""}, None
-    ) == ("Preferred",)
+    ) == ("Selected",)
 
 
 def test_controller_row_badges_mark_active_controller() -> None:
@@ -123,12 +126,12 @@ def test_controller_row_badges_mark_active_controller() -> None:
     ) == ("★",)
 
 
-def test_controller_row_badges_combine_active_and_preferred() -> None:
+def test_controller_row_badges_combine_active_and_selected() -> None:
     assert _controller_row_badges(
         {"name": "Pad", "guid": "guid-1"},
         {"guid": "guid-1", "name": ""},
         {"guid": "guid-1", "name": ""},
-    ) == ("★", "Preferred")
+    ) == ("★", "Selected")
 
 
 def test_controller_row_badges_omit_unmatched_controller() -> None:
@@ -239,9 +242,9 @@ def test_managed_server_backend_tracks_controller_connection() -> None:
 def test_reload_selection_updates_saved_match_fields(tmp_path: Path) -> None:
     config_path = tmp_path / "controller-selection.json"
     controller = object.__new__(SDLGameController)
-    controller.preferred_guid = "guid-1"
+    controller.selected_guid = "guid-1"
     controller.name_filter = None
-    controller.preferred_selection = {
+    controller.selected_controller = {
         "guid": "guid-1",
         "name": "Pad",
         "vendor": "1118",
@@ -264,8 +267,8 @@ def test_reload_selection_updates_saved_match_fields(tmp_path: Path) -> None:
     )
     controller.reload_selection_from_config(config_path)
 
-    assert controller.preferred_selection is not None
-    assert controller.preferred_selection == {
+    assert controller.selected_controller is not None
+    assert controller.selected_controller == {
         "guid": "guid-1",
         "vendor": "1118",
         "product": "654",
@@ -275,8 +278,8 @@ def test_reload_selection_updates_saved_match_fields(tmp_path: Path) -> None:
     _clear_selected_controller(config_path)
     controller.reload_selection_from_config(config_path)
 
-    assert controller.preferred_selection is None
-    assert controller.preferred_guid is None
+    assert controller.selected_controller is None
+    assert controller.selected_guid is None
 
 
 def test_managed_server_backend_status_is_running_while_thread_alive(

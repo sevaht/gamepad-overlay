@@ -195,9 +195,9 @@ def _build_inputs() -> dict[GamepadInput, Input]:
 
 @dataclass
 class SDLGameController:
-    preferred_guid: str | None = None
+    selected_guid: str | None = None
     name_filter: str | None = None
-    preferred_selection: dict[str, str] | None = None
+    selected_controller: dict[str, str] | None = None
     _controller: sdl2.SDL_GameController | None = field(
         default=None, init=False
     )
@@ -223,8 +223,8 @@ class SDLGameController:
         sdl2.SDL_GameControllerEventState(sdl2.SDL_ENABLE)
 
     def _target_description(self) -> str:
-        if self.preferred_guid:
-            return f"guid={self.preferred_guid}"
+        if self.selected_guid:
+            return f"guid={self.selected_guid}"
         if self.name_filter:
             return f"name~='{self.name_filter}'"
         return "any game controller"
@@ -337,8 +337,8 @@ class SDLGameController:
             name = str(controller_info.get("name", "unknown"))
 
             if (
-                self.preferred_guid
-                and guid.lower() != self.preferred_guid.lower()
+                self.selected_guid
+                and guid.lower() != self.selected_guid.lower()
             ):
                 continue
             if (
@@ -347,9 +347,9 @@ class SDLGameController:
             ):
                 continue
             if (
-                self.preferred_selection is not None
+                self.selected_controller is not None
                 and not self._matches_selected_controller(
-                    controller_info, self.preferred_selection
+                    controller_info, self.selected_controller
                 )
             ):
                 continue
@@ -375,12 +375,12 @@ class SDLGameController:
         self,
     ) -> tuple[str | None, str | None, tuple[str, ...]]:
         selection_values: tuple[str, ...] = ()
-        if self.preferred_selection is not None:
+        if self.selected_controller is not None:
             selection_values = tuple(
-                self.preferred_selection.get(field_name, "")
+                self.selected_controller.get(field_name, "")
                 for field_name in CONTROLLER_CONFIG_FIELDS
             )
-        return (self.preferred_guid, self.name_filter, selection_values)
+        return (self.selected_guid, self.name_filter, selection_values)
 
     def _apply_selection(
         self, selected: dict[str, str] | None, *, announce_change: bool
@@ -390,9 +390,9 @@ class SDLGameController:
         normalized_guid = guid or None
         normalized_name = name_filter or None
         old_signature = self._selection_signature()
-        self.preferred_guid = normalized_guid
+        self.selected_guid = normalized_guid
         self.name_filter = normalized_name
-        self.preferred_selection = selected
+        self.selected_controller = selected
         if self._selection_signature() == old_signature:
             return
         if announce_change:
@@ -640,6 +640,7 @@ class ServerRunConfig:
     active_controller_callback: (
         Callable[[dict[str, object] | None], None] | None
     ) = None
+    client_count_callback: Callable[[int], None] | None = None
 
 
 @dataclass
@@ -747,7 +748,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--any-controller",
         action="store_true",
-        help="Clear the preferred controller selection and use any controller.",
+        help="Clear the saved controller selection and use any controller.",
     )
     parser.add_argument(
         "--select-controller",
@@ -829,7 +830,7 @@ def _select_and_save_controller(config_path: Path) -> int:
         return 0
     _save_selected_controller(config_path, selected)
     print(
-        "Saved preferred controller: "
+        "Saved selected controller: "
         f"{selected['name']} (guid={selected['guid']})"
     )
     return 0
@@ -880,15 +881,16 @@ def run_server(config: ServerRunConfig) -> int:
             host=bind_host,
             path="/gamepad-overlay",
             banner="gamepad-overlay",
+            client_count_callback=config.client_count_callback,
         )
         monitor = WebSocketGamepadMonitor(
             websocket_broadcaster=websocket_broadcaster
         )
 
     controller = SDLGameController(
-        preferred_guid=selected_guid or None,
+        selected_guid=selected_guid or None,
         name_filter=selected_name or None,
-        preferred_selection=(
+        selected_controller=(
             None
             if config.controller_guid or config.controller_name
             else selected_config

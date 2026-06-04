@@ -23,6 +23,10 @@ body {
     stroke-linecap: round;
 }
 
+.single-border-stroke {
+    stroke-width: calc((var(--overlay-border-inner-size) + var(--overlay-border-outer-size)) * 1px);
+}
+
 .gamepad-button {
     fill: var(--btn-released, rgba(44, 47, 51, 0.7));
     stroke: black;

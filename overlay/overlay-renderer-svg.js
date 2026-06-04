@@ -459,7 +459,12 @@ class GamepadEntity {
         if (this.#styleSourceMaskId != null) {
             setMask(useElement, this.#styleSourceMaskId);
         }
-        const strokeLayer = this.#layerElements.find((element) => element.classList.contains("black-border-stroke"));
+        const strokeLayer = this.#layerElements.find(
+            (element) => (
+                element.classList.contains("black-border-stroke")
+                || element.classList.contains("single-border-stroke")
+            )
+        );
         if (strokeLayer != null && strokeLayer.parentNode === this.#layerParent) {
             this.#layerParent.insertBefore(useElement, strokeLayer);
         } else {
@@ -815,6 +820,7 @@ class GamepadOverlay {
     #cornerCompensation;
     #borderWidth;
     #innerBorderSize;
+    #outerBorderSize;
     #region;
     #digitalThreshold;
     #themeVariables;
@@ -839,6 +845,7 @@ class GamepadOverlay {
         this.#innerBorderSize = Math.max(0, Number(model?.innerBorderSize) || 0);
         this.#model = model;
         this.#borderWidth = this.#model.borderWidth;
+        this.#outerBorderSize = Math.max(0, this.#borderWidth - this.#innerBorderSize);
         this.#digitalThreshold = digitalThreshold;
         this.#themeVariables = {...themeVariables};
         this.#prewarmPressFillVisuals = Boolean(prewarmPressFillVisuals);
@@ -972,10 +979,49 @@ class GamepadOverlay {
         });
     }
 
+    #innerBorderEnabled(includeBorder) {
+        return Boolean(includeBorder) && this.#innerBorderSize > 0;
+    }
+
+    #outerBorderEnabled(includeBorder) {
+        return Boolean(includeBorder) && this.#outerBorderSize > 0;
+    }
+
+    #strokeBorderSize(includeBorder) {
+        if (this.#innerBorderEnabled(includeBorder)) {
+            return this.#innerBorderSize;
+        }
+        if (this.#outerBorderEnabled(includeBorder)) {
+            return this.#outerBorderSize;
+        }
+        return 0;
+    }
+
+    #includeMaskedOuterBorder(includeBorder) {
+        return (
+            this.#innerBorderEnabled(includeBorder)
+            && this.#outerBorderEnabled(includeBorder)
+        );
+    }
+
+    #strokeBorderClasses(includeBorder) {
+        if (!Boolean(includeBorder)) {
+            return [];
+        }
+        if (this.#innerBorderEnabled(includeBorder)) {
+            return ["black-border-stroke", "gamepad-button-bordered"];
+        }
+        if (this.#outerBorderEnabled(includeBorder)) {
+            return ["outer-border", "single-border-stroke"];
+        }
+        return [];
+    }
+
     #createBorderedLayerSpecs({
         fillShapeId,
         includeBorderStroke,
         includeOuterBorder,
+        strokeClasses = [],
         faceClasses,
         semanticAttributes,
         faceSourceId = null,
@@ -997,7 +1043,7 @@ class GamepadOverlay {
         }));
         if (includeBorderStroke) {
             layers.push(new LayerSpec({
-                classes: ["black-border-stroke", "gamepad-button-bordered"],
+                classes: strokeClasses,
                 attributes: semanticAttributes,
             }));
         }
@@ -1021,9 +1067,10 @@ class GamepadOverlay {
         prewarmPressFillVisual = this.#prewarmPressFillVisuals && pressMode === "analog",
     }) {
         const shapeModel = new DomainShapeModel({region, shapeType, cornerRadiusPercent});
-        const borderModel = new DomainBorderModel({innerSize: this.#innerBorderSize});
+        const borderModel = new DomainBorderModel({innerSize: this.#strokeBorderSize(includeBorder)});
         const includeBorderStroke = borderModel.appliesToBordered(includeBorder);
         const borderExpandAmount = borderModel.expandAmount();
+        const includeMaskedOuterBorder = this.#includeMaskedOuterBorder(includeBorder);
         const trianglePoints = shapeModel.trianglePoints();
         const expandedShapeModel = borderModel.expandedShape(shapeModel, includeBorder);
         const faceShapeId = includeBorderStroke
@@ -1032,7 +1079,8 @@ class GamepadOverlay {
         const layers = this.#createBorderedLayerSpecs({
             fillShapeId: faceShapeId ?? id,
             includeBorderStroke,
-            includeOuterBorder,
+            includeOuterBorder: includeOuterBorder && includeMaskedOuterBorder,
+            strokeClasses: this.#strokeBorderClasses(includeBorder),
             faceClasses: [].concat(buttonClasses, semanticClasses),
             semanticAttributes,
             faceSourceId: id,
@@ -1091,14 +1139,19 @@ class GamepadOverlay {
     }
 
     #createCrossBorder({group, id, layout}) {
-        const expandedPoints = this.#offsetConvexPolygon(layout.crossPoints, this.#innerBorderSize / 2);
+        const includeBorderStroke = this.#strokeBorderSize(true) > 0;
+        const expandedPoints = this.#offsetConvexPolygon(
+            layout.crossPoints,
+            this.#strokeBorderSize(true) / 2
+        );
         return new GamepadEntity({
             context: this.#context,
             element: createSvgPolygon(expandedPoints, {id}),
             layers: this.#createBorderedLayerSpecs({
                 fillShapeId: id,
-                includeBorderStroke: true,
-                includeOuterBorder: true,
+                includeBorderStroke,
+                includeOuterBorder: this.#includeMaskedOuterBorder(true),
+                strokeClasses: this.#strokeBorderClasses(true),
                 faceClasses: ["gamepad-button", "side-left", "role-dpad-cross"],
                 semanticAttributes: {"data-side": "left", "data-role": "dpad-cross"},
                 faceSourceId: id,

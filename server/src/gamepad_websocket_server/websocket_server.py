@@ -1,6 +1,7 @@
 import json
 import logging
 import threading
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Any
@@ -54,12 +55,19 @@ class _ClientSession:
 
 class WebSocketBroadcaster:
     def __init__(
-        self, port: int, *, path: str, banner: str, host: str = "localhost"
+        self,
+        port: int,
+        *,
+        path: str,
+        banner: str,
+        host: str = "localhost",
+        client_count_callback: Callable[[int], None] | None = None,
     ) -> None:
         self._port = port
         self._host = host
         self._path = path
         self._banner = banner
+        self._client_count_callback = client_count_callback
         self._clients: dict[Connection, _ClientSession] = {}
         self._clients_lock = threading.Lock()
 
@@ -68,6 +76,10 @@ class WebSocketBroadcaster:
 
     def _run_server(self) -> None:
         serve(self._handler, host=self._host, port=self._port).serve_forever()
+
+    def _report_client_count(self, count: int) -> None:
+        if self._client_count_callback is not None:
+            self._client_count_callback(count)
 
     def _handler(self, ws: Connection) -> None:
         if ws.request is None or ws.request.path != self._path:
@@ -83,6 +95,7 @@ class WebSocketBroadcaster:
             with self._clients_lock:
                 self._clients[ws] = session
                 connection_count = len(self._clients)
+            self._report_client_count(connection_count)
             announce(
                 f"WebSocket client connected ({connection_count} active)",
                 logger,
@@ -100,6 +113,7 @@ class WebSocketBroadcaster:
                 connection_count = len(self._clients)
             if removed_session is not None:
                 removed_session.close()
+            self._report_client_count(connection_count)
             announce(
                 f"WebSocket client disconnected ({connection_count} active)",
                 logger,

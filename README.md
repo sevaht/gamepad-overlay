@@ -23,7 +23,7 @@ If you want to use this in OBS, start here.
 
 ### 1. Run the Local Websocket Server
 
-Requirements:
+Requirements for running from source:
 
 - Python 3.11+
 - `uv`
@@ -55,7 +55,7 @@ cd server
 uv run gamepad-websocket-server --select-controller
 ```
 
-That saves the preferred controller for later normal launches.
+That saves the selected controller for later normal launches.
 
 The default server command opens a desktop controller selector and creates a tray icon:
 
@@ -64,7 +64,22 @@ cd server
 uv run gamepad-websocket-server
 ```
 
-The selector saves the preferred controller and starts the websocket server. Use `uv run gamepad-websocket-server --any-controller` to clear the saved preference (the next launch will accept any controller). If you want the app to start with only the tray icon visible, use `uv run gamepad-websocket-server --hide`. If you need to run without tray integration, use `uv run gamepad-websocket-server --headless`.
+The selector saves the selected controller and starts the websocket server. Use `uv run gamepad-websocket-server --any-controller` to clear the saved selection (the next launch will accept any controller). If you want the app to start with only the tray icon visible, use `uv run gamepad-websocket-server --hide`. If you need to run without tray integration, use `uv run gamepad-websocket-server --headless`.
+
+## Packaged Releases
+
+Tagged releases include portable archives for Windows and Linux. Each archive extracts to a directory shaped like:
+
+```text
+gamepad-overlay-<tag>-<platform>/
+  server/
+  overlay/
+```
+
+- Run the packaged server app from `server/`.
+- Point OBS at `overlay/index.html` from the extracted `overlay/` directory.
+
+This keeps the websocket server self-contained while still giving OBS a real local file path for the overlay assets.
 
 ### 2. Point OBS at the Overlay
 
@@ -98,12 +113,6 @@ Built-in themes:
 - `snes`
 
 The built-in themes color the right-side face buttons to resemble the corresponding controller family.
-
-## Windows Convenience Note
-
-For now, `uv` is the intended easy path on Windows.
-
-If this project later needs a more turnkey Windows distribution, the most practical next step would likely be a packaged standalone executable (for example via PyInstaller). That is not set up yet, so the current instructions use `uv`.
 
 ## Experimental / Testing Modes
 

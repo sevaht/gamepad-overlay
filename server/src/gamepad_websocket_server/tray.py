@@ -33,7 +33,7 @@ CONTROLLER_ROW_LINE_GAP = 2
 CONTROLLER_NAME_POINT_SIZE_INCREMENT = 2
 CONTROLLER_BADGE_GAP = 6
 ACTIVE_CONTROLLER_BADGE = "★"
-PREFERRED_CONTROLLER_BADGE = "Preferred"
+SELECTED_CONTROLLER_BADGE = "Selected"
 ICON_BUTTON_SIZE = 24
 ICON_BUTTON_STROKE_WIDTH = 3.0
 ICON_BUTTON_CENTERS = {
@@ -71,6 +71,8 @@ class ServerBackend(Protocol):
 
     def is_controller_connected(self) -> bool: ...
 
+    def client_count(self) -> int: ...
+
     def active_controller(self) -> dict[str, object] | None: ...
 
     def stop(self) -> None: ...
@@ -79,6 +81,7 @@ class ServerBackend(Protocol):
 class BackendSignals(QtCore.QObject):
     controllers_changed = QtCore.Signal()
     active_controller_changed = QtCore.Signal(object)
+    client_count_changed = QtCore.Signal(int)
 
 
 @dataclass
@@ -90,12 +93,14 @@ class ManagedServerBackend:
     active_controller_callback: (
         Callable[[dict[str, object] | None], None] | None
     ) = None
+    client_count_callback: Callable[[int], None] | None = None
     thread: Thread | None = field(default=None, init=False)
     stop_event: Event = field(default_factory=Event, init=False)
     failed: bool = field(default=False, init=False)
     active_controller_info: dict[str, object] | None = field(
         default=None, init=False
     )
+    connected_client_count: int = field(default=0, init=False)
 
     def ensure_started(self) -> None:
         if self.thread is not None and self.thread.is_alive():
@@ -119,6 +124,7 @@ class ManagedServerBackend:
                     stop_event=self.stop_event,
                     device_change_callback=self.device_change_callback,
                     active_controller_callback=self.active_controller_callback,
+                    client_count_callback=self.client_count_callback,
                 )
             )
         except Exception:
@@ -135,6 +141,9 @@ class ManagedServerBackend:
     def is_controller_connected(self) -> bool:
         return self.active_controller_info is not None
 
+    def client_count(self) -> int:
+        return self.connected_client_count
+
     def active_controller(self) -> dict[str, object] | None:
         return self.active_controller_info
 
@@ -143,19 +152,16 @@ class ManagedServerBackend:
         if self.thread is not None:
             self.thread.join(timeout=0.2)
         self.active_controller_info = None
+        self.connected_client_count = 0
 
 
-def _current_selection_label(config_path: Path) -> str:
-    selected = _load_selected_controller(config_path)
-    if selected is None:
-        return "Current: any controller"
-    guid = selected.get("guid", "")
-    name = selected.get("name", "")
-    if guid:
-        return f"Current: guid={guid}"
-    if name:
-        return f"Current: name~={name}"
-    return "Current: any controller"
+def _status_text(*, attached: bool, client_count: int) -> str:
+    state = "Attached" if attached else "Detached"
+    client_label = "Client" if client_count == 1 else "Clients"
+    return (
+        f"Gamepad Server - {state} "
+        f"({client_count} {client_label} Connected)"
+    )
 
 
 def _controller_matches_selection(
@@ -218,7 +224,7 @@ def _controller_row_badges(
     if selected is not None and _controller_matches_selection(
         controller, selected
     ):
-        badges.append(PREFERRED_CONTROLLER_BADGE)
+        badges.append(SELECTED_CONTROLLER_BADGE)
     return tuple(badges)
 
 
@@ -301,9 +307,9 @@ class ControllerItemDelegate(QtWidgets.QStyledItemDelegate):
         detail_font = _controller_detail_font(item_option.font)
         detail_metrics = QtGui.QFontMetrics(detail_font)
 
-        # Separate badges: star (active) on left, text (preferred) on right
+        # Separate badges: star (active) on left, text (selected) on right
         left_badges = [b for b in badges if b == ACTIVE_CONTROLLER_BADGE]
-        right_badges = [b for b in badges if b == PREFERRED_CONTROLLER_BADGE]
+        right_badges = [b for b in badges if b == SELECTED_CONTROLLER_BADGE]
 
         left_badge_width = sum(
             detail_metrics.horizontalAdvance(b) for b in left_badges
@@ -500,8 +506,7 @@ class ControllerSelectorWindow:
                 owner._handle_change_event(event)
 
         self.widget = _Window()
-        self.widget.setWindowTitle("Gamepad Server")
-        self._update_window_icon()
+        self._update_connection_state()
         self.widget.resize(640, 460)
         self.widget.setMinimumSize(520, 380)
 
@@ -535,11 +540,11 @@ class ControllerSelectorWindow:
         button_row.setSpacing(8)
         layout.addLayout(button_row)
 
-        self.select_button = QtWidgets.QPushButton("Select Controller")
+        self.select_button = QtWidgets.QPushButton("Select Gamepad")
         self.select_button.clicked.connect(self.select_current_controller)
         button_row.addWidget(self.select_button)
 
-        use_any_button = QtWidgets.QPushButton("Use Any")
+        use_any_button = QtWidgets.QPushButton("Use Any Gamepad")
         use_any_button.clicked.connect(self.use_any_controller)
         button_row.addWidget(use_any_button)
 
@@ -584,16 +589,24 @@ class ControllerSelectorWindow:
         item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEnabled)
         self.controller_list.addItem(item)
 
-    def _update_window_icon(self) -> None:
-        connected = (
+    def _update_connection_state(self) -> None:
+        attached = (
             self.server_backend.is_controller_connected()
             if self.server_backend is not None
             else False
         )
-        if connected == self.icon_connected:
+        client_count = (
+            self.server_backend.client_count()
+            if self.server_backend is not None
+            else 0
+        )
+        self.widget.setWindowTitle(
+            _status_text(attached=attached, client_count=client_count)
+        )
+        if attached == self.icon_connected:
             return
-        self.icon_connected = connected
-        self.widget.setWindowIcon(_create_tray_icon(connected=connected))
+        self.icon_connected = attached
+        self.widget.setWindowIcon(_create_tray_icon(connected=attached))
 
     def _handle_close_event(self, event: QCloseEvent) -> None:
         event.accept()
@@ -638,7 +651,7 @@ class ControllerSelectorWindow:
         except RuntimeError as exc:
             logger.exception("Failed to refresh controllers")
             self.controllers = []
-            self._update_window_icon()
+            self._update_connection_state()
             self._add_disabled_controller_row(str(exc))
             self.select_button.setEnabled(False)
             return
@@ -649,10 +662,10 @@ class ControllerSelectorWindow:
             if self.server_backend is not None
             else None
         )
-        self._update_window_icon()
+        self._update_connection_state()
 
         if not self.controllers:
-            self._add_disabled_controller_row("No controllers found")
+            self._add_disabled_controller_row("No gamepads found")
             self._update_select_button_state()
             return
 
@@ -713,12 +726,16 @@ class ControllerSelectorTray:
         self.signals.active_controller_changed.connect(
             self._handle_active_controller_changed
         )
+        self.signals.client_count_changed.connect(
+            self._handle_client_count_changed
+        )
         self.server_backend = ManagedServerBackend(
             config_path=self.config_path,
             lan=lan,
             terminal=terminal,
             device_change_callback=self.signals.controllers_changed.emit,
             active_controller_callback=self.signals.active_controller_changed.emit,
+            client_count_callback=self.signals.client_count_changed.emit,
         )
         self.server_backend.ensure_started()
 
@@ -727,12 +744,12 @@ class ControllerSelectorTray:
             server_backend=self.server_backend,
             hide_on_close=True,
             quit_callback=self._request_quit,
-            selection_changed_callback=self._update_tray_icon,
+            selection_changed_callback=self._sync_connection_state,
         )
 
         self.tray = QtWidgets.QSystemTrayIcon(_create_tray_icon())
         self.tray_icon_connected: bool | None = False
-        self.tray.setToolTip(_current_selection_label(self.config_path))
+        self._sync_connection_state()
         self.menu = QtWidgets.QMenu()
         self.menu.aboutToShow.connect(self.rebuild_menu)
         self.tray.setContextMenu(self.menu)
@@ -749,15 +766,13 @@ class ControllerSelectorTray:
     def rebuild_menu(self) -> None:
         self.server_backend.ensure_started()
         self.menu.clear()
-        self._update_tray_icon()
+        self._sync_connection_state()
 
         configure_action = self.menu.addAction("Configure...")
         configure_action.triggered.connect(self.window.show)
 
         quit_action = self.menu.addAction("Quit")
         quit_action.triggered.connect(self._request_quit)
-
-        self.tray.setToolTip(_current_selection_label(self.config_path))
 
     def _refresh_from_backend(self) -> None:
         self.window.refresh()
@@ -770,11 +785,27 @@ class ControllerSelectorTray:
             active_controller if isinstance(active_controller, dict) else None
         )
         self.window.refresh()
-        self.window._update_window_icon()
-        self._update_tray_icon()
+        self._sync_connection_state()
 
-    def _update_tray_icon(self) -> None:
+    def _handle_client_count_changed(self, client_count: int) -> None:
+        self.server_backend.connected_client_count = client_count
+        self._sync_connection_state()
+
+    def _sync_connection_state(self) -> None:
+        self.window._update_connection_state()
+        self._update_tray_state()
+
+    def _update_tray_tooltip(self) -> None:
+        self.tray.setToolTip(
+            _status_text(
+                attached=self.server_backend.is_controller_connected(),
+                client_count=self.server_backend.client_count(),
+            )
+        )
+
+    def _update_tray_state(self) -> None:
         connected = self.server_backend.is_controller_connected()
+        self._update_tray_tooltip()
         if connected == self.tray_icon_connected:
             return
         self.tray_icon_connected = connected
@@ -827,7 +858,7 @@ def _create_application() -> QApplication:
     elif not isinstance(app, QApplication):
         msg = "A non-widget Qt application already exists."
         raise TypeError(msg)
-    app.setApplicationName("Gamepad Controller Selector")
+    app.setApplicationName("Gamepad Selector")
     app.setQuitOnLastWindowClosed(True)
     return app
 
