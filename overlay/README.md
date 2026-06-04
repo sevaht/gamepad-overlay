@@ -86,6 +86,10 @@ There is currently no separate GUI selector for `source=browser`; browser-mode s
   Disables aspect-ratio preservation and stretches the overlay to fill the available area.
   If omitted, the overlay preserves aspect ratio without cropping.
 
+- `blur=<number>`
+  Overrides the default SVG blur / anti-aliasing amount.
+  If omitted, the default comes from the theme if it defines one, otherwise from the layout if it defines one, otherwise from the built-in app fallback.
+
 ### Input Source Selection
 
 - `source=websocket|browser|demo`
@@ -123,7 +127,7 @@ There is currently no separate GUI selector for `source=browser`; browser-mode s
 Layouts and themes are separate.
 
 - A layout controls geometry and behavior.
-- A theme controls colors.
+- A theme controls colors and rendering finish.
 
 You can mix them freely, although some combinations are more natural than others.
 
@@ -160,6 +164,12 @@ Theme names are sanitized to allow only:
 - `_`
 - `-`
 
+Themes can define:
+
+- button and analog colors
+- border colors
+- optional default blur via `--overlay-default-blur`
+
 ### Layouts
 
 Layouts are JS files named like:
@@ -175,6 +185,7 @@ Custom layout names work too:
 Layouts can define:
 
 - default theme
+- optional default blur
 - button dimensions
 - border sizes
 - analog-stick presence

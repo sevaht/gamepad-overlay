@@ -100,6 +100,13 @@
         return Number.isFinite(value) ? value : fallback;
     }
 
+    function cssNumber(element, propertyName) {
+        const value = Number.parseFloat(
+            getComputedStyle(element).getPropertyValue(propertyName)
+        );
+        return Number.isFinite(value) ? value : null;
+    }
+
     function resolvePreserveAspectRatio(query) {
         if (query.get("stretch") === "1") {
             return "none";
@@ -199,6 +206,9 @@
         const model = profile?.model ?? {};
         const controls = profile?.controls ?? {};
         const defaultTheme = sanitizeThemeName(profile?.defaultTheme) ?? "xbox";
+        const defaultBlur = Number.isFinite(Number(profile?.defaultBlur))
+            ? Number(profile.defaultBlur)
+            : null;
         const modelDefaults = OverlaySpec.MODEL_DEFAULTS;
         const buttonLength = Math.max(1, Number(model.buttonLength) || modelDefaults.buttonLength);
         const buttonWidth = Math.max(1, Number(model.buttonWidth) || modelDefaults.buttonWidth);
@@ -213,6 +223,7 @@
         const leftDpadOriginRingPercent = Math.max(0, Number(model.leftDpadOriginRingPercent) || modelDefaults.leftDpadOriginRingPercent);
         return {
             defaultTheme,
+            defaultBlur,
             model: {
                 buttonLength,
                 buttonWidth,
@@ -275,6 +286,17 @@
         element.style.setProperty("--overlay-border-outer-size", String(layoutProfile.model.borderOuterSize));
     }
 
+    function resolveDefaultBlur(layoutProfile, element = document.documentElement) {
+        const themeBlur = cssNumber(element, "--overlay-default-blur");
+        if (themeBlur != null) {
+            return Math.max(0, themeBlur);
+        }
+        if (layoutProfile.defaultBlur != null) {
+            return Math.max(0, layoutProfile.defaultBlur);
+        }
+        return DEFAULTS.blur;
+    }
+
     async function init({svgId}) {
         const query = new URLSearchParams(window.location.search);
         const layout = (query.get("layout") || "xbox").toLowerCase();
@@ -294,6 +316,10 @@
         OverlayTheme.applyCssDefaults(document.documentElement);
         OverlayTheme.normalizeButtonColorVars(document.documentElement);
         applyLayoutCssOverrides(layoutProfile, document.documentElement);
+        const defaultBlur = resolveDefaultBlur(
+            layoutProfile,
+            document.documentElement,
+        );
         const model = createSharedModel(layoutProfile);
         const context = new SvgContext(document.getElementById(svgId));
         const overlay = new GamepadOverlay({
@@ -320,7 +346,7 @@
         context.svg.setAttribute("preserveAspectRatio", preserveAspectRatio);
         context.svg.style.setProperty("shape-rendering", "geometricPrecision");
 
-        const blur = queryNumber(query, "blur", DEFAULTS.blur);
+        const blur = queryNumber(query, "blur", defaultBlur);
         if (blur > 0) {
             const filter = context.addFilter("overlayBlur", blur);
             const blurNode = filter.querySelector("feGaussianBlur");

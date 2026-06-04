@@ -1,5 +1,6 @@
 window.OverlayLayoutProfile = Object.freeze({
     defaultTheme: "snes",
+    defaultBlur: 0.5,
     model: Object.freeze({
         buttonLength: 40,
         buttonWidth: 40,
