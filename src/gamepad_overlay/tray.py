@@ -108,7 +108,7 @@ class ManagedServerBackend:
         self.failed = False
         self.stop_event.clear()
         self.thread = Thread(
-            target=self._run_server, name="gamepad-server", daemon=True
+            target=self._run_server, name="gamepad-overlay", daemon=True
         )
         self.thread.start()
 
@@ -157,7 +157,7 @@ def _status_text(*, attached: bool, client_count: int) -> str:
     state = "Attached" if attached else "Detached"
     client_label = "Client" if client_count == 1 else "Clients"
     return (
-        f"Gamepad Server - {state} "
+        f"Gamepad Overlay - {state} "
         f"({client_count} {client_label} Connected)"
     )
 
@@ -631,6 +631,7 @@ class ControllerSelectorWindow:
             restored_state | QtCore.Qt.WindowState.WindowActive
         )
         self.widget.show()
+        self._update_connection_state()
         self.widget.raise_()
         self.widget.activateWindow()
 
@@ -812,7 +813,7 @@ class ControllerSelectorTray:
     def _request_quit(self) -> None:
         button = QtWidgets.QMessageBox.question(
             self.window.widget,
-            "Quit Gamepad Server",
+            "Quit Gamepad Overlay",
             "Quit the tray and stop the managed gamepad server?",
             QtWidgets.QMessageBox.StandardButton.Yes
             | QtWidgets.QMessageBox.StandardButton.No,
@@ -844,6 +845,8 @@ class ControllerSelectorTray:
 
         self.rebuild_menu()
         self.tray.show()
+        QtCore.QTimer.singleShot(0, self._sync_connection_state)
+        QtCore.QTimer.singleShot(250, self._sync_connection_state)
         if not start_hidden:
             self.window.show()
         return int(app.exec())

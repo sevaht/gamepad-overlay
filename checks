@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 from subprocess import CalledProcessError, run
 
@@ -16,20 +17,38 @@ def main() -> int:
     this_script = Path(__file__).resolve()
     project_root_dir = this_script.parent
     scripts = [this_script.name]
+    env = os.environ.copy()
+    env.pop("VIRTUAL_ENV", None)
+    env["PYTHONPATH"] = str(project_root_dir / "src") + (
+        os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else ""
+    )
     commands = [
         (
-            ["black", "--target-version", "py312", ".", *scripts],
+            ["uv", "run", "black", "--target-version", "py312", ".", *scripts],
             "formatting code",
         ),
         (
-            ["ruff", "check", "--fix", "--select", "I", ".", *scripts],
+            [
+                "uv",
+                "run",
+                "ruff",
+                "check",
+                "--fix",
+                "--select",
+                "I",
+                ".",
+                *scripts,
+            ],
             "sorting imports",
         ),
-        (["mypy", "--scripts-are-modules", *scripts], "typechecking scripts"),
-        (["mypy", "."], "typechecking package"),
-        (["ruff", "check", ".", *scripts], "linting"),
         (
-            ["pytest"]
+            ["uv", "run", "mypy", "--scripts-are-modules", *scripts],
+            "typechecking scripts",
+        ),
+        (["uv", "run", "mypy", "."], "typechecking package"),
+        (["uv", "run", "ruff", "check", ".", *scripts], "linting"),
+        (
+            ["uv", "run", "pytest"]
             + ([f"--junitxml={args.junitxml}"] if args.junitxml else []),
             "executing tests",
         ),
@@ -37,7 +56,7 @@ def main() -> int:
     for command, description in commands:
         print(f"Running {command[0]}... ({description})")
         try:
-            run(command, check=True, cwd=project_root_dir)  # noqa: S603
+            run(command, check=True, cwd=project_root_dir, env=env)
         except CalledProcessError as e:
             return e.returncode
         print()

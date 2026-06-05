@@ -10,9 +10,10 @@ WORK_ROOT="${PROJECT_ROOT}/release/build-linux"
 
 cd "${PROJECT_ROOT}"
 
+unset VIRTUAL_ENV || true
 uv sync --no-dev
 uv run --with pyinstaller pyinstaller \
-    gamepad-server.spec \
+    gamepad-overlay.spec \
     --clean \
     --noconfirm \
     --distpath "${DIST_ROOT}" \
@@ -21,9 +22,7 @@ uv run --with pyinstaller pyinstaller \
 rm -rf "${ARCHIVE_ROOT}" "${ARCHIVE_PATH}"
 mkdir -p "${ARCHIVE_ROOT}"
 
-cp -r "${DIST_ROOT}/gamepad-server/." "${ARCHIVE_ROOT}/"
+cp -r "${DIST_ROOT}/gamepad-overlay/." "${ARCHIVE_ROOT}/"
 cp "${PROJECT_ROOT}/README.md" "${ARCHIVE_ROOT}/README.md"
-cp "${PROJECT_ROOT}/README-server.md" "${ARCHIVE_ROOT}/README-server.md"
-cp "${PROJECT_ROOT}/README-overlay.md" "${ARCHIVE_ROOT}/README-overlay.md"
 
 tar -C "${PROJECT_ROOT}/release" -czf "${ARCHIVE_PATH}" "$(basename "${ARCHIVE_ROOT}")"

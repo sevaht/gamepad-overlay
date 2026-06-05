@@ -1,28 +1,22 @@
 # Gamepad Overlay
 
-Gamepad button and stick overlay for OBS.
+Gamepad input server plus browser-based overlay UI for OBS.
 
-This repository contains the Gamepad Server and its bundled browser-based overlay UI.
+The intended workflow is:
 
-The intended production workflow is:
-
-1. run the local Gamepad Server,
-2. load the overlay in an OBS Browser Source,
-3. let the overlay connect to the local Gamepad Server.
+1. run `gamepad-overlay`
+2. point OBS at `http://127.0.0.1:8765/`
+3. let the overlay connect back to the local server over the same port
 
 The default input source is `websocket`, which is the intended OBS workflow.
+The other input sources (`demo` and `browser`) are for experimentation,
+previewing, and testing.
 
-The other input sources (`demo` and `browser`) are for experimentation, previewing, and testing.
-
-## Quick Start (OBS / Intended Workflow)
-
-If you want to use this in OBS, start here.
-
-### 1. Run the Local Websocket Server
+## Quick Start
 
 Requirements for running from source:
 
-- Python 3.11+
+- Python 3.12+
 - `uv`
 - SDL2-compatible runtime available
 
@@ -31,62 +25,23 @@ Platform notes:
 - Windows: `uv sync` should install the required SDL2 DLL package automatically.
 - Linux: you still need an SDL2-compatible runtime on the system. A normal SDL2 package works, and `sdl2-compat` should also be fine if it provides the SDL2 library that `pysdl2` loads.
 
-Run the same commands on Linux or Windows (for example in PowerShell on Windows):
+Run:
 
 ```bash
 uv sync
-uv run gamepad-server
+uv run gamepad-overlay
 ```
 
-The server listens on:
+By default, this opens the Qt selector window, creates a tray icon, and starts
+the local server.
 
-- host: `localhost` by default
-- port: `8765`
-- path: `/gamepad-overlay`
-
-Optional: if you have multiple controllers connected and want to choose one up front, run:
-
-```bash
-uv run gamepad-server --select-controller
-```
-
-That saves the selected controller for later normal launches.
-
-The default server command opens a desktop controller selector and creates a tray icon:
-
-```bash
-uv run gamepad-server
-```
-
-The selector saves the selected controller and starts the server. Use `uv run gamepad-server --any-controller` to clear the saved selection (the next launch will accept any controller). If you want the app to start with only the tray icon visible, use `uv run gamepad-server --hide`. If you need to run without tray integration, use `uv run gamepad-server --headless`.
-
-## Packaged Releases
-
-Tagged releases include portable archives for Windows and Linux. Each archive extracts to a directory shaped like:
-
-```text
-gamepad-overlay-<tag>-<platform>/
-  gamepad-server
-  _internal/
-  README.md
-  README-server.md
-  README-overlay.md
-```
-
-- Run the packaged server app from the extracted directory.
-
-The packaged app serves the overlay itself on `http://127.0.0.1:8765/`.
-
-### 2. Point OBS at the Overlay
-
-Use a Browser Source in OBS and point it at:
+To point OBS at the overlay, use a Browser Source with:
 
 ```text
 http://127.0.0.1:8765/
 ```
 
-The local Gamepad Server serves the overlay and the websocket on the same port.
-You do not need to specify `source=websocket` unless you want to be explicit, because `websocket` is already the default source.
+You do not need to specify `source=websocket` unless you want to be explicit.
 
 Example explicit URL:
 
@@ -94,7 +49,130 @@ Example explicit URL:
 http://127.0.0.1:8765/?source=websocket&layout=xbox&theme=xbox
 ```
 
-### 3. Optional: Choose a Built-In Layout / Theme
+The local server listens on:
+
+- host: `localhost` by default
+- port: `8765`
+- websocket path: `/gamepad-overlay`
+
+## Packaged Releases
+
+Tagged releases include portable archives for Windows and Linux. Each archive
+extracts to a directory shaped like:
+
+```text
+gamepad-overlay-<tag>-<platform>/
+  gamepad-overlay
+  _internal/
+  README.md
+```
+
+Run the packaged app from the extracted directory. It serves the overlay itself
+at `http://127.0.0.1:8765/`.
+
+## Controller Selection
+
+The server supports both interactive and explicit controller selection.
+
+Interactively select a connected controller:
+
+```bash
+uv run gamepad-overlay --select-controller
+```
+
+Choose `0` in that selector to use any controller.
+
+Clear the saved controller selection explicitly:
+
+```bash
+uv run gamepad-overlay --any-controller
+```
+
+Select controller by GUID:
+
+```bash
+uv run gamepad-overlay --controller-guid <guid>
+```
+
+Select controller by case-insensitive name substring:
+
+```bash
+uv run gamepad-overlay --controller-name "Xbox"
+```
+
+Additional useful commands:
+
+```bash
+uv run gamepad-overlay --hide
+uv run gamepad-overlay --headless
+uv run gamepad-overlay --list-controllers
+uv run gamepad-overlay --lan
+uv run gamepad-overlay --terminal
+```
+
+Selected controller config is persisted to:
+
+- Linux: `~/.config/gamepad-overlay/controller-selection.json` unless `XDG_CONFIG_HOME` is set
+- Windows: under the current user's home directory in `.config/gamepad-overlay/controller-selection.json`
+
+## Overlay Parameters
+
+### Overlay / Display
+
+- `theme=<name>`
+  Loads `overlay-theme-<name>.css`.
+  If omitted, the selected layout can provide a default theme. Otherwise it falls back to `xbox`.
+
+- `layout=<name>`
+  Loads `overlay-layout-<name>.js`.
+  If omitted, defaults to `xbox`.
+
+- `background=<css-color-or-css-background-value>`
+  Sets `document.body.style.background`.
+
+- `stretch=1`
+  Disables aspect-ratio preservation and stretches the overlay to fill the available area.
+
+- `blur=<number>`
+  Overrides the default SVG blur / anti-aliasing amount.
+  If omitted, the default comes from the theme if it defines one, otherwise from the layout if it defines one, otherwise from the built-in app fallback.
+
+### Input Source Selection
+
+- `source=websocket|browser|demo`
+  If omitted, the default is `websocket`.
+
+### Websocket Source
+
+- When served from `http://` or `https://`, the overlay connects back to the same origin at `/gamepad-overlay`.
+- When loaded from `file://`, it connects to `ws://localhost:8765/gamepad-overlay`.
+- `wsHost=<hostname-or-ip>` overrides the host if needed.
+
+### Browser Source
+
+- `padIndex=<number>`
+  Controller index hint. Useful for debugging/testing, but not as stable as ID matching.
+
+- `padIdContains=<substring>`
+  Preferred browser-controller selector.
+
+- `padAllowAll=1`
+  Allows non-standard-mapped browser controllers.
+
+- `pollHz=<number>`
+  Browser polling frequency. Defaults to `240`.
+
+### Input Behavior
+
+- `digitalThreshold=<0..1>`
+  Defaults to `0.2` unless a layout overrides it.
+
+## Layouts and Themes
+
+Layouts and themes are separate.
+
+- A layout controls geometry and behavior.
+- A theme controls colors and rendering finish.
 
 Built-in layouts:
 
@@ -102,28 +180,44 @@ Built-in layouts:
 - `xbox-digital-triggers`
 - `snes`
 
-`xbox-digital-triggers` is the main built-in derivative of the default Xbox layout. It keeps the Xbox-style geometry/theme, but changes the triggers to digital behavior so analog trigger input can be rendered as digital buttons.
-
 Built-in themes:
 
 - `xbox`
 - `snes`
 
-The built-in themes color the right-side face buttons to resemble the corresponding controller family.
+Themes can define:
 
-## Experimental / Testing Modes
+- button and analog colors
+- border colors
+- optional default blur via `--overlay-default-blur`
 
-These are not the intended OBS workflow, but they are useful for experimentation.
+Layouts can define:
 
-- `source=demo`
-  Synthetic controller activity for previewing layouts/themes.
-- `source=browser`
-  Uses the browser Gamepad API directly for live testing in a normal browser.
+- default theme
+- optional default blur
+- button dimensions
+- border sizes
+- analog-stick presence
+- trigger modes (`analog`, `digital`, `none`)
+- ring sizing values
+- default digital threshold
 
-## More Detailed Documentation
+## Example URLs
 
-- [`README-overlay.md`](README-overlay.md)
-  Overlay URL parameters, input sources, layouts, themes, and example URLs.
+Demo preview:
 
-- [`README-server.md`](README-server.md)
-  Server-focused commands, controller selection, and runtime details.
+```text
+http://127.0.0.1:8765/?source=demo&layout=snes&theme=snes
+```
+
+Browser API testing:
+
+```text
+http://127.0.0.1:8765/?source=browser&layout=xbox&theme=xbox
+```
+
+Digital trigger layout preview:
+
+```text
+http://127.0.0.1:8765/?layout=xbox-digital-triggers&source=demo
+```

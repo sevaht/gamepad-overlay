@@ -4,7 +4,7 @@ on:
   push:
     branches: ["main"]
     paths:
-      - 'src/gamepad_server/overlay_assets/**'
+      - 'src/gamepad_overlay/overlay_assets/**'
   workflow_dispatch:
 
 permissions:
@@ -29,7 +29,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: src/gamepad_server/overlay_assets
+          path: src/gamepad_overlay/overlay_assets
 
       - name: Deploy to GitHub Pages
         id: deployment

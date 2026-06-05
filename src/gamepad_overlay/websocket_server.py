@@ -33,7 +33,7 @@ class _OverlayRoot(Protocol):
 def _overlay_roots() -> list[_OverlayRoot]:
     roots: list[_OverlayRoot] = []
 
-    packaged_root = resources.files("gamepad_server").joinpath(
+    packaged_root = resources.files("gamepad_overlay").joinpath(
         "overlay_assets"
     )
     if packaged_root.joinpath("index.html").is_file():

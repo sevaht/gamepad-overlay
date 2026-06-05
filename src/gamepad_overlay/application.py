@@ -722,7 +722,8 @@ class WebSocketGamepadMonitor:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description=importlib.metadata.metadata(__package__).get("summary")
+        prog="gamepad-overlay",
+        description=importlib.metadata.metadata(__package__).get("summary"),
     )
     output_group = parser.add_mutually_exclusive_group()
     output_group.add_argument(
@@ -957,7 +958,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 def _controller_config_path() -> Path:
     config_home = os.environ.get("XDG_CONFIG_HOME")
     base = Path(config_home) if config_home else Path.home() / ".config"
-    return base / "gamepad-server" / CONFIG_FILE_NAME
+    return base / "gamepad-overlay" / CONFIG_FILE_NAME
 
 
 def _load_selected_controller(path: Path) -> dict[str, str] | None:

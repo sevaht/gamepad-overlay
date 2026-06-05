@@ -34,11 +34,19 @@ def _entry_module() -> str:
 
 ENTRY_MODULE = _entry_module()
 LAUNCHER_PATH = Path(workpath).resolve() / f"{specnm}-launch.py"
+RUNTIME_HOOK_PATH = Path(workpath).resolve() / f"{specnm}-runtime-hook.py"
 LAUNCHER_PATH.parent.mkdir(parents=True, exist_ok=True)
 LAUNCHER_PATH.write_text(
     "import runpy\n\n"
     "if __name__ == '__main__':\n"
     f"    runpy.run_module({ENTRY_MODULE!r}, run_name='__main__', alter_sys=True)\n",
+    encoding="utf-8",
+)
+RUNTIME_HOOK_PATH.write_text(
+    "import os\nimport sys\n\n"
+    "if sys.platform.startswith('linux'):\n"
+    "    os.environ.setdefault('QT_QPA_PLATFORMTHEME', '')\n"
+    "    os.environ.setdefault('QT_STYLE_OVERRIDE', 'Fusion')\n",
     encoding="utf-8",
 )
 
@@ -80,8 +88,13 @@ for package_name in (ENTRY_MODULE, "sevaht_utility", "sdl2"):
     binaries += package_binaries
     hiddenimports += package_hiddenimports
 
-for distribution_name in ("gamepad-server", "sevaht-utility"):
+for distribution_name in ("gamepad-overlay", "sevaht-utility"):
     datas += copy_metadata(distribution_name)
+
+if sys.platform.startswith("linux"):
+    datas = [
+        entry for entry in datas if Path(entry[0]).name != "libqgtk3.so"
+    ]
 
 if sys.platform == "win32":
     try:
@@ -108,7 +121,7 @@ analysis = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=[str(RUNTIME_HOOK_PATH)],
     excludes=[],
     noarchive=False,
     optimize=0,
@@ -121,7 +134,7 @@ exe = EXE(
     analysis.scripts,
     [],
     exclude_binaries=True,
-    name="gamepad-server",
+    name="gamepad-overlay",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -137,5 +150,5 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name="gamepad-server",
+    name="gamepad-overlay",
 )
