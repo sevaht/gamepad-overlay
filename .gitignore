@@ -1,4 +1,7 @@
+release/
 .venv/
+build/
+dist/
 __pycache__/
 .mypy_cache/
 .ipynb_checkpoints/

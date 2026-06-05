@@ -1,6 +1,6 @@
 # Gamepad Server
 
-Local server for the overlay in `../overlay/`.
+Local server for the bundled overlay.
 
 This is the intended production input source for OBS usage.
 
@@ -22,7 +22,6 @@ Platform notes:
 Linux:
 
 ```bash
-cd server
 uv sync
 uv run gamepad-server
 ```
@@ -30,7 +29,6 @@ uv run gamepad-server
 Windows (PowerShell):
 
 ```powershell
-cd server
 uv sync
 uv run gamepad-server
 ```
@@ -46,20 +44,31 @@ uv run gamepad-server --headless
 Tagged releases include portable archives for Windows and Linux. Each archive extracts to a directory with:
 
 ```text
-server/
-overlay/
+gamepad-server
+_internal/
+README.md
+README-server.md
+README-overlay.md
 ```
 
-- Run the packaged server application from `server/`.
-- Point OBS at `overlay/index.html` from the extracted `overlay/` directory.
+- Run the packaged server application from the extracted directory.
+- Point OBS at `http://127.0.0.1:8765/`.
 
 This is the recommended path for users who do not want to install Python or `uv`.
+
+The server also serves the overlay itself on the same port, so OBS does not need a separate local file path in the normal workflow.
 
 The websocket server listens on:
 
 - host: `localhost` by default
 - port: `8765`
 - path: `/gamepad-overlay`
+
+The local overlay page is available at:
+
+```text
+http://127.0.0.1:8765/
+```
 
 The matching overlay websocket URL is:
 
@@ -205,4 +214,4 @@ Selected controller selection is persisted to:
 
 This server is meant to be used with the browser overlay in websocket mode for OBS.
 
-See the repo root `README.md` for the end-to-end OBS quick start, and `../overlay/README.md` for overlay URL parameters and layout/theme details.
+See the repo root `README.md` for the end-to-end OBS quick start, and `README-overlay.md` for overlay URL parameters and layout/theme details.

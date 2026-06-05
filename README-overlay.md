@@ -4,7 +4,7 @@ Browser-based controller overlay UI.
 
 Main entrypoint:
 
-- `overlay/index.html`
+- `src/gamepad_server/overlay_assets/index.html`
 
 The intended production input source is `websocket`.
 
@@ -16,9 +16,10 @@ Other input sources (`demo` and `browser`) are for experimentation, previewing, 
 
 Default source, and the intended OBS mode.
 
-- Connects to `ws://<wsHost>:8765/gamepad-overlay`
-- `wsHost` defaults to `localhost`
-- Expects the local websocket server from `../server/` to be running
+- When served from `http://` or `https://`, connects back to the same origin at `/gamepad-overlay`
+- When loaded from `file://`, connects to `ws://localhost:8765/gamepad-overlay`
+- `wsHost` overrides the host when you need to point at a different websocket server
+- Expects the local Gamepad Server to be running
 
 ### `source=demo`
 
@@ -50,7 +51,7 @@ This is the preferred selector because browser controller indexes are less stabl
 Example:
 
 ```text
-overlay/index.html?source=browser&padIdContains=8BitDo
+http://127.0.0.1:8765/?source=browser&padIdContains=8BitDo
 ```
 
 You can also provide:
@@ -98,7 +99,7 @@ There is currently no separate GUI selector for `source=browser`; browser-mode s
 ### Websocket Source
 
 - `wsHost=<hostname-or-ip>`
-  Websocket host. Defaults to `localhost`.
+  Websocket host override. If omitted and the overlay is served over HTTP(S), the current page origin is used. If omitted and the overlay is loaded from `file://`, it defaults to `localhost`.
 
 ### Browser Source
 
@@ -198,17 +199,17 @@ Layouts can define:
 Demo preview:
 
 ```text
-overlay/index.html?source=demo&layout=snes&theme=snes
+http://127.0.0.1:8765/?source=demo&layout=snes&theme=snes
 ```
 
 Browser API testing:
 
 ```text
-overlay/index.html?source=browser&layout=xbox&theme=xbox
+http://127.0.0.1:8765/?source=browser&layout=xbox&theme=xbox
 ```
 
 Digital trigger layout preview:
 
 ```text
-overlay/index.html?layout=xbox-digital-triggers&source=demo
+http://127.0.0.1:8765/?layout=xbox-digital-triggers&source=demo
 ```

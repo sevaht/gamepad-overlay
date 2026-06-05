@@ -31,84 +31,57 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8
 
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y libsdl2-2.0-0
 
-      - name: Sync server dependencies
-        working-directory: server
-        run: uv sync --no-dev
-
-      - name: Build PyInstaller bundle
-        working-directory: server
-        run: uv run --with pyinstaller pyinstaller gamepad-server.spec --clean --noconfirm
-
-      - name: Assemble release tree
+      - name: Build release archive
         run: |
-          tag="$GITHUB_REF_NAME"
-          archive_root="release/gamepad-overlay-${tag}-linux-x64"
-          mkdir -p "$archive_root/server"
-          cp -r server/dist/gamepad-server/. "$archive_root/server/"
-          cp -r overlay "$archive_root/overlay"
-          cp README.md "$archive_root/README.md"
-          tar -C release -czf "gamepad-overlay-${tag}-linux-x64.tar.gz" "gamepad-overlay-${tag}-linux-x64"
+          chmod +x build.sh
+          ./build.sh "$GITHUB_REF_NAME"
 
       - name: Upload Linux archive artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: gamepad-overlay-${{ github.ref_name }}-linux-x64
-          path: gamepad-overlay-${{ github.ref_name }}-linux-x64.tar.gz
+          path: release/gamepad-overlay-${{ github.ref_name }}-linux-x64.tar.gz
 
   build-windows:
     name: Build Windows Archive
-    runs-on: windows-latest
+    runs-on: windows-2025
     needs: validate-tag
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v8
 
-      - name: Sync server dependencies
-        working-directory: server
-        run: uv sync --no-dev
-
-      - name: Build PyInstaller bundle
-        working-directory: server
-        run: uv run --with pyinstaller pyinstaller gamepad-server.spec --clean --noconfirm
-
-      - name: Assemble release tree
+      - name: Build release archive
         shell: pwsh
         run: |
-          $tag = $env:GITHUB_REF_NAME
-          $archiveRoot = "release/gamepad-overlay-$tag-windows-x64"
-          New-Item -ItemType Directory -Force -Path "$archiveRoot/server" | Out-Null
-          Copy-Item -Recurse server/dist/gamepad-server/* "$archiveRoot/server/"
-          Copy-Item -Recurse overlay "$archiveRoot/overlay"
-          Copy-Item README.md "$archiveRoot/README.md"
-          Compress-Archive -Path $archiveRoot -DestinationPath "gamepad-overlay-$tag-windows-x64.zip"
+          ./build.ps1 -Tag $env:GITHUB_REF_NAME
 
       - name: Upload Windows archive artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: gamepad-overlay-${{ github.ref_name }}-windows-x64
-          path: gamepad-overlay-${{ github.ref_name }}-windows-x64.zip
+          path: release/gamepad-overlay-${{ github.ref_name }}-windows-x64.zip
 
   publish-release:
     name: Publish GitHub Release
@@ -126,7 +99,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y gh
 
       - name: Download archives
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: release-assets
 

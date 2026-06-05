@@ -39,6 +39,9 @@ source = "vcs"
 [tool.hatch.build.targets.wheel]
 packages = ["src/gamepad_server"]
 
+[tool.entrypoint]
+module = "gamepad_server"
+
 [tool.black]
 line-length = 79
 skip-magic-trailing-comma = true
@@ -46,6 +49,7 @@ skip-magic-trailing-comma = true
 [tool.mypy]
 strict = true
 mypy_path = ["typings"]
+exclude = ["^release/"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

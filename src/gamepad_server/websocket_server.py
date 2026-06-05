@@ -1,18 +1,110 @@
+import http
 import json
 import logging
+import mimetypes
 import threading
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
-from typing import Any
+from importlib import resources
+from pathlib import PurePosixPath
+from typing import Any, Protocol
+from urllib.parse import urlsplit
 
+from websockets.datastructures import Headers
 from websockets.exceptions import ConnectionClosed
+from websockets.http11 import Request, Response
 from websockets.sync.connection import Connection
 from websockets.sync.server import serve
 
 from .cli_output import announce
 
 logger = logging.getLogger(__name__)
+
+
+class _OverlayRoot(Protocol):
+    def joinpath(self, *pathsegments: str) -> "_OverlayRoot": ...
+
+    def is_file(self) -> bool: ...
+
+    def read_bytes(self) -> bytes: ...
+
+
+def _overlay_roots() -> list[_OverlayRoot]:
+    roots: list[_OverlayRoot] = []
+
+    packaged_root = resources.files("gamepad_server").joinpath(
+        "overlay_assets"
+    )
+    if packaged_root.joinpath("index.html").is_file():
+        roots.append(packaged_root)
+
+    return roots
+
+
+def _overlay_asset_path(request_path: str) -> PurePosixPath | None:
+    path = urlsplit(request_path).path or "/"
+    if path == "/":
+        return PurePosixPath("index.html")
+
+    relative_path = path.lstrip("/")
+    if path.endswith("/"):
+        relative_path += "index.html"
+
+    asset_path = PurePosixPath(relative_path)
+    if asset_path.is_absolute() or ".." in asset_path.parts:
+        return None
+
+    return asset_path
+
+
+def _content_type_for_asset(asset_path: PurePosixPath) -> str:
+    content_type, _encoding = mimetypes.guess_type(str(asset_path))
+    if content_type is None:
+        return "application/octet-stream"
+
+    if content_type.startswith("text/") or content_type in {
+        "application/javascript",
+        "application/json",
+        "image/svg+xml",
+    }:
+        return f"{content_type}; charset=utf-8"
+
+    return content_type
+
+
+def _http_response(
+    status: http.HTTPStatus, body: bytes, *, content_type: str
+) -> Response:
+    headers = Headers()
+    headers["Content-Type"] = content_type
+    headers["Content-Length"] = str(len(body))
+    return Response(status.value, status.phrase, headers, body)
+
+
+def _serve_overlay_asset(request_path: str) -> Response:
+    asset_path = _overlay_asset_path(request_path)
+    if asset_path is None:
+        return _http_response(
+            http.HTTPStatus.NOT_FOUND,
+            b"Not found\n",
+            content_type="text/plain; charset=utf-8",
+        )
+
+    for root in _overlay_roots():
+        candidate = root.joinpath(*asset_path.parts)
+        if candidate.is_file():
+            return _http_response(
+                http.HTTPStatus.OK,
+                candidate.read_bytes(),
+                content_type=_content_type_for_asset(asset_path),
+            )
+
+    return _http_response(
+        http.HTTPStatus.NOT_FOUND,
+        b"Not found\n",
+        content_type="text/plain; charset=utf-8",
+    )
 
 
 @dataclass
@@ -75,14 +167,33 @@ class WebSocketBroadcaster:
         thread.start()
 
     def _run_server(self) -> None:
-        serve(self._handler, host=self._host, port=self._port).serve_forever()
+        serve(
+            self._handler,
+            host=self._host,
+            port=self._port,
+            process_request=self._process_request,
+        ).serve_forever()
 
     def _report_client_count(self, count: int) -> None:
         if self._client_count_callback is not None:
             self._client_count_callback(count)
 
+    def _process_request(
+        self, _connection: Connection, request: Request
+    ) -> Response | None:
+        request_path = urlsplit(request.path).path
+        if request_path == self._path:
+            return None
+        if request_path == "/healthz":
+            return _http_response(
+                http.HTTPStatus.OK,
+                b"OK\n",
+                content_type="text/plain; charset=utf-8",
+            )
+        return _serve_overlay_asset(request.path)
+
     def _handler(self, ws: Connection) -> None:
-        if ws.request is None or ws.request.path != self._path:
+        if ws.request is None or urlsplit(ws.request.path).path != self._path:
             ws.close(code=1008, reason="Invalid path")
             return
 

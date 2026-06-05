@@ -2,10 +2,7 @@
 
 Gamepad button and stick overlay for OBS.
 
-This repository contains two pieces:
-
-- `server/`: local Gamepad Server that reads controller input
-- `overlay/`: browser-based overlay UI
+This repository contains the Gamepad Server and its bundled browser-based overlay UI.
 
 The intended production workflow is:
 
@@ -37,7 +34,6 @@ Platform notes:
 Run the same commands on Linux or Windows (for example in PowerShell on Windows):
 
 ```bash
-cd server
 uv sync
 uv run gamepad-server
 ```
@@ -51,7 +47,6 @@ The server listens on:
 Optional: if you have multiple controllers connected and want to choose one up front, run:
 
 ```bash
-cd server
 uv run gamepad-server --select-controller
 ```
 
@@ -60,7 +55,6 @@ That saves the selected controller for later normal launches.
 The default server command opens a desktop controller selector and creates a tray icon:
 
 ```bash
-cd server
 uv run gamepad-server
 ```
 
@@ -72,29 +66,32 @@ Tagged releases include portable archives for Windows and Linux. Each archive ex
 
 ```text
 gamepad-overlay-<tag>-<platform>/
-  server/
-  overlay/
+  gamepad-server
+  _internal/
+  README.md
+  README-server.md
+  README-overlay.md
 ```
 
-- Run the packaged server app from `server/`.
-- Point OBS at `overlay/index.html` from the extracted `overlay/` directory.
+- Run the packaged server app from the extracted directory.
 
-This keeps the Gamepad Server self-contained while still giving OBS a real local file path for the overlay assets.
+The packaged app serves the overlay itself on `http://127.0.0.1:8765/`.
 
 ### 2. Point OBS at the Overlay
 
 Use a Browser Source in OBS and point it at:
 
 ```text
-file:///.../overlay/index.html
+http://127.0.0.1:8765/
 ```
 
+The local Gamepad Server serves the overlay and the websocket on the same port.
 You do not need to specify `source=websocket` unless you want to be explicit, because `websocket` is already the default source.
 
 Example explicit URL:
 
 ```text
-file:///.../overlay/index.html?source=websocket&layout=xbox&theme=xbox
+http://127.0.0.1:8765/?source=websocket&layout=xbox&theme=xbox
 ```
 
 ### 3. Optional: Choose a Built-In Layout / Theme
@@ -125,8 +122,8 @@ These are not the intended OBS workflow, but they are useful for experimentation
 
 ## More Detailed Documentation
 
-- [`overlay/README.md`](overlay/README.md)
+- [`README-overlay.md`](README-overlay.md)
   Overlay URL parameters, input sources, layouts, themes, and example URLs.
 
-- [`server/README.md`](server/README.md)
+- [`README-server.md`](README-server.md)
   Server-focused commands, controller selection, and runtime details.

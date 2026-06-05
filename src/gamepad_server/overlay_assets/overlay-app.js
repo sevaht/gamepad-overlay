@@ -114,11 +114,30 @@
         return "xMidYMid meet";
     }
 
+    function resolveWebSocketUrl(query) {
+        const explicitHost = (query.get("wsHost") || "").trim();
+        if (explicitHost) {
+            return `ws://${explicitHost}:${DEFAULTS.wsPort}/gamepad-overlay`;
+        }
+
+        if (
+            window.location.protocol === "http:"
+            || window.location.protocol === "https:"
+        ) {
+            const wsProtocol = (
+                window.location.protocol === "https:" ? "wss:" : "ws:"
+            );
+            return `${wsProtocol}//${window.location.host}/gamepad-overlay`;
+        }
+
+        return `ws://localhost:${DEFAULTS.wsPort}/gamepad-overlay`;
+    }
+
     function createSource({query, mode, renderer}) {
         const pollHz = Math.max(1, queryInt(query, "pollHz", DEFAULTS.pollHz));
         return createGamepadSource({
             mode,
-            wsUrl: `ws://${query.get("wsHost") || "localhost"}:${DEFAULTS.wsPort}/gamepad-overlay`,
+            wsUrl: resolveWebSocketUrl(query),
             pollMs: Math.max(1, Math.round(1000 / pollHz)),
             padIndex:
                 query.get("padIndex") == null
