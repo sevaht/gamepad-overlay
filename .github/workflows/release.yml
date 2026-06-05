@@ -119,6 +119,7 @@ jobs:
       - build-windows
     env:
       GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
 
     steps:
       - name: Install release dependencies
