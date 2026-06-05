@@ -18,7 +18,7 @@ def main() -> int:
     scripts = [this_script.name]
     commands = [
         (
-            ["black", "--target-version", "py311", ".", *scripts],
+            ["black", "--target-version", "py312", ".", *scripts],
             "formatting code",
         ),
         (
