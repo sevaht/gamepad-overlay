@@ -8,7 +8,7 @@ from PyInstaller.building.build_main import Analysis, COLLECT, EXE, PYZ
 from PyInstaller.utils.hooks import collect_all, copy_metadata
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(SPECPATH).resolve()
 
 
 def _system_sdl2_binary() -> tuple[str, str] | None:
