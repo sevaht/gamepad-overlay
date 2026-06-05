@@ -39,7 +39,7 @@ jobs:
           python-version: '3.11'
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@v8
+        uses: astral-sh/setup-uv@v8.2.0
 
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y libsdl2-2.0-0
@@ -70,7 +70,7 @@ jobs:
           python-version: '3.11'
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@v8
+        uses: astral-sh/setup-uv@v8.2.0
 
       - name: Build release archive
         shell: pwsh
