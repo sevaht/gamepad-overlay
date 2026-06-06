@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ctypes.util
 import sys
 import tomllib
 from pathlib import Path
@@ -43,7 +42,15 @@ LAUNCHER_PATH.write_text(
     encoding="utf-8",
 )
 RUNTIME_HOOK_PATH.write_text(
-    "import os\nimport sys\n\n"
+    "import os\nimport sys\nfrom pathlib import Path\n\n"
+    "bundle_root = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent))\n"
+    "sdl_binary_path = bundle_root / 'sdl3' / 'bin'\n"
+    "if sdl_binary_path.is_dir():\n"
+    "    os.environ.setdefault('SDL_DISABLE_METADATA', '1')\n"
+    "    os.environ.setdefault('SDL_FIND_BINARIES', '0')\n"
+    "    os.environ.setdefault('SDL_CHECK_BINARY_VERSION', '0')\n"
+    "    os.environ.setdefault('SDL_BINARY_PATH', str(sdl_binary_path))\n"
+    "\n"
     "if sys.platform.startswith('linux'):\n"
     "    os.environ.setdefault('QT_QPA_PLATFORMTHEME', '')\n"
     "    os.environ.setdefault('QT_STYLE_OVERRIDE', 'Fusion')\n",
@@ -51,36 +58,11 @@ RUNTIME_HOOK_PATH.write_text(
 )
 
 
-def _system_sdl2_binary() -> tuple[str, str] | None:
-    library_name = ctypes.util.find_library("SDL2")
-    if not library_name:
-        return None
-
-    library_path = Path(library_name)
-    if library_path.is_absolute() and library_path.exists():
-        return (str(library_path), ".")
-
-    for search_root in (
-        Path("/usr/lib"),
-        Path("/usr/lib/x86_64-linux-gnu"),
-        Path("/usr/lib64"),
-        Path("/lib"),
-        Path("/lib/x86_64-linux-gnu"),
-        Path("/lib64"),
-        Path("/usr/local/lib"),
-    ):
-        candidate = search_root / library_name
-        if candidate.exists():
-            return (str(candidate), ".")
-
-    return None
-
-
 datas: list[tuple[str, str]] = []
 binaries: list[tuple[str, str]] = []
 hiddenimports: list[str] = []
 
-for package_name in (ENTRY_MODULE, "sevaht_utility", "sdl2"):
+for package_name in (ENTRY_MODULE, "sevaht_utility", "sdl3"):
     package_datas, package_binaries, package_hiddenimports = collect_all(
         package_name
     )
@@ -95,23 +77,6 @@ if sys.platform.startswith("linux"):
     datas = [
         entry for entry in datas if Path(entry[0]).name != "libqgtk3.so"
     ]
-
-if sys.platform == "win32":
-    try:
-        package_datas, package_binaries, package_hiddenimports = collect_all(
-            "sdl2dll"
-        )
-    except ImportError:
-        pass
-    else:
-        datas += package_datas
-        binaries += package_binaries
-        hiddenimports += package_hiddenimports
-else:
-    sdl2_binary = _system_sdl2_binary()
-    if sdl2_binary is not None:
-        binaries.append(sdl2_binary)
-
 
 analysis = Analysis(
     [str(LAUNCHER_PATH)],

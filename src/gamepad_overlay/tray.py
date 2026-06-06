@@ -12,28 +12,28 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
 from .application import (
-    SDLGameController,
+    SDLGamepad,
     ServerRunConfig,
-    _clear_selected_controller,
-    _controller_config_path,
-    _controller_metadata_summary,
-    _load_selected_controller,
-    _save_selected_controller,
+    _clear_selected_gamepad,
+    _gamepad_metadata_summary,
+    _load_selected_gamepad,
+    _save_selected_gamepad,
+    _selection_config_path,
     run_server,
 )
 
 logger = logging.getLogger(__name__)
 
-CONTROLLER_NAME_ROLE = int(QtCore.Qt.ItemDataRole.UserRole) + 1
-CONTROLLER_DETAIL_ROLE = int(QtCore.Qt.ItemDataRole.UserRole) + 2
-CONTROLLER_BADGES_ROLE = int(QtCore.Qt.ItemDataRole.UserRole) + 3
-CONTROLLER_ROW_HORIZONTAL_PADDING = 8
-CONTROLLER_ROW_VERTICAL_PADDING = 6
-CONTROLLER_ROW_LINE_GAP = 2
-CONTROLLER_NAME_POINT_SIZE_INCREMENT = 2
-CONTROLLER_BADGE_GAP = 6
-ACTIVE_CONTROLLER_BADGE = "★"
-SELECTED_CONTROLLER_BADGE = "Selected"
+GAMEPAD_NAME_ROLE = int(QtCore.Qt.ItemDataRole.UserRole) + 1
+GAMEPAD_DETAIL_ROLE = int(QtCore.Qt.ItemDataRole.UserRole) + 2
+GAMEPAD_BADGES_ROLE = int(QtCore.Qt.ItemDataRole.UserRole) + 3
+GAMEPAD_ROW_HORIZONTAL_PADDING = 8
+GAMEPAD_ROW_VERTICAL_PADDING = 6
+GAMEPAD_ROW_LINE_GAP = 2
+GAMEPAD_NAME_POINT_SIZE_INCREMENT = 2
+GAMEPAD_BADGE_GAP = 6
+ACTIVE_GAMEPAD_BADGE = "★"
+SELECTED_GAMEPAD_BADGE = "Selected"
 ICON_BUTTON_SIZE = 24
 ICON_BUTTON_STROKE_WIDTH = 3.0
 ICON_BUTTON_CENTERS = {
@@ -69,18 +69,18 @@ class ServerBackend(Protocol):
 
     def status_label(self) -> str: ...
 
-    def is_controller_connected(self) -> bool: ...
+    def is_gamepad_connected(self) -> bool: ...
 
     def client_count(self) -> int: ...
 
-    def active_controller(self) -> dict[str, object] | None: ...
+    def active_gamepad(self) -> dict[str, object] | None: ...
 
     def stop(self) -> None: ...
 
 
 class BackendSignals(QtCore.QObject):
-    controllers_changed = QtCore.Signal()
-    active_controller_changed = QtCore.Signal(object)
+    gamepads_changed = QtCore.Signal()
+    active_gamepad_changed = QtCore.Signal(object)
     client_count_changed = QtCore.Signal(int)
 
 
@@ -90,14 +90,14 @@ class ManagedServerBackend:
     lan: bool = False
     terminal: bool = False
     device_change_callback: Callable[[], None] | None = None
-    active_controller_callback: (
+    active_gamepad_callback: (
         Callable[[dict[str, object] | None], None] | None
     ) = None
     client_count_callback: Callable[[int], None] | None = None
     thread: Thread | None = field(default=None, init=False)
     stop_event: Event = field(default_factory=Event, init=False)
     failed: bool = field(default=False, init=False)
-    active_controller_info: dict[str, object] | None = field(
+    active_gamepad_info: dict[str, object] | None = field(
         default=None, init=False
     )
     connected_client_count: int = field(default=0, init=False)
@@ -121,7 +121,7 @@ class ManagedServerBackend:
                     terminal=self.terminal,
                     stop_event=self.stop_event,
                     device_change_callback=self.device_change_callback,
-                    active_controller_callback=self.active_controller_callback,
+                    active_gamepad_callback=self.active_gamepad_callback,
                     client_count_callback=self.client_count_callback,
                 )
             )
@@ -136,20 +136,20 @@ class ManagedServerBackend:
             return "Server: stopped unexpectedly"
         return "Server: stopped"
 
-    def is_controller_connected(self) -> bool:
-        return self.active_controller_info is not None
+    def is_gamepad_connected(self) -> bool:
+        return self.active_gamepad_info is not None
 
     def client_count(self) -> int:
         return self.connected_client_count
 
-    def active_controller(self) -> dict[str, object] | None:
-        return self.active_controller_info
+    def active_gamepad(self) -> dict[str, object] | None:
+        return self.active_gamepad_info
 
     def stop(self) -> None:
         self.stop_event.set()
         if self.thread is not None:
             self.thread.join(timeout=0.2)
-        self.active_controller_info = None
+        self.active_gamepad_info = None
         self.connected_client_count = 0
 
 
@@ -162,32 +162,26 @@ def _status_text(*, attached: bool, client_count: int) -> str:
     )
 
 
-def _controller_matches_selection(
-    controller: dict[str, object], selected: dict[str, str] | None
+def _gamepad_matches_selection(
+    gamepad: dict[str, object], selected: dict[str, str] | None
 ) -> bool:
-    return SDLGameController._matches_selected_controller(controller, selected)
+    return SDLGamepad._matches_selected_gamepad(gamepad, selected)
 
 
-def _controller_selection_identity(
-    controller: dict[str, object],
-) -> dict[str, str]:
+def _gamepad_selection_identity(gamepad: dict[str, object]) -> dict[str, str]:
     return {
-        field_name: str(controller.get(field_name, "")).strip()
+        field_name: str(gamepad.get(field_name, "")).strip()
         for field_name in ("guid", "vendor", "product", "name")
     }
 
 
-def _controller_identity_hint(controller: dict[str, object]) -> str:
-    metadata = _controller_metadata_summary(controller, version_first=True)
+def _gamepad_identity_hint(gamepad: dict[str, object]) -> str:
+    metadata = _gamepad_metadata_summary(gamepad, version_first=True)
     return metadata or "No stable identifier exposed"
 
 
-def _controller_display_names(
-    controllers: list[dict[str, object]],
-) -> list[str]:
-    names = [
-        str(controller.get("name", "unknown")) for controller in controllers
-    ]
+def _gamepad_display_names(gamepads: list[dict[str, object]]) -> list[str]:
+    names = [str(gamepad.get("name", "unknown")) for gamepad in gamepads]
     duplicates = {name for name in names if names.count(name) > 1}
     if not duplicates:
         return names
@@ -203,57 +197,53 @@ def _controller_display_names(
     return display_names
 
 
-def _controller_row_label(
-    controller: dict[str, object], display_name: str
-) -> str:
-    return f"{display_name}\n{_controller_identity_hint(controller)}"
+def _gamepad_row_label(gamepad: dict[str, object], display_name: str) -> str:
+    return f"{display_name}\n{_gamepad_identity_hint(gamepad)}"
 
 
-def _controller_row_badges(
-    controller: dict[str, object],
+def _gamepad_row_badges(
+    gamepad: dict[str, object],
     selected: dict[str, str] | None,
-    active_controller: dict[str, object] | None,
+    active_gamepad: dict[str, object] | None,
 ) -> tuple[str, ...]:
     badges: list[str] = []
-    if active_controller is not None and _controller_matches_selection(
-        controller, _controller_selection_identity(active_controller)
+    if active_gamepad is not None and _gamepad_matches_selection(
+        gamepad, _gamepad_selection_identity(active_gamepad)
     ):
-        badges.append(ACTIVE_CONTROLLER_BADGE)
-    if selected is not None and _controller_matches_selection(
-        controller, selected
-    ):
-        badges.append(SELECTED_CONTROLLER_BADGE)
+        badges.append(ACTIVE_GAMEPAD_BADGE)
+    if selected is not None and _gamepad_matches_selection(gamepad, selected):
+        badges.append(SELECTED_GAMEPAD_BADGE)
     return tuple(badges)
 
 
-def _controller_name_font(base_font: QtGui.QFont) -> QtGui.QFont:
+def _gamepad_name_font(base_font: QtGui.QFont) -> QtGui.QFont:
     font = QtGui.QFont(base_font)
     font.setBold(True)
-    font.setPointSize(font.pointSize() + CONTROLLER_NAME_POINT_SIZE_INCREMENT)
+    font.setPointSize(font.pointSize() + GAMEPAD_NAME_POINT_SIZE_INCREMENT)
     return font
 
 
-def _controller_detail_font(base_font: QtGui.QFont) -> QtGui.QFont:
+def _gamepad_detail_font(base_font: QtGui.QFont) -> QtGui.QFont:
     font = QtGui.QFont(base_font)
     font.setBold(False)
     return font
 
 
-def _controller_row_height(base_font: QtGui.QFont) -> int:
-    name_height = QtGui.QFontMetrics(_controller_name_font(base_font)).height()
+def _gamepad_row_height(base_font: QtGui.QFont) -> int:
+    name_height = QtGui.QFontMetrics(_gamepad_name_font(base_font)).height()
     detail_height = QtGui.QFontMetrics(
-        _controller_detail_font(base_font)
+        _gamepad_detail_font(base_font)
     ).height()
     return (
-        CONTROLLER_ROW_VERTICAL_PADDING
+        GAMEPAD_ROW_VERTICAL_PADDING
         + name_height
-        + CONTROLLER_ROW_LINE_GAP
+        + GAMEPAD_ROW_LINE_GAP
         + detail_height
-        + CONTROLLER_ROW_VERTICAL_PADDING
+        + GAMEPAD_ROW_VERTICAL_PADDING
     )
 
 
-class ControllerItemDelegate(QtWidgets.QStyledItemDelegate):
+class GamepadItemDelegate(QtWidgets.QStyledItemDelegate):
     @override
     def paint(
         self,
@@ -278,16 +268,16 @@ class ControllerItemDelegate(QtWidgets.QStyledItemDelegate):
             widget,
         )
 
-        name = str(index.data(CONTROLLER_NAME_ROLE) or "")
-        detail = str(index.data(CONTROLLER_DETAIL_ROLE) or "")
+        name = str(index.data(GAMEPAD_NAME_ROLE) or "")
+        detail = str(index.data(GAMEPAD_DETAIL_ROLE) or "")
         badges = tuple(
-            str(badge) for badge in (index.data(CONTROLLER_BADGES_ROLE) or ())
+            str(badge) for badge in (index.data(GAMEPAD_BADGES_ROLE) or ())
         )
         text_rect = item_option.rect.adjusted(
-            CONTROLLER_ROW_HORIZONTAL_PADDING,
-            CONTROLLER_ROW_VERTICAL_PADDING,
-            -CONTROLLER_ROW_HORIZONTAL_PADDING,
-            -CONTROLLER_ROW_VERTICAL_PADDING,
+            GAMEPAD_ROW_HORIZONTAL_PADDING,
+            GAMEPAD_ROW_VERTICAL_PADDING,
+            -GAMEPAD_ROW_HORIZONTAL_PADDING,
+            -GAMEPAD_ROW_VERTICAL_PADDING,
         )
 
         painter.save()
@@ -300,14 +290,14 @@ class ControllerItemDelegate(QtWidgets.QStyledItemDelegate):
             )
         )
 
-        name_font = _controller_name_font(item_option.font)
+        name_font = _gamepad_name_font(item_option.font)
         name_metrics = QtGui.QFontMetrics(name_font)
-        detail_font = _controller_detail_font(item_option.font)
+        detail_font = _gamepad_detail_font(item_option.font)
         detail_metrics = QtGui.QFontMetrics(detail_font)
 
         # Separate badges: star (active) on left, text (selected) on right
-        left_badges = [b for b in badges if b == ACTIVE_CONTROLLER_BADGE]
-        right_badges = [b for b in badges if b == SELECTED_CONTROLLER_BADGE]
+        left_badges = [b for b in badges if b == ACTIVE_GAMEPAD_BADGE]
+        right_badges = [b for b in badges if b == SELECTED_GAMEPAD_BADGE]
 
         left_badge_width = sum(
             detail_metrics.horizontalAdvance(b) for b in left_badges
@@ -315,15 +305,13 @@ class ControllerItemDelegate(QtWidgets.QStyledItemDelegate):
         right_badge_width = sum(
             name_metrics.horizontalAdvance(b) for b in right_badges
         )
-        right_badge_width += CONTROLLER_BADGE_GAP * max(
-            0, len(right_badges) - 1
-        )
+        right_badge_width += GAMEPAD_BADGE_GAP * max(0, len(right_badges) - 1)
 
         name_left = text_rect.left() + (
-            left_badge_width + CONTROLLER_BADGE_GAP if left_badges else 0
+            left_badge_width + GAMEPAD_BADGE_GAP if left_badges else 0
         )
         name_right = text_rect.right() - (
-            right_badge_width + CONTROLLER_BADGE_GAP if right_badges else 0
+            right_badge_width + GAMEPAD_BADGE_GAP if right_badges else 0
         )
 
         name_rect = QtCore.QRect(
@@ -344,7 +332,7 @@ class ControllerItemDelegate(QtWidgets.QStyledItemDelegate):
                 painter.drawText(
                     badge_rect, QtCore.Qt.AlignmentFlag.AlignCenter, badge
                 )
-                badge_x += width + CONTROLLER_BADGE_GAP
+                badge_x += width + GAMEPAD_BADGE_GAP
 
         painter.setFont(name_font)
         elided_name = name_metrics.elidedText(
@@ -367,12 +355,12 @@ class ControllerItemDelegate(QtWidgets.QStyledItemDelegate):
                 painter.drawText(
                     badge_rect, QtCore.Qt.AlignmentFlag.AlignCenter, badge
                 )
-                badge_x += width + CONTROLLER_BADGE_GAP
+                badge_x += width + GAMEPAD_BADGE_GAP
 
         painter.setFont(detail_font)
         detail_rect = QtCore.QRect(
             text_rect.left(),
-            name_rect.bottom() + CONTROLLER_ROW_LINE_GAP,
+            name_rect.bottom() + GAMEPAD_ROW_LINE_GAP,
             text_rect.width(),
             detail_metrics.height(),
         )
@@ -394,17 +382,17 @@ class ControllerItemDelegate(QtWidgets.QStyledItemDelegate):
         index: QtCore.QModelIndex | QtCore.QPersistentModelIndex,
     ) -> QtCore.QSize:
         size = super().sizeHint(option, index)
-        size.setHeight(_controller_row_height(option.font))
+        size.setHeight(_gamepad_row_height(option.font))
         return size
 
 
-def _selected_controller_index(
-    controllers: list[dict[str, object]], selected: dict[str, str] | None
+def _selected_gamepad_index(
+    gamepads: list[dict[str, object]], selected: dict[str, str] | None
 ) -> int | None:
     if selected is None:
         return None
-    for index, controller in enumerate(controllers):
-        if _controller_matches_selection(controller, selected):
+    for index, gamepad in enumerate(gamepads):
+        if _gamepad_matches_selection(gamepad, selected):
             return index
     return None
 
@@ -471,11 +459,11 @@ def _create_tray_icon(*, connected: bool = False) -> QIcon:
     return icon
 
 
-def _list_available_controllers() -> list[dict[str, object]]:
-    return SDLGameController.list_available_controllers()
+def _list_available_gamepads() -> list[dict[str, object]]:
+    return SDLGamepad.list_available_gamepads()
 
 
-class ControllerSelectorWindow:
+class GamepadSelectorWindow:
     def __init__(
         self,
         config_path: Path,
@@ -490,7 +478,7 @@ class ControllerSelectorWindow:
         self.hide_on_close = hide_on_close
         self.quit_callback = quit_callback
         self.selection_changed_callback = selection_changed_callback
-        self.controllers: list[dict[str, object]] = []
+        self.gamepads: list[dict[str, object]] = []
         self.icon_connected: bool | None = None
 
         owner = self
@@ -512,26 +500,26 @@ class ControllerSelectorWindow:
         layout.setContentsMargins(18, 18, 18, 18)
         layout.setSpacing(12)
 
-        self._build_controller_list(layout)
+        self._build_gamepad_list(layout)
         self._build_buttons(layout)
 
         self.refresh()
 
-    def _build_controller_list(self, layout: QtWidgets.QVBoxLayout) -> None:
-        self.controller_list = QtWidgets.QListWidget()
-        self.controller_list.setObjectName("controllerList")
-        self.controller_list.setSpacing(2)
-        self.controller_list.setWordWrap(True)
-        self.controller_list.setItemDelegate(
-            ControllerItemDelegate(self.controller_list)
+    def _build_gamepad_list(self, layout: QtWidgets.QVBoxLayout) -> None:
+        self.gamepad_list = QtWidgets.QListWidget()
+        self.gamepad_list.setObjectName("gamepadList")
+        self.gamepad_list.setSpacing(2)
+        self.gamepad_list.setWordWrap(True)
+        self.gamepad_list.setItemDelegate(
+            GamepadItemDelegate(self.gamepad_list)
         )
-        self.controller_list.itemSelectionChanged.connect(
-            self._handle_controller_selection_changed
+        self.gamepad_list.itemSelectionChanged.connect(
+            self._handle_gamepad_selection_changed
         )
-        self.controller_list.itemDoubleClicked.connect(
-            lambda _item: self.select_current_controller()
+        self.gamepad_list.itemDoubleClicked.connect(
+            lambda _item: self.select_current_gamepad()
         )
-        layout.addWidget(self.controller_list, stretch=1)
+        layout.addWidget(self.gamepad_list, stretch=1)
 
     def _build_buttons(self, layout: QtWidgets.QVBoxLayout) -> None:
         button_row = QtWidgets.QHBoxLayout()
@@ -539,11 +527,11 @@ class ControllerSelectorWindow:
         layout.addLayout(button_row)
 
         self.select_button = QtWidgets.QPushButton("Select Gamepad")
-        self.select_button.clicked.connect(self.select_current_controller)
+        self.select_button.clicked.connect(self.select_current_gamepad)
         button_row.addWidget(self.select_button)
 
         use_any_button = QtWidgets.QPushButton("Use Any Gamepad")
-        use_any_button.clicked.connect(self.use_any_controller)
+        use_any_button.clicked.connect(self.use_any_gamepad)
         button_row.addWidget(use_any_button)
 
         refresh_button = QtWidgets.QPushButton("Refresh")
@@ -572,24 +560,22 @@ class ControllerSelectorWindow:
         self.widget.close()
 
     def _update_select_button_state(self) -> None:
-        selected_row = self.controller_list.currentRow()
-        self.select_button.setEnabled(
-            0 <= selected_row < len(self.controllers)
-        )
+        selected_row = self.gamepad_list.currentRow()
+        self.select_button.setEnabled(0 <= selected_row < len(self.gamepads))
 
-    def _handle_controller_selection_changed(self) -> None:
+    def _handle_gamepad_selection_changed(self) -> None:
         self._update_select_button_state()
 
-    def _add_disabled_controller_row(self, text: str) -> None:
+    def _add_disabled_gamepad_row(self, text: str) -> None:
         item = QtWidgets.QListWidgetItem(text)
-        item.setData(CONTROLLER_NAME_ROLE, text)
-        item.setData(CONTROLLER_DETAIL_ROLE, "")
+        item.setData(GAMEPAD_NAME_ROLE, text)
+        item.setData(GAMEPAD_DETAIL_ROLE, "")
         item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEnabled)
-        self.controller_list.addItem(item)
+        self.gamepad_list.addItem(item)
 
     def _update_connection_state(self) -> None:
         attached = (
-            self.server_backend.is_controller_connected()
+            self.server_backend.is_gamepad_connected()
             if self.server_backend is not None
             else False
         )
@@ -642,76 +628,70 @@ class ControllerSelectorWindow:
         if self.server_backend is not None:
             self.server_backend.ensure_started()
 
-        previous_row = self.controller_list.currentRow()
+        previous_row = self.gamepad_list.currentRow()
 
-        self.controller_list.clear()
+        self.gamepad_list.clear()
         try:
-            self.controllers = _list_available_controllers()
+            self.gamepads = _list_available_gamepads()
         except RuntimeError as exc:
-            logger.exception("Failed to refresh controllers")
-            self.controllers = []
+            logger.exception("Failed to refresh gamepads")
+            self.gamepads = []
             self._update_connection_state()
-            self._add_disabled_controller_row(str(exc))
+            self._add_disabled_gamepad_row(str(exc))
             self.select_button.setEnabled(False)
             return
 
-        selected = _load_selected_controller(self.config_path)
-        active_controller = (
-            self.server_backend.active_controller()
+        selected = _load_selected_gamepad(self.config_path)
+        active_gamepad = (
+            self.server_backend.active_gamepad()
             if self.server_backend is not None
             else None
         )
         self._update_connection_state()
 
-        if not self.controllers:
-            self._add_disabled_controller_row("No gamepads found")
+        if not self.gamepads:
+            self._add_disabled_gamepad_row("No gamepads found")
             self._update_select_button_state()
             return
 
-        selected_row = _selected_controller_index(self.controllers, selected)
-        display_names = _controller_display_names(self.controllers)
-        for controller, display_name in zip(
-            self.controllers, display_names, strict=True
+        selected_row = _selected_gamepad_index(self.gamepads, selected)
+        display_names = _gamepad_display_names(self.gamepads)
+        for gamepad, display_name in zip(
+            self.gamepads, display_names, strict=True
         ):
-            row_label = _controller_row_label(controller, display_name)
+            row_label = _gamepad_row_label(gamepad, display_name)
             item = QtWidgets.QListWidgetItem(row_label)
-            item.setData(CONTROLLER_NAME_ROLE, row_label.split("\n", 1)[0])
+            item.setData(GAMEPAD_NAME_ROLE, row_label.split("\n", 1)[0])
+            item.setData(GAMEPAD_DETAIL_ROLE, _gamepad_identity_hint(gamepad))
             item.setData(
-                CONTROLLER_DETAIL_ROLE, _controller_identity_hint(controller)
+                GAMEPAD_BADGES_ROLE,
+                _gamepad_row_badges(gamepad, selected, active_gamepad),
             )
-            item.setData(
-                CONTROLLER_BADGES_ROLE,
-                _controller_row_badges(
-                    controller, selected, active_controller
-                ),
-            )
-            self.controller_list.addItem(item)
+            self.gamepad_list.addItem(item)
 
         if selected_row is not None:
-            self.controller_list.setCurrentRow(selected_row)
-        elif previous_row >= 0 and previous_row < len(self.controllers):
-            self.controller_list.setCurrentRow(previous_row)
+            self.gamepad_list.setCurrentRow(selected_row)
+        elif previous_row >= 0 and previous_row < len(self.gamepads):
+            self.gamepad_list.setCurrentRow(previous_row)
         self._update_select_button_state()
 
-    def select_current_controller(self) -> None:
-        selected_row = self.controller_list.currentRow()
-        if not 0 <= selected_row < len(self.controllers):
+    def select_current_gamepad(self) -> None:
+        selected_row = self.gamepad_list.currentRow()
+        if not 0 <= selected_row < len(self.gamepads):
             return
-        _save_selected_controller(
-            self.config_path, self.controllers[selected_row]
-        )
+        _save_selected_gamepad(self.config_path, self.gamepads[selected_row])
         self.refresh()
         if self.selection_changed_callback is not None:
             self.selection_changed_callback()
 
-    def use_any_controller(self) -> None:
-        _clear_selected_controller(self.config_path)
+    def use_any_gamepad(self) -> None:
+        _clear_selected_gamepad(self.config_path)
         self.refresh()
         if self.selection_changed_callback is not None:
             self.selection_changed_callback()
 
 
-class ControllerSelectorTray:
+class GamepadSelectorTray:
     def __init__(
         self,
         config_path: Path | None = None,
@@ -719,11 +699,11 @@ class ControllerSelectorTray:
         lan: bool = False,
         terminal: bool = False,
     ) -> None:
-        self.config_path = config_path or _controller_config_path()
+        self.config_path = config_path or _selection_config_path()
         self.signals = BackendSignals()
-        self.signals.controllers_changed.connect(self._refresh_from_backend)
-        self.signals.active_controller_changed.connect(
-            self._handle_active_controller_changed
+        self.signals.gamepads_changed.connect(self._refresh_from_backend)
+        self.signals.active_gamepad_changed.connect(
+            self._handle_active_gamepad_changed
         )
         self.signals.client_count_changed.connect(
             self._handle_client_count_changed
@@ -732,13 +712,13 @@ class ControllerSelectorTray:
             config_path=self.config_path,
             lan=lan,
             terminal=terminal,
-            device_change_callback=self.signals.controllers_changed.emit,
-            active_controller_callback=self.signals.active_controller_changed.emit,
+            device_change_callback=self.signals.gamepads_changed.emit,
+            active_gamepad_callback=self.signals.active_gamepad_changed.emit,
             client_count_callback=self.signals.client_count_changed.emit,
         )
         self.server_backend.ensure_started()
 
-        self.window = ControllerSelectorWindow(
+        self.window = GamepadSelectorWindow(
             self.config_path,
             server_backend=self.server_backend,
             hide_on_close=True,
@@ -777,11 +757,9 @@ class ControllerSelectorTray:
         self.window.refresh()
         self.rebuild_menu()
 
-    def _handle_active_controller_changed(
-        self, active_controller: object
-    ) -> None:
-        self.server_backend.active_controller_info = (
-            active_controller if isinstance(active_controller, dict) else None
+    def _handle_active_gamepad_changed(self, active_gamepad: object) -> None:
+        self.server_backend.active_gamepad_info = (
+            active_gamepad if isinstance(active_gamepad, dict) else None
         )
         self.window.refresh()
         self._sync_connection_state()
@@ -797,13 +775,13 @@ class ControllerSelectorTray:
     def _update_tray_tooltip(self) -> None:
         self.tray.setToolTip(
             _status_text(
-                attached=self.server_backend.is_controller_connected(),
+                attached=self.server_backend.is_gamepad_connected(),
                 client_count=self.server_backend.client_count(),
             )
         )
 
     def _update_tray_state(self) -> None:
-        connected = self.server_backend.is_controller_connected()
+        connected = self.server_backend.is_gamepad_connected()
         self._update_tray_tooltip()
         if connected == self.tray_icon_connected:
             return
@@ -887,7 +865,7 @@ def run_tray(
     start_hidden: bool = False,
 ) -> int:
     _create_application()
-    tray = ControllerSelectorTray(config_path, lan=lan, terminal=terminal)
+    tray = GamepadSelectorTray(config_path, lan=lan, terminal=terminal)
     signal_timer = _install_signal_handlers(tray._quit)
     try:
         return tray.run(start_hidden=start_hidden)

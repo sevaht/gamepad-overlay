@@ -36,13 +36,10 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
       - name: Setup uv
         uses: astral-sh/setup-uv@v8.2.0
-
-      - name: Install build dependencies
-        run: sudo apt-get update && sudo apt-get install -y libsdl2-2.0-0
 
       - name: Build release archive
         run: |
@@ -67,7 +64,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
       - name: Setup uv
         uses: astral-sh/setup-uv@v8.2.0

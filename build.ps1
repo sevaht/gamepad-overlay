@@ -15,6 +15,7 @@ Push-Location $ProjectRoot
 try {
     Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue
     uv sync --no-dev
+    uv run python -c "import sdl3"
     uv run --with pyinstaller pyinstaller gamepad-overlay.spec --clean --noconfirm --distpath $DistRoot --workpath $WorkRoot
 
     Remove-Item -Recurse -Force $ArchiveRoot -ErrorAction SilentlyContinue

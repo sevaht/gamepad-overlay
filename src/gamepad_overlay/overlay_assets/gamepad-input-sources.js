@@ -230,7 +230,7 @@ class BrowserGamepadSource {
             return "PADS none";
         }
         if (this.#lastPadListSignature !== signature) {
-            console.info("[pads] connected controllers:");
+            console.info("[pads] connected gamepads:");
             for (const pad of connected) {
                 const line = [
                     `id=\"${pad.id}\"`,
@@ -240,7 +240,7 @@ class BrowserGamepadSource {
                 ].join(" | ");
                 console.info(`  - ${line}`);
             }
-            console.info("[pads] Tip: use the exact id string (or a unique contiguous substring) with padIdContains=<value> to prefer a controller.");
+            console.info("[pads] Tip: use the exact id string (or a unique contiguous substring) with padIdContains=<value> to prefer a gamepad.");
         }
         this.#lastPadListSignature = signature;
         return `PADS ${connected.map((pad) => `${pad.index}:${pad.id}`).join(" | ")}`;
