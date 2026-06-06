@@ -69,34 +69,34 @@ gamepad-overlay-<tag>-<platform>/
 Run the packaged app from the extracted directory. It serves the overlay itself
 at `http://127.0.0.1:8765/`.
 
-## Controller Selection
+## Gamepad Selection
 
-The server supports both interactive and explicit controller selection.
+The server supports both interactive and explicit gamepad selection.
 
-Interactively select a connected controller:
+Interactively select a connected gamepad:
 
 ```bash
-uv run gamepad-overlay --select-controller
+uv run gamepad-overlay --select-gamepad
 ```
 
-Choose `0` in that selector to use any controller.
+Choose `0` in that selector to use any gamepad.
 
-Clear the saved controller selection explicitly:
+Clear the saved gamepad selection explicitly:
 
 ```bash
-uv run gamepad-overlay --any-controller
+uv run gamepad-overlay --any-gamepad
 ```
 
-Select controller by GUID:
+Select gamepad by GUID:
 
 ```bash
-uv run gamepad-overlay --controller-guid <guid>
+uv run gamepad-overlay --gamepad-guid <guid>
 ```
 
-Select controller by case-insensitive name substring:
+Select gamepad by case-insensitive name substring:
 
 ```bash
-uv run gamepad-overlay --controller-name "Xbox"
+uv run gamepad-overlay --gamepad-name "Xbox"
 ```
 
 Additional useful commands:
@@ -104,15 +104,15 @@ Additional useful commands:
 ```bash
 uv run gamepad-overlay --hide
 uv run gamepad-overlay --headless
-uv run gamepad-overlay --list-controllers
+uv run gamepad-overlay --list-gamepads
 uv run gamepad-overlay --lan
 uv run gamepad-overlay --terminal
 ```
 
-Selected controller config is persisted to:
+Selected gamepad config is persisted to:
 
-- Linux: `~/.config/gamepad-overlay/controller-selection.json` unless `XDG_CONFIG_HOME` is set
-- Windows: under the current user's home directory in `.config/gamepad-overlay/controller-selection.json`
+- Linux: `~/.config/gamepad-overlay/gamepad-selection.json` unless `XDG_CONFIG_HOME` is set
+- Windows: under the current user's home directory in `.config/gamepad-overlay/gamepad-selection.json`
 
 ## Overlay Parameters
 
@@ -150,13 +150,13 @@ Selected controller config is persisted to:
 ### Browser Source
 
 - `padIndex=<number>`
-  Controller index hint. Useful for debugging/testing, but not as stable as ID matching.
+  Gamepad index hint. Useful for debugging/testing, but not as stable as ID matching.
 
 - `padIdContains=<substring>`
-  Preferred browser-controller selector.
+  Preferred browser-gamepad selector.
 
 - `padAllowAll=1`
-  Allows non-standard-mapped browser controllers.
+  Allows non-standard-mapped browser gamepads.
 
 - `pollHz=<number>`
   Browser polling frequency. Defaults to `240`.

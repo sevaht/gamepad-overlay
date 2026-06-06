@@ -6,6 +6,7 @@ import importlib.metadata
 import json
 import logging
 import os
+from contextlib import suppress
 from dataclasses import dataclass, field
 from enum import IntEnum, auto, unique
 from pathlib import Path
@@ -21,11 +22,11 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
     from threading import Event
 
-CONTROLLER_CONFIG_FIELDS = ("guid", "vendor", "product", "name")
+GAMEPAD_SELECTION_FIELDS = ("guid", "vendor", "product", "name")
 
 logger = logging.getLogger(__name__)
 
-CONFIG_FILE_NAME = "controller-selection.json"
+SELECTION_CONFIG_FILE_NAME = "gamepad-selection.json"
 
 
 @dataclass(frozen=True)
@@ -301,7 +302,7 @@ class SDLGamepad:
             return True
 
         matched_field = False
-        for field_name in CONTROLLER_CONFIG_FIELDS:
+        for field_name in GAMEPAD_SELECTION_FIELDS:
             selected_value = selected.get(field_name, "")
             if not selected_value:
                 continue
@@ -381,7 +382,7 @@ class SDLGamepad:
         if self.selected_gamepad is not None:
             selection_values = tuple(
                 self.selected_gamepad.get(field_name, "")
-                for field_name in CONTROLLER_CONFIG_FIELDS
+                for field_name in GAMEPAD_SELECTION_FIELDS
             )
         return (self.selected_guid, self.name_filter, selection_values)
 
@@ -418,7 +419,7 @@ class SDLGamepad:
         if mtime_ns == self._selection_mtime_ns:
             return
         self._selection_mtime_ns = mtime_ns
-        selected = _load_selected_controller(path)
+        selected = _load_selected_gamepad(path)
         self._apply_selection(selected, announce_change=True)
 
     def _wait_for_gamepad(
@@ -630,8 +631,8 @@ class SDLGamepad:
 @dataclass
 class ServerRunConfig:
     config_path: Path
-    controller_guid: str | None = None
-    controller_name: str | None = None
+    gamepad_guid: str | None = None
+    gamepad_name: str | None = None
     lan: bool = False
     terminal: bool = False
     stop_event: Event | None = None
@@ -732,24 +733,24 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Print state to terminal instead of broadcasting to websocket.",
     )
     parser.add_argument(
-        "--list-controllers",
+        "--list-gamepads",
         action="store_true",
-        help="List connected controllers and exit.",
+        help="List connected gamepads and exit.",
     )
-    parser.add_argument("--controller-guid", help="Select controller by GUID.")
+    parser.add_argument("--gamepad-guid", help="Select gamepad by GUID.")
     parser.add_argument(
-        "--controller-name",
-        help="Select controller by case-insensitive name substring.",
-    )
-    parser.add_argument(
-        "--any-controller",
-        action="store_true",
-        help="Clear the saved controller selection and use any controller.",
+        "--gamepad-name",
+        help="Select gamepad by case-insensitive name substring.",
     )
     parser.add_argument(
-        "--select-controller",
+        "--any-gamepad",
         action="store_true",
-        help="Interactively select a connected controller and save it.",
+        help="Clear the saved gamepad selection and use any gamepad.",
+    )
+    parser.add_argument(
+        "--select-gamepad",
+        action="store_true",
+        help="Interactively select a connected gamepad and save it.",
     )
     parser.add_argument(
         "--headless",
@@ -765,7 +766,7 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _print_available_controllers() -> int:
+def _print_available_gamepads() -> int:
     gamepads = SDLGamepad.list_available_gamepads()
     if not gamepads:
         print("No compatible gamepads detected.")
@@ -788,24 +789,24 @@ def _format_hex_identifier(value: object) -> str:
         return text
 
 
-def _controller_vid_pid(controller: dict[str, object]) -> str:
-    vendor = _format_hex_identifier(controller.get("vendor"))
-    product = _format_hex_identifier(controller.get("product"))
+def _gamepad_vid_pid(gamepad: dict[str, object]) -> str:
+    vendor = _format_hex_identifier(gamepad.get("vendor"))
+    product = _format_hex_identifier(gamepad.get("product"))
     if vendor and product:
         return f"{vendor}:{product}"
     return ""
 
 
-def _controller_metadata_summary(
-    controller: dict[str, object], *, version_first: bool
+def _gamepad_metadata_summary(
+    gamepad: dict[str, object], *, version_first: bool
 ) -> str:
-    product_version = str(controller.get("product_version", "")).strip()
+    product_version = str(gamepad.get("product_version", "")).strip()
     version_part = f"v{product_version}" if product_version else ""
     id_parts: list[str] = []
-    vendor_product = _controller_vid_pid(controller)
+    vendor_product = _gamepad_vid_pid(gamepad)
     if vendor_product:
         id_parts.append(f"[{vendor_product}]")
-    guid = str(controller.get("guid", "")).strip()
+    guid = str(gamepad.get("guid", "")).strip()
     if guid:
         id_parts.append(f"[{guid}]")
     if version_first:
@@ -815,16 +816,16 @@ def _controller_metadata_summary(
     return " ".join(part for part in parts if part)
 
 
-def _select_and_save_controller(config_path: Path) -> int:
-    selected = _interactive_select_controller()
+def _select_and_save_gamepad(config_path: Path) -> int:
+    selected = _interactive_select_gamepad()
     if selected is None:
         print("No gamepad selected.")
         return 1
     if not selected:
-        _clear_selected_controller(config_path)
+        _clear_selected_gamepad(config_path)
         print("Will use any gamepad.")
         return 0
-    _save_selected_controller(config_path, selected)
+    _save_selected_gamepad(config_path, selected)
     print(
         "Saved selected gamepad: "
         f"{selected['name']} (guid={selected['guid']})"
@@ -832,17 +833,17 @@ def _select_and_save_controller(config_path: Path) -> int:
     return 0
 
 
-def _save_explicit_selection(
+def _save_explicit_gamepad_selection(
     args: argparse.Namespace, config_path: Path
 ) -> None:
-    if args.controller_guid:
-        _save_selected_controller(
+    if args.gamepad_guid:
+        _save_selected_gamepad(
             config_path,
-            {"guid": args.controller_guid, "name": args.controller_name or ""},
+            {"guid": args.gamepad_guid, "name": args.gamepad_name or ""},
         )
-    elif args.controller_name:
-        _save_selected_controller(
-            config_path, {"guid": "", "name": args.controller_name}
+    elif args.gamepad_name:
+        _save_selected_gamepad(
+            config_path, {"guid": "", "name": args.gamepad_name}
         )
 
 
@@ -858,13 +859,13 @@ def _run_tray(args: argparse.Namespace, config_path: Path) -> int:
 
 
 def run_server(config: ServerRunConfig) -> int:
-    selected_config = _load_selected_controller(config.config_path)
-    selected_guid = config.controller_guid or (
+    selected_config = _load_selected_gamepad(config.config_path)
+    selected_guid = config.gamepad_guid or (
         selected_config.get("guid") if selected_config else None
     )
     selected_name = (
-        config.controller_name
-        if config.controller_name is not None
+        config.gamepad_name
+        if config.gamepad_name is not None
         else (selected_config.get("name") if selected_config else None)
     )
 
@@ -888,13 +889,13 @@ def run_server(config: ServerRunConfig) -> int:
         name_filter=selected_name or None,
         selected_gamepad=(
             None
-            if config.controller_guid or config.controller_name
+            if config.gamepad_guid or config.gamepad_name
             else selected_config
         ),
     )
     selection_watch_path = (
         None
-        if config.controller_guid or config.controller_name
+        if config.gamepad_guid or config.gamepad_name
         else config.config_path
     )
     try:
@@ -916,8 +917,8 @@ def _run_headless_server(args: argparse.Namespace, config_path: Path) -> int:
     return run_server(
         ServerRunConfig(
             config_path=config_path,
-            controller_guid=args.controller_guid,
-            controller_name=args.controller_name,
+            gamepad_guid=args.gamepad_guid,
+            gamepad_name=args.gamepad_name,
             lan=args.lan,
             terminal=args.terminal,
         )
@@ -929,20 +930,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(args=argv)
     configure_logging(args)
 
-    config_path = _controller_config_path()
+    config_path = _selection_config_path()
 
-    if args.list_controllers:
-        return _print_available_controllers()
+    if args.list_gamepads:
+        return _print_available_gamepads()
 
-    if args.any_controller:
-        _clear_selected_controller(config_path)
+    if args.any_gamepad:
+        _clear_selected_gamepad(config_path)
         print("Will use any gamepad.")
         return 0
 
-    if args.select_controller:
-        return _select_and_save_controller(config_path)
+    if args.select_gamepad:
+        return _select_and_save_gamepad(config_path)
 
-    _save_explicit_selection(args, config_path)
+    _save_explicit_gamepad_selection(args, config_path)
 
     if not args.headless:
         return _run_tray(args, config_path)
@@ -950,19 +951,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     return _run_headless_server(args, config_path)
 
 
-def _controller_config_path() -> Path:
+def _selection_config_path() -> Path:
     config_home = os.environ.get("XDG_CONFIG_HOME")
     base = Path(config_home) if config_home else Path.home() / ".config"
-    return base / "gamepad-overlay" / CONFIG_FILE_NAME
+    return base / "gamepad-overlay" / SELECTION_CONFIG_FILE_NAME
 
 
-def _load_selected_controller(path: Path) -> dict[str, str] | None:
+def _load_selected_gamepad(path: Path) -> dict[str, str] | None:
     if not path.exists():
         return None
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        logger.warning("Failed to read controller config at %s", path)
+        logger.warning("Failed to read gamepad selection config at %s", path)
         return None
     guid = str(payload.get("guid", "")).strip()
     name = str(payload.get("name", "")).strip()
@@ -973,23 +974,21 @@ def _load_selected_controller(path: Path) -> dict[str, str] | None:
     return {"guid": guid, "vendor": vendor, "product": product, "name": name}
 
 
-def _save_selected_controller(path: Path, selected: dict[str, object]) -> None:
+def _save_selected_gamepad(path: Path, selected: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     data = {
         field_name: str(selected.get(field_name, "")).strip()
-        for field_name in CONTROLLER_CONFIG_FIELDS
+        for field_name in GAMEPAD_SELECTION_FIELDS
     }
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
-def _clear_selected_controller(path: Path) -> None:
-    try:
+def _clear_selected_gamepad(path: Path) -> None:
+    with suppress(FileNotFoundError):
         path.unlink()
-    except FileNotFoundError:
-        return
 
 
-def _interactive_select_controller() -> dict[str, object] | None:
+def _interactive_select_gamepad() -> dict[str, object] | None:
     gamepads = SDLGamepad.list_available_gamepads()
     if not gamepads:
         print("No compatible gamepads detected.")
@@ -997,7 +996,7 @@ def _interactive_select_controller() -> dict[str, object] | None:
     print("Detected gamepads:")
     for idx, gamepad in enumerate(gamepads, start=1):
         print(f"  {idx}) {gamepad['name']}")
-        metadata = _controller_metadata_summary(gamepad, version_first=False)
+        metadata = _gamepad_metadata_summary(gamepad, version_first=False)
         if metadata:
             print(f"     - {metadata}")
     print("  0) (any gamepad)")
