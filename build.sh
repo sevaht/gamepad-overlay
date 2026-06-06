@@ -12,6 +12,7 @@ cd "${PROJECT_ROOT}"
 
 unset VIRTUAL_ENV || true
 uv sync --no-dev
+uv run python -c "import sdl3"
 uv run --with pyinstaller pyinstaller \
     gamepad-overlay.spec \
     --clean \

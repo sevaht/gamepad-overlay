@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from gamepad_overlay.application import (
-    SDLGameController,
+    SDLGamepad,
     ServerRunConfig,
     _clear_selected_controller,
     _controller_metadata_summary,
@@ -227,30 +227,30 @@ def test_managed_server_backend_starts_in_process_server(
     assert backend.status_label() == "Server: stopped"
 
 
-def test_managed_server_backend_tracks_controller_connection() -> None:
+def test_managed_server_backend_tracks_gamepad_connection() -> None:
     backend = ManagedServerBackend(
         config_path=Path("controller-selection.json")
     )
 
-    assert not backend.is_controller_connected()
-    backend.active_controller_info = {"guid": "guid-1"}
-    assert backend.is_controller_connected()
+    assert not backend.is_gamepad_connected()
+    backend.active_gamepad_info = {"guid": "guid-1"}
+    assert backend.is_gamepad_connected()
 
 
 def test_reload_selection_updates_saved_match_fields(tmp_path: Path) -> None:
     config_path = tmp_path / "controller-selection.json"
-    controller = object.__new__(SDLGameController)
+    controller = object.__new__(SDLGamepad)
     controller.selected_guid = "guid-1"
     controller.name_filter = None
-    controller.selected_controller = {
+    controller.selected_gamepad = {
         "guid": "guid-1",
         "name": "Pad",
         "vendor": "1118",
         "product": "654",
     }
     controller._selection_mtime_ns = None
-    controller._controller = None
-    controller._instance_id = None
+    controller._gamepad = None
+    controller._gamepad_id = None
 
     _save_selected_controller(
         config_path,
@@ -265,8 +265,8 @@ def test_reload_selection_updates_saved_match_fields(tmp_path: Path) -> None:
     )
     controller.reload_selection_from_config(config_path)
 
-    assert controller.selected_controller is not None
-    assert controller.selected_controller == {
+    assert controller.selected_gamepad is not None
+    assert controller.selected_gamepad == {
         "guid": "guid-1",
         "vendor": "1118",
         "product": "654",
@@ -276,7 +276,7 @@ def test_reload_selection_updates_saved_match_fields(tmp_path: Path) -> None:
     _clear_selected_controller(config_path)
     controller.reload_selection_from_config(config_path)
 
-    assert controller.selected_controller is None
+    assert controller.selected_gamepad is None
     assert controller.selected_guid is None
 
 

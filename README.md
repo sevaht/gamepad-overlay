@@ -18,12 +18,11 @@ Requirements for running from source:
 
 - Python 3.12+
 - `uv`
-- SDL2-compatible runtime available
 
 Platform notes:
 
-- Windows: `uv sync` should install the required SDL2 DLL package automatically.
-- Linux: you still need an SDL2-compatible runtime on the system. A normal SDL2 package works, and `sdl2-compat` should also be fine if it provides the SDL2 library that `pysdl2` loads.
+- PySDL3 manages SDL3 binaries itself for source installs.
+- Packaged releases are intended to bundle everything needed to run.
 
 Run:
 

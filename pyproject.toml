@@ -14,8 +14,7 @@ license = "Unlicense"
 requires-python = ">=3.12"
 dependencies = [
     "PySide6>=6.9.0",
-    "pysdl2>=0.9.17",
-    "pysdl2-dll>=2.32.0; sys_platform == 'win32'",
+    "PySDL3>=0.9.11b1",
     "sevaht-utility",
     "websockets>=16.0",
 ]

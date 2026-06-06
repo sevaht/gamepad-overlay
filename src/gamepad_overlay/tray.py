@@ -12,7 +12,7 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
 from .application import (
-    SDLGameController,
+    SDLGamepad,
     ServerRunConfig,
     _clear_selected_controller,
     _controller_config_path,
@@ -69,18 +69,18 @@ class ServerBackend(Protocol):
 
     def status_label(self) -> str: ...
 
-    def is_controller_connected(self) -> bool: ...
+    def is_gamepad_connected(self) -> bool: ...
 
     def client_count(self) -> int: ...
 
-    def active_controller(self) -> dict[str, object] | None: ...
+    def active_gamepad(self) -> dict[str, object] | None: ...
 
     def stop(self) -> None: ...
 
 
 class BackendSignals(QtCore.QObject):
     controllers_changed = QtCore.Signal()
-    active_controller_changed = QtCore.Signal(object)
+    active_gamepad_changed = QtCore.Signal(object)
     client_count_changed = QtCore.Signal(int)
 
 
@@ -90,14 +90,14 @@ class ManagedServerBackend:
     lan: bool = False
     terminal: bool = False
     device_change_callback: Callable[[], None] | None = None
-    active_controller_callback: (
+    active_gamepad_callback: (
         Callable[[dict[str, object] | None], None] | None
     ) = None
     client_count_callback: Callable[[int], None] | None = None
     thread: Thread | None = field(default=None, init=False)
     stop_event: Event = field(default_factory=Event, init=False)
     failed: bool = field(default=False, init=False)
-    active_controller_info: dict[str, object] | None = field(
+    active_gamepad_info: dict[str, object] | None = field(
         default=None, init=False
     )
     connected_client_count: int = field(default=0, init=False)
@@ -121,7 +121,7 @@ class ManagedServerBackend:
                     terminal=self.terminal,
                     stop_event=self.stop_event,
                     device_change_callback=self.device_change_callback,
-                    active_controller_callback=self.active_controller_callback,
+                    active_gamepad_callback=self.active_gamepad_callback,
                     client_count_callback=self.client_count_callback,
                 )
             )
@@ -136,20 +136,20 @@ class ManagedServerBackend:
             return "Server: stopped unexpectedly"
         return "Server: stopped"
 
-    def is_controller_connected(self) -> bool:
-        return self.active_controller_info is not None
+    def is_gamepad_connected(self) -> bool:
+        return self.active_gamepad_info is not None
 
     def client_count(self) -> int:
         return self.connected_client_count
 
-    def active_controller(self) -> dict[str, object] | None:
-        return self.active_controller_info
+    def active_gamepad(self) -> dict[str, object] | None:
+        return self.active_gamepad_info
 
     def stop(self) -> None:
         self.stop_event.set()
         if self.thread is not None:
             self.thread.join(timeout=0.2)
-        self.active_controller_info = None
+        self.active_gamepad_info = None
         self.connected_client_count = 0
 
 
@@ -165,7 +165,7 @@ def _status_text(*, attached: bool, client_count: int) -> str:
 def _controller_matches_selection(
     controller: dict[str, object], selected: dict[str, str] | None
 ) -> bool:
-    return SDLGameController._matches_selected_controller(controller, selected)
+    return SDLGamepad._matches_selected_gamepad(controller, selected)
 
 
 def _controller_selection_identity(
@@ -212,11 +212,11 @@ def _controller_row_label(
 def _controller_row_badges(
     controller: dict[str, object],
     selected: dict[str, str] | None,
-    active_controller: dict[str, object] | None,
+    active_gamepad: dict[str, object] | None,
 ) -> tuple[str, ...]:
     badges: list[str] = []
-    if active_controller is not None and _controller_matches_selection(
-        controller, _controller_selection_identity(active_controller)
+    if active_gamepad is not None and _controller_matches_selection(
+        controller, _controller_selection_identity(active_gamepad)
     ):
         badges.append(ACTIVE_CONTROLLER_BADGE)
     if selected is not None and _controller_matches_selection(
@@ -472,7 +472,7 @@ def _create_tray_icon(*, connected: bool = False) -> QIcon:
 
 
 def _list_available_controllers() -> list[dict[str, object]]:
-    return SDLGameController.list_available_controllers()
+    return SDLGamepad.list_available_gamepads()
 
 
 class ControllerSelectorWindow:
@@ -589,7 +589,7 @@ class ControllerSelectorWindow:
 
     def _update_connection_state(self) -> None:
         attached = (
-            self.server_backend.is_controller_connected()
+            self.server_backend.is_gamepad_connected()
             if self.server_backend is not None
             else False
         )
@@ -656,8 +656,8 @@ class ControllerSelectorWindow:
             return
 
         selected = _load_selected_controller(self.config_path)
-        active_controller = (
-            self.server_backend.active_controller()
+        active_gamepad = (
+            self.server_backend.active_gamepad()
             if self.server_backend is not None
             else None
         )
@@ -681,9 +681,7 @@ class ControllerSelectorWindow:
             )
             item.setData(
                 CONTROLLER_BADGES_ROLE,
-                _controller_row_badges(
-                    controller, selected, active_controller
-                ),
+                _controller_row_badges(controller, selected, active_gamepad),
             )
             self.controller_list.addItem(item)
 
@@ -722,8 +720,8 @@ class ControllerSelectorTray:
         self.config_path = config_path or _controller_config_path()
         self.signals = BackendSignals()
         self.signals.controllers_changed.connect(self._refresh_from_backend)
-        self.signals.active_controller_changed.connect(
-            self._handle_active_controller_changed
+        self.signals.active_gamepad_changed.connect(
+            self._handle_active_gamepad_changed
         )
         self.signals.client_count_changed.connect(
             self._handle_client_count_changed
@@ -733,7 +731,7 @@ class ControllerSelectorTray:
             lan=lan,
             terminal=terminal,
             device_change_callback=self.signals.controllers_changed.emit,
-            active_controller_callback=self.signals.active_controller_changed.emit,
+            active_gamepad_callback=self.signals.active_gamepad_changed.emit,
             client_count_callback=self.signals.client_count_changed.emit,
         )
         self.server_backend.ensure_started()
@@ -777,11 +775,9 @@ class ControllerSelectorTray:
         self.window.refresh()
         self.rebuild_menu()
 
-    def _handle_active_controller_changed(
-        self, active_controller: object
-    ) -> None:
-        self.server_backend.active_controller_info = (
-            active_controller if isinstance(active_controller, dict) else None
+    def _handle_active_gamepad_changed(self, active_gamepad: object) -> None:
+        self.server_backend.active_gamepad_info = (
+            active_gamepad if isinstance(active_gamepad, dict) else None
         )
         self.window.refresh()
         self._sync_connection_state()
@@ -797,13 +793,13 @@ class ControllerSelectorTray:
     def _update_tray_tooltip(self) -> None:
         self.tray.setToolTip(
             _status_text(
-                attached=self.server_backend.is_controller_connected(),
+                attached=self.server_backend.is_gamepad_connected(),
                 client_count=self.server_backend.client_count(),
             )
         )
 
     def _update_tray_state(self) -> None:
-        connected = self.server_backend.is_controller_connected()
+        connected = self.server_backend.is_gamepad_connected()
         self._update_tray_tooltip()
         if connected == self.tray_icon_connected:
             return
