@@ -58,6 +58,97 @@ RUNTIME_HOOK_PATH.write_text(
 )
 
 
+UNUSED_QT_PATH_PARTS = (
+    "PySide6/Qt/translations",
+    "PySide6/Qt/plugins/platformthemes",
+    "PySide6/Qt/plugins/platforminputcontexts",
+)
+UNUSED_QT_BINARY_NAMES = {
+    "libatk-1.0.so.0",
+    "libatk-bridge-2.0.so.0",
+    "libatspi.so.0",
+    "libcairo-gobject.so.2",
+    "libcairo.so.2",
+    "libcloudproviders.so.0",
+    "libdatrie.so.1",
+    "libfribidi.so.0",
+    "libgdk-3.so.0",
+    "libgdk_pixbuf-2.0.so.0",
+    "libglycin-2.so.0",
+    "libgtk-3.so.0",
+    "libicudata.so.78",
+    "libicuuc.so.78",
+    "libjson-glib-1.0.so.0",
+    "libpango-1.0.so.0",
+    "libpangocairo-1.0.so.0",
+    "libpangoft2-1.0.so.0",
+    "libthai.so.0",
+    "libtinysparql-3.0.so.0",
+    "libxml2.so.16",
+}
+UNUSED_SDL_BINARY_PREFIXES = (
+    "libSDL3_image",
+    "libSDL3_mixer",
+    "libSDL3_net",
+    "libSDL3_rtf",
+    "libSDL3_ttf",
+    "SDL3_image",
+    "SDL3_mixer",
+    "SDL3_net",
+    "SDL3_rtf",
+    "SDL3_ttf",
+)
+UNUSED_SDL_DATA_FILES = {"metadata.json"}
+
+
+def _dest_path(entry: tuple[str, str]) -> str:
+    return entry[1].replace("\\", "/")
+
+
+def _exclude_qt_runtime_entry(entry: tuple[str, str]) -> bool:
+    dest_path = _dest_path(entry)
+    return any(dest_path.startswith(prefix) for prefix in UNUSED_QT_PATH_PARTS)
+
+
+def _exclude_sdl_binary(entry: tuple[str, str]) -> bool:
+    name = Path(entry[0]).name
+    return any(name.startswith(prefix) for prefix in UNUSED_SDL_BINARY_PREFIXES)
+
+
+def _exclude_sdl_data(entry: tuple[str, str]) -> bool:
+    dest_path = _dest_path(entry)
+    if not dest_path.startswith("sdl3/bin"):
+        return False
+    return Path(entry[0]).name in UNUSED_SDL_DATA_FILES
+
+
+def _toc_dest_path(entry: tuple[str, str, str]) -> str:
+    return str(entry[0]).replace("\\", "/")
+
+
+def _toc_source_name(entry: tuple[str, str, str]) -> str:
+    return Path(entry[1]).name
+
+
+def _exclude_qt_analysis_entry(entry: tuple[str, str, str]) -> bool:
+    dest_path = _toc_dest_path(entry)
+    return any(dest_path.startswith(prefix) for prefix in UNUSED_QT_PATH_PARTS)
+
+
+def _exclude_qt_analysis_binary(entry: tuple[str, str, str]) -> bool:
+    return _toc_source_name(entry) in UNUSED_QT_BINARY_NAMES
+
+
+def _exclude_sdl_analysis_entry(entry: tuple[str, str, str]) -> bool:
+    dest_path = _toc_dest_path(entry)
+    if not dest_path.startswith("sdl3/bin"):
+        return False
+    source_name = _toc_source_name(entry)
+    return source_name in UNUSED_SDL_DATA_FILES or any(
+        source_name.startswith(prefix) for prefix in UNUSED_SDL_BINARY_PREFIXES
+    )
+
+
 datas: list[tuple[str, str]] = []
 binaries: list[tuple[str, str]] = []
 hiddenimports: list[str] = []
@@ -73,10 +164,16 @@ for package_name in (ENTRY_MODULE, "sevaht_utility", "sdl3"):
 for distribution_name in ("gamepad-overlay", "sevaht-utility"):
     datas += copy_metadata(distribution_name)
 
-if sys.platform.startswith("linux"):
-    datas = [
-        entry for entry in datas if Path(entry[0]).name != "libqgtk3.so"
-    ]
+datas = [
+    entry
+    for entry in datas
+    if not _exclude_qt_runtime_entry(entry) and not _exclude_sdl_data(entry)
+]
+binaries = [
+    entry
+    for entry in binaries
+    if not _exclude_qt_runtime_entry(entry) and not _exclude_sdl_binary(entry)
+]
 
 analysis = Analysis(
     [str(LAUNCHER_PATH)],
@@ -91,6 +188,19 @@ analysis = Analysis(
     noarchive=False,
     optimize=0,
 )
+analysis.datas = type(analysis.datas)(
+    entry
+    for entry in analysis.datas
+    if not _exclude_qt_analysis_entry(entry)
+    and not _exclude_sdl_analysis_entry(entry)
+)
+analysis.binaries = type(analysis.binaries)(
+    entry
+    for entry in analysis.binaries
+    if not _exclude_qt_analysis_entry(entry)
+    and not _exclude_qt_analysis_binary(entry)
+    and not _exclude_sdl_analysis_entry(entry)
+)
 
 pyz = PYZ(analysis.pure)
 
@@ -102,7 +212,7 @@ exe = EXE(
     name="gamepad-overlay",
     debug=False,
     bootloader_ignore_signals=False,
-    strip=False,
+    strip=sys.platform.startswith("linux"),
     upx=False,
     console=sys.platform != "win32",
     disable_windowed_traceback=False,
@@ -112,7 +222,7 @@ coll = COLLECT(
     exe,
     analysis.binaries,
     analysis.datas,
-    strip=False,
+    strip=sys.platform.startswith("linux"),
     upx=False,
     upx_exclude=[],
     name="gamepad-overlay",

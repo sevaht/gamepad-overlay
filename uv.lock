@@ -457,7 +457,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "pysdl3" },
-    { name = "pyside6" },
+    { name = "pyside6-essentials" },
     { name = "sevaht-utility" },
     { name = "websockets" },
 ]
@@ -467,6 +467,7 @@ dev = [
     { name = "black" },
     { name = "build" },
     { name = "mypy" },
+    { name = "pyside6" },
     { name = "pytest" },
     { name = "ruff" },
     { name = "twine" },
@@ -475,7 +476,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "pysdl3", specifier = ">=0.9.11b1" },
-    { name = "pyside6", specifier = ">=6.9.0" },
+    { name = "pyside6-essentials", specifier = ">=6.9.0" },
     { name = "sevaht-utility", git = "https://github.com/nacitar/sevaht-utility.git?rev=main" },
     { name = "websockets", specifier = ">=16.0" },
 ]
@@ -485,6 +486,7 @@ dev = [
     { name = "black", specifier = ">=26.3.1,<27.0.0" },
     { name = "build", specifier = ">=1.4.2,<2.0.0" },
     { name = "mypy", specifier = ">=1.20.0,<2.0.0" },
+    { name = "pyside6", specifier = ">=6.9.0" },
     { name = "pytest", specifier = ">=9.0.2,<10.0.0" },
     { name = "ruff", specifier = ">=0.15.8,<0.16.0" },
     { name = "twine", specifier = ">=6.2.0,<7.0.0" },
