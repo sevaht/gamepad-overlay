@@ -32,7 +32,7 @@ DBUS_MENU_OBJECT_PATH = "/com/canonical/dbusmenu"
 # scaling bias -> smooth), but upsampling a small source blurs it, biases one
 # side, and can leave a stray corner pixel. The softness vs. the directly-drawn
 # XEmbed icon is the host's own scaling filter and is not avoidable here.
-SNI_ICON_SIZE = 64
+SNI_ICON_SIZE = 128
 
 
 def sni_watcher_present() -> bool:
@@ -121,12 +121,21 @@ class StatusNotifierItemInterface(ServiceInterface):
     def update_icon(
         self, icon_pixmap: list
     ) -> None:
+        # Only signal on an actual change; the tray syncs state periodically
+        # and re-emitting unchanged values makes hosts flicker the icon/tooltip.
+        if icon_pixmap == self._icon_pixmap:
+            return
         self._icon_pixmap = icon_pixmap
         self.NewIcon()
 
     def update_title(self, title: str) -> None:
+        if title == self._title:
+            return
         self._title = title
         self.NewTitle()
+        # The tooltip text is derived from the title; hosts cache the ToolTip
+        # property and only re-read it when NewToolTip fires.
+        self.NewToolTip()
 
     @method()
     def Activate(self, x: "i", y: "i"):
@@ -216,6 +225,10 @@ class StatusNotifierItemInterface(ServiceInterface):
 
     @dbus_signal()
     def NewTitle(self):
+        pass
+
+    @dbus_signal()
+    def NewToolTip(self):
         pass
 
 
