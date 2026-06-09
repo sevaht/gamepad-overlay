@@ -48,6 +48,10 @@ _DEFAULT_ICON_SIZE = 24
 _ALPHA_THRESHOLD = 128
 _BUTTON_PRIMARY = 1
 _BUTTON_SECONDARY = 3
+# Fraction of the tray cell the icon fills. SNI hosts render icons inside a
+# small standard margin rather than edge-to-edge; inset ours to match. Tweak
+# if it ends up larger/smaller than neighbouring tray icons.
+_ICON_FILL_FRACTION = 0.9
 
 
 class XEmbedTrayIcon:
@@ -265,11 +269,14 @@ class XEmbedTrayIcon:
             return
         width = max(1, geometry.width)
         height = max(1, geometry.height)
-        # Render natively at the allocated size (square, centered if the tray
-        # cell is not square) rather than rescaling a master image.
+        # Render natively at the allocated size, inset to match host-rendered
+        # (SNI) icons, and center it in the cell.
         size = min(width, height)
-        image = self._render_icon(size).convert("RGBA")
-        self._paint_masked(image, (width - size) // 2, (height - size) // 2)
+        icon_size = max(1, round(size * _ICON_FILL_FRACTION))
+        image = self._render_icon(icon_size).convert("RGBA")
+        self._paint_masked(
+            image, (width - icon_size) // 2, (height - icon_size) // 2
+        )
 
     def _paint_masked(
         self, image: Image.Image, offset_x: int, offset_y: int
@@ -290,9 +297,7 @@ class XEmbedTrayIcon:
             # exposures=False: a self-generated Expose would re-trigger _draw.
             self._window.clear_area(exposures=False)
             self._gc.change(
-                clip_mask=mask,
-                clip_x_origin=offset_x,
-                clip_y_origin=offset_y,
+                clip_mask=mask, clip_x_origin=offset_x, clip_y_origin=offset_y
             )
             self._window.put_pil_image(
                 self._gc, offset_x, offset_y, image.convert("RGB")

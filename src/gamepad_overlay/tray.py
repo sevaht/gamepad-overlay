@@ -256,7 +256,7 @@ def _create_face_buttons_image(
             width=stroke,
         )
     if supersample != 1:
-        image = image.resize((size, size), Image.Resampling.LANCZOS)
+        image = image.resize((size, size), Image.Resampling.BOX)
     return image
 
 
