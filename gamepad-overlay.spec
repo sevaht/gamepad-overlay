@@ -153,7 +153,7 @@ datas: list[tuple[str, str]] = []
 binaries: list[tuple[str, str]] = []
 hiddenimports: list[str] = []
 
-for package_name in (ENTRY_MODULE, "sevaht_utility", "sdl3"):
+for package_name in (ENTRY_MODULE, "pystray", "sevaht_utility", "sdl3"):
     package_datas, package_binaries, package_hiddenimports = collect_all(
         package_name
     )

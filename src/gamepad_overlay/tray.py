@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import logging
+import queue
+import re
 import signal
+import subprocess
 import sys
+import tkinter as tk
 from dataclasses import dataclass, field
-from threading import Event, Thread
-from typing import TYPE_CHECKING, Protocol, override
+from threading import Event, Lock, Thread, current_thread
+from tkinter import ttk
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
-from PySide6 import QtCore, QtGui, QtWidgets
-from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QApplication
+from PIL import Image, ImageDraw
 
 from .application import (
     SDLGamepad,
@@ -24,18 +27,19 @@ from .application import (
 
 logger = logging.getLogger(__name__)
 
-GAMEPAD_NAME_ROLE = int(QtCore.Qt.ItemDataRole.UserRole) + 1
-GAMEPAD_DETAIL_ROLE = int(QtCore.Qt.ItemDataRole.UserRole) + 2
-GAMEPAD_BADGES_ROLE = int(QtCore.Qt.ItemDataRole.UserRole) + 3
-GAMEPAD_ROW_HORIZONTAL_PADDING = 8
-GAMEPAD_ROW_VERTICAL_PADDING = 6
-GAMEPAD_ROW_LINE_GAP = 2
-GAMEPAD_NAME_POINT_SIZE_INCREMENT = 2
-GAMEPAD_BADGE_GAP = 6
+
+class SNIRegistrationError(RuntimeError):
+    """Raised when the SNI backend cannot register with a watcher at startup.
+
+    Signals the tray to fall back to a backend that does not require an SNI
+    host (the XEmbed icon on legacy X11 setups).
+    """
+
+
 ACTIVE_GAMEPAD_BADGE = "★"
 SELECTED_GAMEPAD_BADGE = "Selected"
 ICON_BUTTON_SIZE = 24
-ICON_BUTTON_STROKE_WIDTH = 3.0
+ICON_BUTTON_STROKE_WIDTH = 3
 ICON_BUTTON_CENTERS = {
     "Y": (32.0, 14.0),
     "B": (50.0, 32.0),
@@ -54,14 +58,10 @@ XBOX_FACE_BUTTON_RELEASED_COLORS = {
     "A": (31, 79, 32),
     "X": (31, 31, 95),
 }
-TRAY_ICONS: dict[bool, QIcon] = {}
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
-
-    from PySide6.QtCore import QEvent
-    from PySide6.QtGui import QCloseEvent, QIcon
 
 
 class ServerBackend(Protocol):
@@ -76,12 +76,6 @@ class ServerBackend(Protocol):
     def active_gamepad(self) -> dict[str, object] | None: ...
 
     def stop(self) -> None: ...
-
-
-class BackendSignals(QtCore.QObject):
-    gamepads_changed = QtCore.Signal()
-    active_gamepad_changed = QtCore.Signal(object)
-    client_count_changed = QtCore.Signal(int)
 
 
 @dataclass
@@ -216,176 +210,6 @@ def _gamepad_row_badges(
     return tuple(badges)
 
 
-def _gamepad_name_font(base_font: QtGui.QFont) -> QtGui.QFont:
-    font = QtGui.QFont(base_font)
-    font.setBold(True)
-    font.setPointSize(font.pointSize() + GAMEPAD_NAME_POINT_SIZE_INCREMENT)
-    return font
-
-
-def _gamepad_detail_font(base_font: QtGui.QFont) -> QtGui.QFont:
-    font = QtGui.QFont(base_font)
-    font.setBold(False)
-    return font
-
-
-def _gamepad_row_height(base_font: QtGui.QFont) -> int:
-    name_height = QtGui.QFontMetrics(_gamepad_name_font(base_font)).height()
-    detail_height = QtGui.QFontMetrics(
-        _gamepad_detail_font(base_font)
-    ).height()
-    return (
-        GAMEPAD_ROW_VERTICAL_PADDING
-        + name_height
-        + GAMEPAD_ROW_LINE_GAP
-        + detail_height
-        + GAMEPAD_ROW_VERTICAL_PADDING
-    )
-
-
-class GamepadItemDelegate(QtWidgets.QStyledItemDelegate):
-    @override
-    def paint(
-        self,
-        painter: QtGui.QPainter,
-        option: QtWidgets.QStyleOptionViewItem,
-        index: QtCore.QModelIndex | QtCore.QPersistentModelIndex,
-    ) -> None:
-        item_option = QtWidgets.QStyleOptionViewItem(option)
-        self.initStyleOption(item_option, index)
-        item_option.text = ""
-
-        widget = item_option.widget
-        style = (
-            widget.style()
-            if widget is not None
-            else QtWidgets.QApplication.style()
-        )
-        style.drawControl(
-            QtWidgets.QStyle.ControlElement.CE_ItemViewItem,
-            item_option,
-            painter,
-            widget,
-        )
-
-        name = str(index.data(GAMEPAD_NAME_ROLE) or "")
-        detail = str(index.data(GAMEPAD_DETAIL_ROLE) or "")
-        badges = tuple(
-            str(badge) for badge in (index.data(GAMEPAD_BADGES_ROLE) or ())
-        )
-        text_rect = item_option.rect.adjusted(
-            GAMEPAD_ROW_HORIZONTAL_PADDING,
-            GAMEPAD_ROW_VERTICAL_PADDING,
-            -GAMEPAD_ROW_HORIZONTAL_PADDING,
-            -GAMEPAD_ROW_VERTICAL_PADDING,
-        )
-
-        painter.save()
-        text_role = QtGui.QPalette.ColorRole.Text
-        if item_option.state & QtWidgets.QStyle.StateFlag.State_Selected:
-            text_role = QtGui.QPalette.ColorRole.HighlightedText
-        painter.setPen(
-            item_option.palette.color(
-                item_option.palette.currentColorGroup(), text_role
-            )
-        )
-
-        name_font = _gamepad_name_font(item_option.font)
-        name_metrics = QtGui.QFontMetrics(name_font)
-        detail_font = _gamepad_detail_font(item_option.font)
-        detail_metrics = QtGui.QFontMetrics(detail_font)
-
-        # Separate badges: star (active) on left, text (selected) on right
-        left_badges = [b for b in badges if b == ACTIVE_GAMEPAD_BADGE]
-        right_badges = [b for b in badges if b == SELECTED_GAMEPAD_BADGE]
-
-        left_badge_width = sum(
-            detail_metrics.horizontalAdvance(b) for b in left_badges
-        )
-        right_badge_width = sum(
-            name_metrics.horizontalAdvance(b) for b in right_badges
-        )
-        right_badge_width += GAMEPAD_BADGE_GAP * max(0, len(right_badges) - 1)
-
-        name_left = text_rect.left() + (
-            left_badge_width + GAMEPAD_BADGE_GAP if left_badges else 0
-        )
-        name_right = text_rect.right() - (
-            right_badge_width + GAMEPAD_BADGE_GAP if right_badges else 0
-        )
-
-        name_rect = QtCore.QRect(
-            name_left,
-            text_rect.top(),
-            max(0, name_right - name_left),
-            name_metrics.height(),
-        )
-
-        if left_badges:
-            painter.setFont(detail_font)
-            badge_x = text_rect.left()
-            for badge in left_badges:
-                width = detail_metrics.horizontalAdvance(badge)
-                badge_rect = QtCore.QRect(
-                    badge_x, name_rect.top(), width, name_rect.height()
-                )
-                painter.drawText(
-                    badge_rect, QtCore.Qt.AlignmentFlag.AlignCenter, badge
-                )
-                badge_x += width + GAMEPAD_BADGE_GAP
-
-        painter.setFont(name_font)
-        elided_name = name_metrics.elidedText(
-            name, QtCore.Qt.TextElideMode.ElideRight, name_rect.width()
-        )
-        painter.drawText(
-            name_rect,
-            QtCore.Qt.AlignmentFlag.AlignLeft
-            | QtCore.Qt.AlignmentFlag.AlignVCenter,
-            elided_name,
-        )
-
-        if right_badges:
-            badge_x = text_rect.right() - right_badge_width + 1
-            for badge in right_badges:
-                width = name_metrics.horizontalAdvance(badge)
-                badge_rect = QtCore.QRect(
-                    badge_x, name_rect.top(), width, name_rect.height()
-                )
-                painter.drawText(
-                    badge_rect, QtCore.Qt.AlignmentFlag.AlignCenter, badge
-                )
-                badge_x += width + GAMEPAD_BADGE_GAP
-
-        painter.setFont(detail_font)
-        detail_rect = QtCore.QRect(
-            text_rect.left(),
-            name_rect.bottom() + GAMEPAD_ROW_LINE_GAP,
-            text_rect.width(),
-            detail_metrics.height(),
-        )
-        elided_detail = detail_metrics.elidedText(
-            detail, QtCore.Qt.TextElideMode.ElideLeft, detail_rect.width()
-        )
-        painter.drawText(
-            detail_rect,
-            QtCore.Qt.AlignmentFlag.AlignRight
-            | QtCore.Qt.AlignmentFlag.AlignVCenter,
-            elided_detail,
-        )
-        painter.restore()
-
-    @override
-    def sizeHint(
-        self,
-        option: QtWidgets.QStyleOptionViewItem,
-        index: QtCore.QModelIndex | QtCore.QPersistentModelIndex,
-    ) -> QtCore.QSize:
-        size = super().sizeHint(option, index)
-        size.setHeight(_gamepad_row_height(option.font))
-        return size
-
-
 def _selected_gamepad_index(
     gamepads: list[dict[str, object]], selected: dict[str, str] | None
 ) -> int | None:
@@ -397,66 +221,82 @@ def _selected_gamepad_index(
     return None
 
 
-def _new_icon_pixmap() -> QtGui.QPixmap:
-    pixmap = QtGui.QPixmap(64, 64)
-    pixmap.fill(QtCore.Qt.GlobalColor.transparent)
-    return pixmap
-
-
-def _new_icon_painter(pixmap: QtGui.QPixmap) -> QtGui.QPainter:
-    painter = QtGui.QPainter(pixmap)
-    painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
-    return painter
-
-
-def _draw_outlined_ellipse(
-    painter: QtGui.QPainter,
-    rect: QtCore.QRectF,
-    fill: QtGui.QColor,
-    *,
-    stroke_width: float = ICON_BUTTON_STROKE_WIDTH,
-) -> None:
-    painter.setPen(QtGui.QPen(QtGui.QColor(0, 0, 0, 255), stroke_width))
-    painter.setBrush(fill)
-    painter.drawEllipse(rect)
-
-
-def _qcolor(rgb: tuple[int, int, int]) -> QtGui.QColor:
+def _rgb_hex(rgb: tuple[int, int, int]) -> str:
     red, green, blue = rgb
-    return QtGui.QColor(red, green, blue, 255)
+    return f"#{red:02x}{green:02x}{blue:02x}"
 
 
-def _create_face_buttons_icon(*, connected: bool) -> QIcon:
-    pixmap = _new_icon_pixmap()
-    painter = _new_icon_painter(pixmap)
-
+def _create_face_buttons_image(
+    *, connected: bool, size: int = 64
+) -> Image.Image:
+    # The geometry constants are defined in a 64x64 space. PIL's ellipse is not
+    # anti-aliased, so at small sizes circles rasterize into jagged, oval-ish
+    # blobs. Draw supersampled and downscale with BOX (area averaging) so every
+    # size is smooth. BOX gives coverage-based anti-aliasing with no ringing;
+    # LANCZOS would overshoot on the sharp black borders and look rough.
+    supersample = 4
+    render_size = size * supersample
+    image = Image.new("RGBA", (render_size, render_size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
     colors = (
         XBOX_FACE_BUTTON_PRESSED_COLORS
         if connected
         else XBOX_FACE_BUTTON_RELEASED_COLORS
     )
+    scale = render_size / 64
+    radius = (ICON_BUTTON_SIZE / 2) * scale
+    stroke = max(1, round(ICON_BUTTON_STROKE_WIDTH * scale))
     for button_name, (center_x, center_y) in ICON_BUTTON_CENTERS.items():
-        _draw_outlined_ellipse(
-            painter,
-            QtCore.QRectF(
-                center_x - ICON_BUTTON_SIZE / 2,
-                center_y - ICON_BUTTON_SIZE / 2,
-                ICON_BUTTON_SIZE,
-                ICON_BUTTON_SIZE,
-            ),
-            _qcolor(colors[button_name]),
+        cx = center_x * scale
+        cy = center_y * scale
+        draw.ellipse(
+            (cx - radius, cy - radius, cx + radius, cy + radius),
+            fill=colors[button_name],
+            outline="black",
+            width=stroke,
         )
+    if supersample != 1:
+        image = image.resize((size, size), Image.Resampling.LANCZOS)
+    return image
 
-    painter.end()
-    return QtGui.QIcon(pixmap)
 
+def _create_tk_window_icon(*, connected: bool) -> tk.PhotoImage:
+    image = tk.PhotoImage(width=64, height=64)
+    image.blank()
+    colors = (
+        XBOX_FACE_BUTTON_PRESSED_COLORS
+        if connected
+        else XBOX_FACE_BUTTON_RELEASED_COLORS
+    )
+    border_color = "#000000"
+    radius = ICON_BUTTON_SIZE / 2
+    inner_radius = max(radius - ICON_BUTTON_STROKE_WIDTH, 0)
+    outer_radius_squared = radius * radius
+    inner_radius_squared = inner_radius * inner_radius
 
-def _create_tray_icon(*, connected: bool = False) -> QIcon:
-    icon = TRAY_ICONS.get(connected)
-    if icon is None:
-        icon = _create_face_buttons_icon(connected=connected)
-        TRAY_ICONS[connected] = icon
-    return icon
+    for y in range(64):
+        for x in range(64):
+            pixel_x = x + 0.5
+            pixel_y = y + 0.5
+            pixel_color: str | None = None
+            for button_name, (
+                center_x,
+                center_y,
+            ) in ICON_BUTTON_CENTERS.items():
+                delta_x = pixel_x - center_x
+                delta_y = pixel_y - center_y
+                distance_squared = delta_x * delta_x + delta_y * delta_y
+                if distance_squared > outer_radius_squared:
+                    continue
+                pixel_color = (
+                    border_color
+                    if distance_squared >= inner_radius_squared
+                    else _rgb_hex(colors[button_name])
+                )
+            if pixel_color is not None:
+                image.put(pixel_color, (x, y))
+
+    return image
 
 
 def _list_available_gamepads() -> list[dict[str, object]]:
@@ -479,101 +319,204 @@ class GamepadSelectorWindow:
         self.quit_callback = quit_callback
         self.selection_changed_callback = selection_changed_callback
         self.gamepads: list[dict[str, object]] = []
-        self.icon_connected: bool | None = None
-
-        owner = self
-
-        class _Window(QtWidgets.QWidget):
-            def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
-                owner._handle_close_event(event)
-
-            def changeEvent(self, event: QEvent) -> None:  # noqa: N802
-                super().changeEvent(event)
-                owner._handle_change_event(event)
-
-        self.widget = _Window()
-        self._update_connection_state()
-        self.widget.resize(640, 460)
-        self.widget.setMinimumSize(520, 380)
-
-        layout = QtWidgets.QVBoxLayout(self.widget)
-        layout.setContentsMargins(18, 18, 18, 18)
-        layout.setSpacing(12)
-
-        self._build_gamepad_list(layout)
-        self._build_buttons(layout)
-
-        self.refresh()
-
-    def _build_gamepad_list(self, layout: QtWidgets.QVBoxLayout) -> None:
-        self.gamepad_list = QtWidgets.QListWidget()
-        self.gamepad_list.setObjectName("gamepadList")
-        self.gamepad_list.setSpacing(2)
-        self.gamepad_list.setWordWrap(True)
-        self.gamepad_list.setItemDelegate(
-            GamepadItemDelegate(self.gamepad_list)
+        self._window_icon_connected: bool | None = None
+        self._quit_dialog: tk.Toplevel | None = None
+        self._ui_ready = Event()
+        self._ui_closed = Event()
+        self._ui_queue: queue.SimpleQueue[
+            tuple[Callable[[], object], Event | None, list[object] | None]
+        ] = queue.SimpleQueue()
+        self._ui_error: Exception | None = None
+        self._poll_after_id: str | None = None
+        self._ui_thread = Thread(
+            target=self._run_ui_thread,
+            name="gamepad-overlay-selector",
+            daemon=True,
         )
-        self.gamepad_list.itemSelectionChanged.connect(
-            self._handle_gamepad_selection_changed
-        )
-        self.gamepad_list.itemDoubleClicked.connect(
-            lambda _item: self.select_current_gamepad()
-        )
-        layout.addWidget(self.gamepad_list, stretch=1)
+        self._ui_thread.start()
+        self._ui_ready.wait(timeout=5)
+        if self._ui_error is not None:
+            msg = "Failed to initialize tkinter selector"
+            raise RuntimeError(msg) from self._ui_error
+        if not self._ui_ready.is_set():
+            msg = "Timed out initializing tkinter selector window."
+            raise RuntimeError(msg)
 
-    def _build_buttons(self, layout: QtWidgets.QVBoxLayout) -> None:
-        button_row = QtWidgets.QHBoxLayout()
-        button_row.setSpacing(8)
-        layout.addLayout(button_row)
+    def _on_ui_thread(self) -> bool:
+        return current_thread() is self._ui_thread
 
-        self.select_button = QtWidgets.QPushButton("Select Gamepad")
-        self.select_button.clicked.connect(self.select_current_gamepad)
-        button_row.addWidget(self.select_button)
+    def _invoke_ui(self, callback: Callable[[], object]) -> None:
+        if self._ui_closed.is_set():
+            return
+        if self._on_ui_thread():
+            callback()
+            return
+        self._ui_queue.put((callback, None, None))
 
-        use_any_button = QtWidgets.QPushButton("Use Any Gamepad")
-        use_any_button.clicked.connect(self.use_any_gamepad)
-        button_row.addWidget(use_any_button)
+    def _invoke_ui_sync(self, callback: Callable[[], object]) -> object:
+        if self._ui_closed.is_set():
+            return False
+        if self._on_ui_thread():
+            return callback()
+        done = Event()
+        result: list[object] = []
+        self._ui_queue.put((callback, done, result))
+        done.wait(timeout=5)
+        return result[0] if result else False
 
-        refresh_button = QtWidgets.QPushButton("Refresh")
-        refresh_button.clicked.connect(self.refresh)
-        button_row.addWidget(refresh_button)
+    def _poll_ui_queue(self) -> None:
+        while True:
+            try:
+                callback, done, result = self._ui_queue.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                value = callback()
+                if result is not None:
+                    result.append(value)
+            except Exception:  # noqa: BLE001
+                logger.debug("Error in UI callback", exc_info=True)
+            finally:
+                if done is not None:
+                    done.set()
+        if not self._ui_closed.is_set():
+            if self._poll_after_id is not None:
+                try:
+                    self.root.after_cancel(self._poll_after_id)
+                except tk.TclError:
+                    pass
+            self._poll_after_id = self.root.after(25, self._poll_ui_queue)
 
-        button_row.addStretch(1)
+    def _run_ui_thread(self) -> None:
+        try:
+            self.root = tk.Tk()
+            self._window_icons: dict[bool, object] = {}
+            self.root.geometry("640x460")
+            self.root.minsize(520, 380)
+            self.root.protocol("WM_DELETE_WINDOW", self._dismiss)
 
-        if self.hide_on_close:
-            hide_button = QtWidgets.QPushButton("Hide")
-            hide_button.clicked.connect(self._dismiss)
-            button_row.addWidget(hide_button)
+            content = ttk.Frame(self.root, padding=18)
+            content.pack(fill=tk.BOTH, expand=True)
+            content.columnconfigure(0, weight=1)
+            content.rowconfigure(0, weight=1)
 
-        close_button = QtWidgets.QPushButton(
-            "Quit" if self.hide_on_close else "Close"
-        )
-        close_button.clicked.connect(
-            self._request_quit if self.hide_on_close else self.widget.close
-        )
-        button_row.addWidget(close_button)
+            list_frame = ttk.Frame(content)
+            list_frame.grid(row=0, column=0, sticky="nsew")
+            list_frame.columnconfigure(0, weight=1)
+            list_frame.rowconfigure(0, weight=1)
+
+            self.gamepad_list = ttk.Treeview(
+                list_frame,
+                columns=("status", "name", "detail"),
+                show="headings",
+                selectmode="browse",
+            )
+            self.gamepad_list.heading("status", text="State")
+            self.gamepad_list.heading("name", text="Gamepad")
+            self.gamepad_list.heading("detail", text="Identity")
+            self.gamepad_list.column(
+                "status", width=110, anchor=tk.CENTER, stretch=False
+            )
+            self.gamepad_list.column("name", width=220, anchor=tk.W)
+            self.gamepad_list.column("detail", width=260, anchor=tk.W)
+            self.gamepad_list.grid(row=0, column=0, sticky="nsew")
+            self.gamepad_list.bind(
+                "<<TreeviewSelect>>",
+                lambda _event: self._update_select_button_state(),
+            )
+            self.gamepad_list.bind(
+                "<Double-1>", lambda _event: self.select_current_gamepad()
+            )
+
+            scrollbar = ttk.Scrollbar(
+                list_frame, orient=tk.VERTICAL, command=self.gamepad_list.yview
+            )
+            scrollbar.grid(row=0, column=1, sticky="ns")
+            self.gamepad_list.configure(yscrollcommand=scrollbar.set)
+
+            button_row = ttk.Frame(content)
+            button_row.grid(row=1, column=0, sticky="ew", pady=(12, 0))
+
+            self.select_button = ttk.Button(
+                button_row,
+                text="Select Gamepad",
+                command=self.select_current_gamepad,
+            )
+            self.select_button.pack(side=tk.LEFT)
+
+            ttk.Button(
+                button_row,
+                text="Use Any Gamepad",
+                command=self.use_any_gamepad,
+            ).pack(side=tk.LEFT, padx=(8, 0))
+
+            ttk.Button(button_row, text="Refresh", command=self.refresh).pack(
+                side=tk.LEFT, padx=(8, 0)
+            )
+
+            if self.hide_on_close:
+                ttk.Button(
+                    button_row, text="Hide", command=self._dismiss
+                ).pack(side=tk.RIGHT)
+
+            ttk.Button(
+                button_row,
+                text="Quit" if self.hide_on_close else "Close",
+                command=(
+                    self._request_quit if self.hide_on_close else self._dismiss
+                ),
+            ).pack(
+                side=tk.RIGHT, padx=(0, 8) if self.hide_on_close else (0, 0)
+            )
+
+            self.root.withdraw()
+            self._ui_ready.set()
+            self._poll_ui_queue()
+            self._refresh_ui()
+            self.root.mainloop()
+        except tk.TclError as exc:
+            self._ui_error = exc
+            self._ui_ready.set()
+        finally:
+            self._ui_closed.set()
 
     def _dismiss(self) -> None:
         if self.hide_on_close:
-            self.widget.hide()
+            self.root.withdraw()
             return
-        self.widget.close()
+        self._close_ui()
+
+    def hide(self) -> None:
+        self._invoke_ui(self.root.withdraw)
+
+    def _close_ui(self) -> bool:
+        if self._ui_closed.is_set():
+            return False
+        try:
+            self.root.destroy()
+        except tk.TclError:
+            return False
+        return True
+
+    def _current_selected_row(self) -> int | None:
+        selection = self.gamepad_list.selection()
+        if not selection:
+            return None
+        return int(selection[0])
 
     def _update_select_button_state(self) -> None:
-        selected_row = self.gamepad_list.currentRow()
-        self.select_button.setEnabled(0 <= selected_row < len(self.gamepads))
-
-    def _handle_gamepad_selection_changed(self) -> None:
-        self._update_select_button_state()
+        selected_row = self._current_selected_row()
+        self.select_button.state(
+            ["!disabled"] if selected_row is not None else ["disabled"]
+        )
 
     def _add_disabled_gamepad_row(self, text: str) -> None:
-        item = QtWidgets.QListWidgetItem(text)
-        item.setData(GAMEPAD_NAME_ROLE, text)
-        item.setData(GAMEPAD_DETAIL_ROLE, "")
-        item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEnabled)
-        self.gamepad_list.addItem(item)
+        self.gamepad_list.insert(
+            "", tk.END, iid="disabled", values=("", text, "")
+        )
+        self.gamepad_list.selection_remove(self.gamepad_list.selection())
 
-    def _update_connection_state(self) -> None:
+    def _update_connection_state_ui(self) -> None:
         attached = (
             self.server_backend.is_gamepad_connected()
             if self.server_backend is not None
@@ -584,61 +527,45 @@ class GamepadSelectorWindow:
             if self.server_backend is not None
             else 0
         )
-        self.widget.setWindowTitle(
+        self.root.title(
             _status_text(attached=attached, client_count=client_count)
         )
-        if attached == self.icon_connected:
-            return
-        self.icon_connected = attached
-        self.widget.setWindowIcon(_create_tray_icon(connected=attached))
+        if attached != self._window_icon_connected:
+            icon = self._window_icons.get(attached)
+            if icon is None:
+                icon = _create_tk_window_icon(connected=attached)
+                self._window_icons[attached] = icon
+            self.root.iconphoto(True, cast("tk.PhotoImage", icon))
+            self._window_icon_connected = attached
+            if self._quit_dialog is not None:
+                try:
+                    self._quit_dialog.iconphoto(True, cast("tk.PhotoImage", icon))
+                    self._quit_dialog.update_idletasks()
+                except tk.TclError:
+                    pass
 
-    def _handle_close_event(self, event: QCloseEvent) -> None:
-        event.accept()
-
-    def _handle_change_event(self, event: object) -> None:
-        event_type = getattr(event, "type", lambda: None)()
-        if event_type != QtCore.QEvent.Type.WindowStateChange:
-            return
-        if self.hide_on_close and self.widget.isMinimized():
-            QtCore.QTimer.singleShot(0, self.widget.close)
+    def _update_connection_state(self) -> None:
+        self._invoke_ui(self._update_connection_state_ui)
 
     def _request_quit(self) -> None:
         if self.quit_callback is not None:
             self.quit_callback()
 
-    def show(self) -> None:
-        self.refresh()
-        restored_state = (
-            self.widget.windowState()
-            & ~QtCore.Qt.WindowState.WindowMinimized
-            & ~QtCore.Qt.WindowState.WindowMaximized
-        )
-        self.widget.setWindowState(
-            restored_state | QtCore.Qt.WindowState.WindowActive
-        )
-        self.widget.show()
-        self._update_connection_state()
-        self.widget.raise_()
-        self.widget.activateWindow()
-
-    def is_visible(self) -> bool:
-        return self.widget.isVisible()
-
-    def refresh(self) -> None:
+    def _refresh_ui(self) -> None:
         if self.server_backend is not None:
             self.server_backend.ensure_started()
 
-        previous_row = self.gamepad_list.currentRow()
+        previous_row = self._current_selected_row()
+        self.gamepad_list.delete(*self.gamepad_list.get_children())
 
-        self.gamepad_list.clear()
         try:
             self.gamepads = _list_available_gamepads()
         except RuntimeError as exc:
             logger.exception("Failed to refresh gamepads")
             self.gamepads = []
-            self._update_connection_state()
+            self._update_connection_state_ui()
             self._add_disabled_gamepad_row(str(exc))
-            self.select_button.setEnabled(False)
+            self.select_button.state(["disabled"])
             return
 
         selected = _load_selected_gamepad(self.config_path)
@@ -647,48 +574,298 @@ class GamepadSelectorWindow:
             if self.server_backend is not None
             else None
         )
-        self._update_connection_state()
+        self._update_connection_state_ui()
 
         if not self.gamepads:
             self._add_disabled_gamepad_row("No gamepads found")
-            self._update_select_button_state()
+            self.select_button.state(["disabled"])
             return
 
         selected_row = _selected_gamepad_index(self.gamepads, selected)
         display_names = _gamepad_display_names(self.gamepads)
-        for gamepad, display_name in zip(
-            self.gamepads, display_names, strict=True
+        for index, (gamepad, display_name) in enumerate(
+            zip(self.gamepads, display_names, strict=True)
         ):
-            row_label = _gamepad_row_label(gamepad, display_name)
-            item = QtWidgets.QListWidgetItem(row_label)
-            item.setData(GAMEPAD_NAME_ROLE, row_label.split("\n", 1)[0])
-            item.setData(GAMEPAD_DETAIL_ROLE, _gamepad_identity_hint(gamepad))
-            item.setData(
-                GAMEPAD_BADGES_ROLE,
-                _gamepad_row_badges(gamepad, selected, active_gamepad),
+            badges = " ".join(
+                _gamepad_row_badges(gamepad, selected, active_gamepad)
             )
-            self.gamepad_list.addItem(item)
+            self.gamepad_list.insert(
+                "",
+                tk.END,
+                iid=str(index),
+                values=(badges, display_name, _gamepad_identity_hint(gamepad)),
+            )
 
         if selected_row is not None:
-            self.gamepad_list.setCurrentRow(selected_row)
-        elif previous_row >= 0 and previous_row < len(self.gamepads):
-            self.gamepad_list.setCurrentRow(previous_row)
+            self.gamepad_list.selection_set(str(selected_row))
+            self.gamepad_list.focus(str(selected_row))
+        elif previous_row is not None and previous_row < len(self.gamepads):
+            self.gamepad_list.selection_set(str(previous_row))
+            self.gamepad_list.focus(str(previous_row))
         self._update_select_button_state()
 
+    def show(self) -> None:
+        def _show() -> None:
+            self._refresh_ui()
+            if self.root.state() == "withdrawn":
+                mx, my, mw, mh = self._primary_monitor_bounds()
+                ww = self.root.winfo_reqwidth()
+                wh = self.root.winfo_reqheight()
+                x = mx + max(0, (mw - ww) // 2)
+                y = my + max(0, (mh - wh) // 3)
+                self.root.geometry(f"+{x}+{y}")
+            self.root.deiconify()
+            self.root.lift()
+            self.root.focus_force()
+
+        self._invoke_ui(_show)
+
+    def is_visible(self) -> bool:
+        return bool(
+            self._invoke_ui_sync(
+                lambda: self.root.state() != "withdrawn"
+                and self.root.winfo_viewable()
+            )
+        )
+
+    def _primary_monitor_bounds(self) -> tuple[int, int, int, int]:
+        try:
+            result = subprocess.run(
+                ["xrandr", "--current"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            for line in result.stdout.splitlines():
+                if "primary" in line:
+                    match = re.search(
+                        r"(\d+)x(\d+)\+(\d+)\+(\d+)", line
+                    )
+                    if match:
+                        w, h, x, y = map(int, match.groups())
+                        return (x, y, w, h)
+        except Exception:
+            pass
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+        return (0, 0, sw, sh)
+
+    def refresh(self) -> None:
+        self._invoke_ui(self._refresh_ui)
+
+    def confirm_quit(self) -> bool:
+        def _confirm() -> bool:
+            result = tk.BooleanVar(value=False)
+
+            d = tk.Toplevel()
+            d.title("Quit Gamepad Overlay")
+            d.resizable(False, False)
+            if str(self.root.state()) != "withdrawn":
+                d.transient(self.root)
+
+            # Copy the main window icon to the dialog title bar
+            if self._window_icon_connected is not None:
+                icon = self._window_icons.get(self._window_icon_connected)
+                if icon is not None:
+                    try:
+                        d.iconphoto(True, cast("tk.PhotoImage", icon))
+                    except tk.TclError:
+                        pass
+
+            frame = ttk.Frame(d, padding=20)
+            frame.pack()
+
+            ttk.Label(
+                frame,
+                text="Quit the tray and stop the managed gamepad server?",
+                wraplength=300,
+            ).pack(pady=(0, 10))
+
+            btn_frame = ttk.Frame(frame)
+            btn_frame.pack()
+
+            def _done() -> None:
+                self._quit_dialog = None
+                d.destroy()
+
+            def _yes() -> None:
+                result.set(True)
+                _done()
+
+            def _no() -> None:
+                result.set(False)
+                _done()
+
+            ttk.Button(btn_frame, text="Yes", command=_yes).pack(
+                side=tk.LEFT, padx=5
+            )
+            ttk.Button(btn_frame, text="No", command=_no).pack(
+                side=tk.LEFT, padx=5
+            )
+
+            dw = d.winfo_reqwidth()
+            dh = d.winfo_reqheight()
+            if str(self.root.state()) != "withdrawn":
+                rx = self.root.winfo_x()
+                ry = self.root.winfo_y()
+                rw = self.root.winfo_width()
+                rh = self.root.winfo_height()
+                x = rx + (rw - dw) // 2
+                y = ry + (rh - dh) // 2
+            else:
+                mx, my, mw, mh = self._primary_monitor_bounds()
+                x = mx + max(0, (mw - dw) // 2)
+                y = my + max(0, (mh - dh) // 3)
+            d.geometry(f"+{x}+{y}")
+            d.update_idletasks()
+            self._quit_dialog = d
+            d.grab_set()
+            d.focus_set()
+            d.wait_window()
+
+            return result.get()
+
+        return bool(self._invoke_ui_sync(_confirm))
+
     def select_current_gamepad(self) -> None:
-        selected_row = self.gamepad_list.currentRow()
-        if not 0 <= selected_row < len(self.gamepads):
-            return
-        _save_selected_gamepad(self.config_path, self.gamepads[selected_row])
-        self.refresh()
-        if self.selection_changed_callback is not None:
-            self.selection_changed_callback()
+        def _select() -> None:
+            selected_row = self._current_selected_row()
+            if selected_row is None:
+                return
+            _save_selected_gamepad(
+                self.config_path, self.gamepads[selected_row]
+            )
+            self._refresh_ui()
+            if self.selection_changed_callback is not None:
+                self.selection_changed_callback()
+
+        self._invoke_ui(_select)
 
     def use_any_gamepad(self) -> None:
-        _clear_selected_gamepad(self.config_path)
-        self.refresh()
-        if self.selection_changed_callback is not None:
-            self.selection_changed_callback()
+        def _use_any() -> None:
+            _clear_selected_gamepad(self.config_path)
+            self._refresh_ui()
+            if self.selection_changed_callback is not None:
+                self.selection_changed_callback()
+
+        self._invoke_ui(_use_any)
+
+    def close(self) -> None:
+        self._invoke_ui_sync(self._close_ui)
+        if self._ui_thread.is_alive() and not self._on_ui_thread():
+            self._ui_thread.join(timeout=1)
+
+
+def _tray_icon_renderer(connected: bool) -> Callable[[int], Image.Image]:
+    """Return a callable that renders the tray icon natively at a given size."""
+
+    def render(size: int) -> Image.Image:
+        return _create_face_buttons_image(connected=connected, size=size)
+
+    return render
+
+
+class _PystrayIcon:
+    """Adapt pystray.Icon to the render-based icon interface used here."""
+
+    _WINDOWS_ICON_SIZE = 64
+
+    def __init__(
+        self,
+        name: str,
+        title: str,
+        render_icon: Callable[[int], Image.Image],
+        *,
+        on_activate: Callable[[], None],
+        on_quit: Callable[[], None],
+    ) -> None:
+        import pystray  # type: ignore[import-untyped]
+
+        menu = pystray.Menu(
+            pystray.MenuItem(
+                "Configure...", lambda _i, _it: on_activate(), default=True
+            ),
+            pystray.MenuItem("Quit", lambda _i, _it: on_quit()),
+        )
+        self._icon = pystray.Icon(
+            name,
+            icon=render_icon(self._WINDOWS_ICON_SIZE),
+            title=title,
+            menu=menu,
+        )
+
+    def set_icon(self, render_icon: Callable[[int], Image.Image]) -> None:
+        self._icon.icon = render_icon(self._WINDOWS_ICON_SIZE)
+
+    @property
+    def title(self) -> str:
+        return str(self._icon.title)
+
+    @title.setter
+    def title(self, value: str) -> None:
+        self._icon.title = value
+
+    @property
+    def visible(self) -> bool:
+        return bool(self._icon.visible)
+
+    @visible.setter
+    def visible(self, value: bool) -> None:
+        self._icon.visible = value
+
+    def run(self, setup: Callable[[object], None] | None = None) -> None:
+        self._icon.run(setup=setup)
+
+    def stop(self) -> None:
+        self._icon.stop()
+
+
+def _make_tray_icon(  # noqa: PLR0913
+    name: str,
+    title: str,
+    render_icon: Callable[[int], Image.Image],
+    *,
+    on_activate: Callable[[], None],
+    on_quit: Callable[[], None],
+    force_xembed: bool = False,
+) -> Any:  # noqa: ANN401
+    """Create a platform-appropriate tray icon with a uniform interface.
+
+    The icon source is a ``render_icon(size) -> Image`` callable so each
+    backend can draw the icon natively at whatever size it needs instead of
+    rescaling one master image.
+
+    * Windows/macOS use pystray (native, reliable there).
+    * Linux prefers the StatusNotifierItem backend when an SNI host is present
+      (KDE/GNOME, Wayland, or fluxbox with snixembed). This is the only path
+      that works on Wayland and the only one where the host handles clicks on
+      transparent pixels for us. If it later fails to register, the caller
+      falls back to XEmbed via :class:`SNIRegistrationError`.
+    * Otherwise (bare X11 WMs with only the legacy XEmbed systray) it uses a
+      self-contained XEmbed icon. ``force_xembed`` selects this directly.
+    """
+    if sys.platform in ("win32", "darwin"):
+        return _PystrayIcon(
+            name, title, render_icon, on_activate=on_activate, on_quit=on_quit
+        )
+
+    if not force_xembed:
+        from .tray_sni import SNITrayIcon, sni_watcher_present
+
+        if sni_watcher_present():
+            return SNITrayIcon(
+                title,
+                render_icon,
+                on_activate=on_activate,
+                on_secondary=on_activate,
+                on_quit=on_quit,
+            )
+
+    from .tray_xembed import XEmbedTrayIcon
+
+    return XEmbedTrayIcon(
+        name, title, render_icon, on_activate=on_activate, on_quit=on_quit
+    )
 
 
 class GamepadSelectorTray:
@@ -700,24 +877,15 @@ class GamepadSelectorTray:
         terminal: bool = False,
     ) -> None:
         self.config_path = config_path or _selection_config_path()
-        self.signals = BackendSignals()
-        self.signals.gamepads_changed.connect(self._refresh_from_backend)
-        self.signals.active_gamepad_changed.connect(
-            self._handle_active_gamepad_changed
-        )
-        self.signals.client_count_changed.connect(
-            self._handle_client_count_changed
-        )
         self.server_backend = ManagedServerBackend(
             config_path=self.config_path,
             lan=lan,
             terminal=terminal,
-            device_change_callback=self.signals.gamepads_changed.emit,
-            active_gamepad_callback=self.signals.active_gamepad_changed.emit,
-            client_count_callback=self.signals.client_count_changed.emit,
+            device_change_callback=self._refresh_from_backend,
+            active_gamepad_callback=self._handle_active_gamepad_changed,
+            client_count_callback=self._handle_client_count_changed,
         )
         self.server_backend.ensure_started()
-
         self.window = GamepadSelectorWindow(
             self.config_path,
             server_backend=self.server_backend,
@@ -725,37 +893,41 @@ class GamepadSelectorTray:
             quit_callback=self._request_quit,
             selection_changed_callback=self._sync_connection_state,
         )
-
-        self.tray = QtWidgets.QSystemTrayIcon(_create_tray_icon())
-        self.tray_icon_connected: bool | None = False
-        self._sync_connection_state()
-        self.menu = QtWidgets.QMenu()
-        self.menu.aboutToShow.connect(self.rebuild_menu)
-        self.tray.setContextMenu(self.menu)
-        self.tray.activated.connect(self._handle_activation)
-
-    def _handle_activation(self, reason: object) -> None:
-        activation_reason = QtWidgets.QSystemTrayIcon.ActivationReason
-        if reason in {
-            activation_reason.Trigger,
-            activation_reason.DoubleClick,
-        }:
-            self.window.show()
-
-    def rebuild_menu(self) -> None:
-        self.server_backend.ensure_started()
-        self.menu.clear()
+        self._tray_lock = Lock()
+        self._tray_icon_connected: bool | None = None
+        self._tray_title = _status_text(attached=False, client_count=0)
+        self._start_hidden = False
+        self.icon: Any = self._create_icon()
         self._sync_connection_state()
 
-        configure_action = self.menu.addAction("Configure...")
-        configure_action.triggered.connect(self.window.show)
+    def _create_icon(
+        self, *, force_xembed: bool = False
+    ) -> Any:  # noqa: ANN401
+        return _make_tray_icon(
+            "gamepad-overlay",
+            self._tray_title,
+            _tray_icon_renderer(self._tray_icon_connected or False),
+            on_activate=self.window.show,
+            on_quit=self._request_quit,
+            force_xembed=force_xembed,
+        )
 
-        quit_action = self.menu.addAction("Quit")
-        quit_action.triggered.connect(self._request_quit)
+    def _apply_tray_state(self) -> None:
+        with self._tray_lock:
+            connected = self.server_backend.is_gamepad_connected()
+            title = _status_text(
+                attached=connected,
+                client_count=self.server_backend.client_count(),
+            )
+            self.icon.title = title
+            if connected != self._tray_icon_connected:
+                self.icon.set_icon(_tray_icon_renderer(connected))
+                self._tray_icon_connected = connected
+            self._tray_title = title
 
     def _refresh_from_backend(self) -> None:
         self.window.refresh()
-        self.rebuild_menu()
+        self._sync_connection_state()
 
     def _handle_active_gamepad_changed(self, active_gamepad: object) -> None:
         self.server_backend.active_gamepad_info = (
@@ -770,91 +942,62 @@ class GamepadSelectorTray:
 
     def _sync_connection_state(self) -> None:
         self.window._update_connection_state()
-        self._update_tray_state()
-
-    def _update_tray_tooltip(self) -> None:
-        self.tray.setToolTip(
-            _status_text(
-                attached=self.server_backend.is_gamepad_connected(),
-                client_count=self.server_backend.client_count(),
-            )
-        )
-
-    def _update_tray_state(self) -> None:
-        connected = self.server_backend.is_gamepad_connected()
-        self._update_tray_tooltip()
-        if connected == self.tray_icon_connected:
-            return
-        self.tray_icon_connected = connected
-        self.tray.setIcon(_create_tray_icon(connected=connected))
+        self._apply_tray_state()
 
     def _request_quit(self) -> None:
-        button = QtWidgets.QMessageBox.question(
-            self.window.widget,
-            "Quit Gamepad Overlay",
-            "Quit the tray and stop the managed gamepad server?",
-            QtWidgets.QMessageBox.StandardButton.Yes
-            | QtWidgets.QMessageBox.StandardButton.No,
-            QtWidgets.QMessageBox.StandardButton.No,
-        )
-        if button == QtWidgets.QMessageBox.StandardButton.Yes:
+        def _do_quit() -> None:
+            if not self.window.confirm_quit():
+                return
             self._quit()
 
+        self.window._invoke_ui(_do_quit)
+
     def _quit(self) -> None:
+        self.window.close()
         self.server_backend.stop()
-        self.tray.hide()
-        app = QApplication.instance()
-        if app is not None:
-            app.quit()
+        self.icon.stop()
+
+    def _setup(self, icon: object) -> None:  # noqa: ARG002
+        self.icon.visible = True
+        self._apply_tray_state()
+        if not self._start_hidden:
+            self.window.show()
 
     def run(self, *, start_hidden: bool = False) -> int:
-        if not QtWidgets.QSystemTrayIcon.isSystemTrayAvailable():
-            msg = "No system tray is available in this desktop session."
-            raise RuntimeError(msg)
-
-        app = QApplication.instance()
-        if app is None:
-            msg = "QApplication must exist before running the tray."
-            raise RuntimeError(msg)
-        if not isinstance(app, QApplication):
-            msg = "A non-widget Qt application already exists."
-            raise TypeError(msg)
-        app.setQuitOnLastWindowClosed(False)
-
-        self.rebuild_menu()
-        self.tray.show()
-        QtCore.QTimer.singleShot(0, self._sync_connection_state)
-        QtCore.QTimer.singleShot(250, self._sync_connection_state)
-        if not start_hidden:
-            self.window.show()
-        return int(app.exec())
+        self._start_hidden = start_hidden
+        try:
+            self.icon.run(setup=self._setup)
+        except SNIRegistrationError:
+            logger.warning(
+                "StatusNotifierItem registration failed; "
+                "falling back to the XEmbed tray icon"
+            )
+            self.icon = self._create_icon(force_xembed=True)
+            self.icon.run(setup=self._setup)
+        return 0
 
 
-def _create_application() -> QApplication:
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([sys.argv[0]])
-    elif not isinstance(app, QApplication):
-        msg = "A non-widget Qt application already exists."
-        raise TypeError(msg)
-    app.setApplicationName("Gamepad Selector")
-    app.setQuitOnLastWindowClosed(True)
-    return app
-
-
-def _install_signal_handlers(quit_callback: Callable[[], None]) -> QTimer:
-    app = QApplication.instance()
-    timer = QTimer(app)
-    timer.timeout.connect(lambda: None)
-    timer.start(100)
+def _install_signal_handlers(
+    quit_callback: Callable[[], None],
+) -> list[tuple[int, Any]]:
+    handlers: list[tuple[int, Any]] = []
 
     def handle_signal(_signum: int, _frame: object | None) -> None:
         quit_callback()
 
-    signal.signal(signal.SIGINT, handle_signal)
+    handlers.append(
+        (signal.SIGINT, signal.signal(signal.SIGINT, handle_signal))
+    )
     if hasattr(signal, "SIGTERM"):
-        signal.signal(signal.SIGTERM, handle_signal)
-    return timer
+        handlers.append(
+            (signal.SIGTERM, signal.signal(signal.SIGTERM, handle_signal))
+        )
+    return handlers
+
+
+def _restore_signal_handlers(handlers: list[tuple[int, Any]]) -> None:
+    for signum, previous_handler in handlers:
+        signal.signal(signum, previous_handler)
 
 
 def run_tray(
@@ -864,10 +1007,9 @@ def run_tray(
     terminal: bool = False,
     start_hidden: bool = False,
 ) -> int:
-    _create_application()
     tray = GamepadSelectorTray(config_path, lan=lan, terminal=terminal)
-    signal_timer = _install_signal_handlers(tray._quit)
+    handlers = _install_signal_handlers(tray._quit)
     try:
         return tray.run(start_hidden=start_hidden)
     finally:
-        signal_timer.stop()
+        _restore_signal_handlers(handlers)
