@@ -245,7 +245,12 @@ def _create_face_buttons_image(
     )
     scale = render_size / 64
     radius = (ICON_BUTTON_SIZE / 2) * scale
-    stroke = max(1, round(ICON_BUTTON_STROKE_WIDTH * scale))
+    # Pick the border width in *target* pixels (>=1), then scale up for the
+    # supersample, so it downscales to an exact integer-pixel line that stays
+    # uniformly solid all the way around instead of a sub-pixel width that
+    # blends into the fill on the diagonals.
+    target_stroke = max(1, round(ICON_BUTTON_STROKE_WIDTH * size / 64))
+    stroke = target_stroke * supersample
     for button_name, (center_x, center_y) in ICON_BUTTON_CENTERS.items():
         cx = center_x * scale
         cy = center_y * scale
