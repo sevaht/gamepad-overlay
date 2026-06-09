@@ -25,9 +25,13 @@ logger = logging.getLogger(__name__)
 
 SNI_OBJECT_PATH = "/StatusNotifierItem"
 DBUS_MENU_OBJECT_PATH = "/com/canonical/dbusmenu"
-# A single, generously sized pixmap. Offering several sizes makes some hosts
-# (e.g. snixembed) scale non-uniformly or pick oddly, distorting the icon; one
-# square source lets the host do a single clean uniform downscale.
+# A single, generously sized square pixmap. Offering several sizes makes some
+# hosts (e.g. snixembed) scale non-uniformly or pick oddly; one source lets the
+# host do a single uniform scale. Keep it comfortably LARGER than the host's
+# display area: hosts downsample a big source cleanly (heavy averaging hides
+# scaling bias -> smooth), but upsampling a small source blurs it, biases one
+# side, and can leave a stray corner pixel. The softness vs. the directly-drawn
+# XEmbed icon is the host's own scaling filter and is not avoidable here.
 SNI_ICON_SIZE = 64
 
 

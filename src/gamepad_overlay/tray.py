@@ -230,10 +230,12 @@ def _create_face_buttons_image(
     *, connected: bool, size: int = 64
 ) -> Image.Image:
     # The geometry constants are defined in a 64x64 space. PIL's ellipse is not
-    # anti-aliased, so at small sizes circles rasterize into jagged, oval-ish
-    # blobs. Draw supersampled and downscale with BOX (area averaging) so every
-    # size is smooth. BOX gives coverage-based anti-aliasing with no ringing;
-    # LANCZOS would overshoot on the sharp black borders and look rough.
+    # anti-aliased, so a direct small render turns circles into jagged diamonds.
+    # Draw supersampled and downscale with BOX (area averaging) for smooth,
+    # round buttons. This anti-aliasing inevitably leaves a faint blended pixel
+    # or two where the border meets the fill -- the same thing the window icon
+    # shows once the WM downscales it -- which is the price of round (vs.
+    # crisp-but-diamond) buttons at this size.
     supersample = 4
     render_size = size * supersample
     image = Image.new("RGBA", (render_size, render_size), (0, 0, 0, 0))
@@ -245,10 +247,9 @@ def _create_face_buttons_image(
     )
     scale = render_size / 64
     radius = (ICON_BUTTON_SIZE / 2) * scale
-    # Pick the border width in *target* pixels (>=1), then scale up for the
-    # supersample, so it downscales to an exact integer-pixel line that stays
-    # uniformly solid all the way around instead of a sub-pixel width that
-    # blends into the fill on the diagonals.
+    # Border width in *target* pixels (>=1), scaled up for the supersample, so
+    # it downscales to an exact integer-pixel line that stays uniformly solid
+    # rather than a sub-pixel width that blends into the fill on the diagonals.
     target_stroke = max(1, round(ICON_BUTTON_STROKE_WIDTH * size / 64))
     stroke = target_stroke * supersample
     for button_name, (center_x, center_y) in ICON_BUTTON_CENTERS.items():
