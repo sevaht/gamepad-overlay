@@ -41,6 +41,8 @@ LAUNCHER_PATH.write_text(
     f"    runpy.run_module({ENTRY_MODULE!r}, run_name='__main__', alter_sys=True)\n",
     encoding="utf-8",
 )
+# Point PySDL3 at the SDL3 shared library bundled under sdl3/bin so it does not
+# probe the host system for one.
 RUNTIME_HOOK_PATH.write_text(
     "import os\nimport sys\nfrom pathlib import Path\n\n"
     "bundle_root = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent))\n"
@@ -49,43 +51,13 @@ RUNTIME_HOOK_PATH.write_text(
     "    os.environ.setdefault('SDL_DISABLE_METADATA', '1')\n"
     "    os.environ.setdefault('SDL_FIND_BINARIES', '0')\n"
     "    os.environ.setdefault('SDL_CHECK_BINARY_VERSION', '0')\n"
-    "    os.environ.setdefault('SDL_BINARY_PATH', str(sdl_binary_path))\n"
-    "\n"
-    "if sys.platform.startswith('linux'):\n"
-    "    os.environ.setdefault('QT_QPA_PLATFORMTHEME', '')\n"
-    "    os.environ.setdefault('QT_STYLE_OVERRIDE', 'Fusion')\n",
+    "    os.environ.setdefault('SDL_BINARY_PATH', str(sdl_binary_path))\n",
     encoding="utf-8",
 )
 
 
-UNUSED_QT_PATH_PARTS = (
-    "PySide6/Qt/translations",
-    "PySide6/Qt/plugins/platformthemes",
-    "PySide6/Qt/plugins/platforminputcontexts",
-)
-UNUSED_QT_BINARY_NAMES = {
-    "libatk-1.0.so.0",
-    "libatk-bridge-2.0.so.0",
-    "libatspi.so.0",
-    "libcairo-gobject.so.2",
-    "libcairo.so.2",
-    "libcloudproviders.so.0",
-    "libdatrie.so.1",
-    "libfribidi.so.0",
-    "libgdk-3.so.0",
-    "libgdk_pixbuf-2.0.so.0",
-    "libglycin-2.so.0",
-    "libgtk-3.so.0",
-    "libicudata.so.78",
-    "libicuuc.so.78",
-    "libjson-glib-1.0.so.0",
-    "libpango-1.0.so.0",
-    "libpangocairo-1.0.so.0",
-    "libpangoft2-1.0.so.0",
-    "libthai.so.0",
-    "libtinysparql-3.0.so.0",
-    "libxml2.so.16",
-}
+# PySDL3 ships the full SDL3 family; we only use core SDL3, so drop the unused
+# satellite libraries and the metadata side-file to keep the bundle small.
 UNUSED_SDL_BINARY_PREFIXES = (
     "libSDL3_image",
     "libSDL3_mixer",
@@ -100,19 +72,76 @@ UNUSED_SDL_BINARY_PREFIXES = (
 )
 UNUSED_SDL_DATA_FILES = {"metadata.json"}
 
+# Pillow is built with AVIF/HEIF/AV1 support, but we only draw simple in-memory
+# icons and never decode image files, so drop those large codec libraries.
+UNUSED_PIL_BINARY_PREFIXES = (
+    "libx265",
+    "libx264",
+    "libaom",
+    "libSvtAv1Enc",
+    "libavif",
+    "librav1e",
+    "libde265",
+    "libheif",
+    "libdav1d",
+    # WebP is a separate PIL module (_webp), not linked by _imaging core, and
+    # we never load WebP images.
+    "libwebp",
+    "libsharpyuv",
+)
+
+# The system Tcl/Tk we bundle ships a graphviz extension (libtcldot) and its
+# cairo/pango/gobject/gio dependency stack. tkinter never loads it, and we
+# verified tk/SDL only need libglib (via harfbuzz) -- not these -- so drop the
+# whole chain. libglib itself is intentionally NOT listed (harfbuzz needs it).
+UNUSED_TK_BINARY_PREFIXES = (
+    "libtcldot",
+    "libgvc",
+    "libcgraph",
+    "libcdt",
+    "libpathplan",
+    "libxdot",
+    "libgd",
+    "libgts",
+    "libcairo",
+    "libpango",
+    "libpixman",
+    "libgobject",
+    "libgio",
+    "libgmodule",
+    "libfribidi",
+    "libthai",
+    "libdatrie",
+    "libltdl",
+)
+
+# Orphaned native libraries with no remaining consumer in the bundle: they were
+# pulled in by dependencies we trimmed (systemd/mount via the glib/gio stack) or
+# by SDL features we never use (openh264 = video/camera decode). SDL falls back
+# to the host libraries at runtime if it ever needs them.
+UNUSED_SYSTEM_BINARY_PREFIXES = (
+    "libopenh264",
+    "libsystemd",
+    "libmount",
+)
+
+_UNWANTED_BINARY_PREFIXES = (
+    UNUSED_SDL_BINARY_PREFIXES
+    + UNUSED_PIL_BINARY_PREFIXES
+    + UNUSED_TK_BINARY_PREFIXES
+    + UNUSED_SYSTEM_BINARY_PREFIXES
+)
+
 
 def _dest_path(entry: tuple[str, str]) -> str:
     return entry[1].replace("\\", "/")
 
 
-def _exclude_qt_runtime_entry(entry: tuple[str, str]) -> bool:
-    dest_path = _dest_path(entry)
-    return any(dest_path.startswith(prefix) for prefix in UNUSED_QT_PATH_PARTS)
-
-
-def _exclude_sdl_binary(entry: tuple[str, str]) -> bool:
+def _exclude_unwanted_binary(entry: tuple[str, str]) -> bool:
     name = Path(entry[0]).name
-    return any(name.startswith(prefix) for prefix in UNUSED_SDL_BINARY_PREFIXES)
+    return any(
+        name.startswith(prefix) for prefix in _UNWANTED_BINARY_PREFIXES
+    )
 
 
 def _exclude_sdl_data(entry: tuple[str, str]) -> bool:
@@ -130,30 +159,37 @@ def _toc_source_name(entry: tuple[str, str, str]) -> str:
     return Path(entry[1]).name
 
 
-def _exclude_qt_analysis_entry(entry: tuple[str, str, str]) -> bool:
+def _exclude_unwanted_analysis_entry(entry: tuple[str, str, str]) -> bool:
     dest_path = _toc_dest_path(entry)
-    return any(dest_path.startswith(prefix) for prefix in UNUSED_QT_PATH_PARTS)
-
-
-def _exclude_qt_analysis_binary(entry: tuple[str, str, str]) -> bool:
-    return _toc_source_name(entry) in UNUSED_QT_BINARY_NAMES
-
-
-def _exclude_sdl_analysis_entry(entry: tuple[str, str, str]) -> bool:
-    dest_path = _toc_dest_path(entry)
-    if not dest_path.startswith("sdl3/bin"):
-        return False
-    source_name = _toc_source_name(entry)
-    return source_name in UNUSED_SDL_DATA_FILES or any(
-        source_name.startswith(prefix) for prefix in UNUSED_SDL_BINARY_PREFIXES
-    )
+    names = {Path(dest_path).name, _toc_source_name(entry)}
+    if any(
+        name.startswith(prefix)
+        for name in names
+        for prefix in _UNWANTED_BINARY_PREFIXES
+    ):
+        return True
+    # The unused Tcl/Tk graphviz extension (scripts and helper libraries).
+    if "graphviz" in dest_path.split("/"):
+        return True
+    if dest_path.startswith("sdl3/bin"):
+        return _toc_source_name(entry) in UNUSED_SDL_DATA_FILES
+    return False
 
 
 datas: list[tuple[str, str]] = []
 binaries: list[tuple[str, str]] = []
 hiddenimports: list[str] = []
 
-for package_name in (ENTRY_MODULE, "pystray", "sevaht_utility", "sdl3"):
+# The tray backend is platform specific and imported lazily, so collect the
+# relevant package per platform: pystray on Windows/macOS, and the
+# StatusNotifierItem (dbus-next) + XEmbed (python-xlib) backends on Linux.
+collect_packages = [ENTRY_MODULE, "sevaht_utility", "sdl3"]
+if sys.platform in ("win32", "darwin"):
+    collect_packages.append("pystray")
+else:
+    collect_packages += ["dbus_next", "Xlib"]
+
+for package_name in collect_packages:
     package_datas, package_binaries, package_hiddenimports = collect_all(
         package_name
     )
@@ -164,15 +200,23 @@ for package_name in (ENTRY_MODULE, "pystray", "sevaht_utility", "sdl3"):
 for distribution_name in ("gamepad-overlay", "sevaht-utility"):
     datas += copy_metadata(distribution_name)
 
-datas = [
-    entry
-    for entry in datas
-    if not _exclude_qt_runtime_entry(entry) and not _exclude_sdl_data(entry)
-]
-binaries = [
-    entry
-    for entry in binaries
-    if not _exclude_qt_runtime_entry(entry) and not _exclude_sdl_binary(entry)
+datas = [entry for entry in datas if not _exclude_sdl_data(entry)]
+binaries = [entry for entry in binaries if not _exclude_unwanted_binary(entry)]
+
+# Modules we never use that otherwise add weight:
+# - Pillow's AVIF/WebP codecs are separate plugins (not the _imaging core); we
+#   only draw in-memory icons and never decode image files.
+# - cryptography is only a dev dependency (twine -> keyring); --no-dev already
+#   drops it, but exclude it defensively for non --no-dev builds.
+# Note: aiohttp/requests are pulled in unconditionally by PySDL3's binary
+# downloader (which we never use), but PySDL3 imports them at module load, so
+# they cannot simply be excluded without a stub.
+EXCLUDED_MODULES = [
+    "cryptography",
+    "PIL._avif",
+    "PIL.AvifImagePlugin",
+    "PIL._webp",
+    "PIL.WebPImagePlugin",
 ]
 
 analysis = Analysis(
@@ -184,22 +228,19 @@ analysis = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[str(RUNTIME_HOOK_PATH)],
-    excludes=[],
+    excludes=EXCLUDED_MODULES,
     noarchive=False,
     optimize=0,
 )
 analysis.datas = type(analysis.datas)(
     entry
     for entry in analysis.datas
-    if not _exclude_qt_analysis_entry(entry)
-    and not _exclude_sdl_analysis_entry(entry)
+    if not _exclude_unwanted_analysis_entry(entry)
 )
 analysis.binaries = type(analysis.binaries)(
     entry
     for entry in analysis.binaries
-    if not _exclude_qt_analysis_entry(entry)
-    and not _exclude_qt_analysis_binary(entry)
-    and not _exclude_sdl_analysis_entry(entry)
+    if not _exclude_unwanted_analysis_entry(entry)
 )
 
 pyz = PYZ(analysis.pure)

@@ -20,12 +20,16 @@ try {
 
     Remove-Item -Recurse -Force $ArchiveRoot -ErrorAction SilentlyContinue
     Remove-Item -Force $ArchivePath -ErrorAction SilentlyContinue
-    New-Item -ItemType Directory -Force -Path $ArchiveRoot | Out-Null
 
-    Copy-Item -Recurse (Join-Path $BundleRoot "*") $ArchiveRoot
+    # Move (not copy) the single bundle directory so we do not keep a duplicate.
+    Move-Item -Path $BundleRoot -Destination $ArchiveRoot
     Copy-Item (Join-Path $ProjectRoot "README.md") (Join-Path $ArchiveRoot "README.md")
 
-    Compress-Archive -Path $ArchiveRoot -DestinationPath $ArchivePath
+    # Optimal is Compress-Archive's strongest (Deflate) level.
+    Compress-Archive -Path $ArchiveRoot -DestinationPath $ArchivePath -CompressionLevel Optimal
+
+    # Keep only the staged bundle directory and the archive; drop intermediates.
+    Remove-Item -Recurse -Force $DistRoot, $WorkRoot -ErrorAction SilentlyContinue
 }
 finally {
     Pop-Location

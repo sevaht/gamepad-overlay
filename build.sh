@@ -21,9 +21,16 @@ uv run --with pyinstaller pyinstaller \
     --workpath "${WORK_ROOT}"
 
 rm -rf "${ARCHIVE_ROOT}" "${ARCHIVE_PATH}"
-mkdir -p "${ARCHIVE_ROOT}"
 
-cp -r "${DIST_ROOT}/gamepad-overlay/." "${ARCHIVE_ROOT}/"
+# Move (not copy) the single bundle directory into the release-named folder so
+# we do not keep a duplicate ~60 MB copy in dist-linux.
+mv "${DIST_ROOT}/gamepad-overlay" "${ARCHIVE_ROOT}"
 cp "${PROJECT_ROOT}/README.md" "${ARCHIVE_ROOT}/README.md"
 
-tar -C "${PROJECT_ROOT}/release" -czf "${ARCHIVE_PATH}" "$(basename "${ARCHIVE_ROOT}")"
+# Maximum gzip compression (-9); slower to create but smaller for the user.
+tar -C "${PROJECT_ROOT}/release" -cf - "$(basename "${ARCHIVE_ROOT}")" \
+    | gzip -9 > "${ARCHIVE_PATH}"
+
+# Keep only the staged bundle directory and the archive; drop PyInstaller's
+# work dir and the now-empty dist dir.
+rm -rf "${DIST_ROOT}" "${WORK_ROOT}"
