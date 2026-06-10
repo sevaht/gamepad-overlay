@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from .application import ServerRunConfig, _selection_config_path, run_server
 from .tray_backend import create_tray_icon
 from .tray_render import _tray_icon_renderer
-from .tray_window import GamepadSelectorWindow, _status_text
+from .gamepad_selector import GamepadSelectorWindow, _status_text
 
 logger = logging.getLogger(__name__)
 
