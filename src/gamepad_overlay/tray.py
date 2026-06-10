@@ -6,10 +6,15 @@ from dataclasses import dataclass, field
 from threading import Event, Lock, Thread
 from typing import TYPE_CHECKING, Any
 
-from .application import ServerRunConfig, _selection_config_path, run_server
+from .application import (
+    DEFAULT_PORT,
+    ServerRunConfig,
+    _selection_config_path,
+    run_server,
+)
+from .gamepad_selector import GamepadSelectorWindow, _status_text
 from .tray_backend import create_tray_icon
 from .tray_render import _tray_icon_renderer
-from .gamepad_selector import GamepadSelectorWindow, _status_text
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +28,7 @@ if TYPE_CHECKING:
 @dataclass
 class ManagedServerBackend:
     config_path: Path
+    port: int = DEFAULT_PORT
     lan: bool = False
     terminal: bool = False
     device_change_callback: Callable[[], None] | None = None
@@ -53,6 +59,7 @@ class ManagedServerBackend:
             run_server(
                 ServerRunConfig(
                     config_path=self.config_path,
+                    port=self.port,
                     lan=self.lan,
                     terminal=self.terminal,
                     stop_event=self.stop_event,
@@ -96,12 +103,14 @@ class GamepadSelectorTray:
         self,
         config_path: Path | None = None,
         *,
+        port: int = DEFAULT_PORT,
         lan: bool = False,
         terminal: bool = False,
     ) -> None:
         self.config_path = config_path or _selection_config_path()
         self.server_backend = ManagedServerBackend(
             config_path=self.config_path,
+            port=port,
             lan=lan,
             terminal=terminal,
             device_change_callback=self._refresh_from_backend,
@@ -212,11 +221,14 @@ def _restore_signal_handlers(handlers: list[tuple[int, Any]]) -> None:
 def run_tray(
     *,
     config_path: Path | None = None,
+    port: int = DEFAULT_PORT,
     lan: bool = False,
     terminal: bool = False,
     start_hidden: bool = False,
 ) -> int:
-    tray = GamepadSelectorTray(config_path, lan=lan, terminal=terminal)
+    tray = GamepadSelectorTray(
+        config_path, port=port, lan=lan, terminal=terminal
+    )
     handlers = _install_signal_handlers(tray._quit)
     try:
         return tray.run(start_hidden=start_hidden)

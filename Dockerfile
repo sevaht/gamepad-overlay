@@ -1,12 +1,8 @@
 FROM archlinux AS base
 SHELL ["/bin/bash", "-eu", "-c"]
 
-FROM base AS python-runtime
-RUN pacman -Syu --noconfirm --needed python python-wheel \
-    && pacman -Sc --noconfirm
-
-FROM python-runtime AS python-build
-RUN pacman -Syu --noconfirm --needed python-uv \
+FROM base AS python-build
+RUN pacman -Syu --noconfirm --needed python tk sdl3 uv git \
     && pacman -Sc --noconfirm
 
 FROM python-build AS source-prepared
@@ -21,9 +17,3 @@ FROM source-prepared AS test
 RUN uv sync
 ENV PATH="/app/.venv/bin:$PATH"
 CMD ["./checks"]
-
-FROM python-runtime AS final
-WORKDIR /app
-COPY --from=source-prepared /app /app
-ENV PATH="/app/.venv/bin:$PATH"
-CMD ["gamepad-server"]

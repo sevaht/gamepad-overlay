@@ -11,15 +11,13 @@ from gamepad_overlay.application import (
     _gamepad_metadata_summary,
     _save_selected_gamepad,
 )
-from gamepad_overlay.tray import ManagedServerBackend
-from gamepad_overlay.tray_window import (
+from gamepad_overlay.gamepad_selector import (
     _gamepad_display_names,
     _gamepad_matches_selection,
-    _gamepad_row_badges,
-    _gamepad_row_label,
     _selected_gamepad_index,
     _status_text,
 )
+from gamepad_overlay.tray import ManagedServerBackend
 
 if TYPE_CHECKING:
     from threading import Event
@@ -66,14 +64,15 @@ def test_save_selected_gamepad_persists_only_match_fields(
         "guid": "guid-1",
         "vendor": "1118",
         "product": "654",
+        "port": "",
         "name": "Pad",
     }
 
 
-def test_gamepad_matches_selection_is_case_insensitive_for_name() -> None:
+def test_gamepad_matches_selection_is_case_insensitive_for_guid() -> None:
     assert _gamepad_matches_selection(
-        {"guid": "guid-1", "name": "Xbox Wireless Gamepad"},
-        {"guid": "", "name": "wireless"},
+        {"guid": "GUID-1", "name": "Xbox Wireless Gamepad"},
+        {"guid": "guid-1", "name": ""},
     )
 
 
@@ -101,71 +100,15 @@ def test_gamepad_matches_selection_requires_stable_metadata() -> None:
     )
 
 
-def test_gamepad_matches_selection_requires_name_when_saved() -> None:
-    assert not _gamepad_matches_selection(
+def test_gamepad_matches_selection_ignores_name_differences() -> None:
+    # Name is display-only; different names do not block a match on hardware identity.
+    assert _gamepad_matches_selection(
         {"guid": "guid-1", "name": "Other Pad"},
         {"guid": "guid-1", "name": "Xbox"},
     )
 
 
-def test_gamepad_row_label_includes_guid_detail() -> None:
-    assert _gamepad_row_label({"name": "Pad", "guid": "guid-1"}, "Pad") == (
-        "Pad\n[guid-1]"
-    )
-
-
-def test_gamepad_row_badges_mark_saved_gamepad_selected() -> None:
-    assert _gamepad_row_badges(
-        {"name": "Pad", "guid": "guid-1"}, {"guid": "guid-1", "name": ""}, None
-    ) == ("Selected",)
-
-
-def test_gamepad_row_badges_mark_active_gamepad() -> None:
-    assert _gamepad_row_badges(
-        {"name": "Pad", "guid": "guid-1"}, None, {"guid": "guid-1", "name": ""}
-    ) == ("★",)
-
-
-def test_gamepad_row_badges_combine_active_and_selected() -> None:
-    assert _gamepad_row_badges(
-        {"name": "Pad", "guid": "guid-1"},
-        {"guid": "guid-1", "name": ""},
-        {"guid": "guid-1", "name": ""},
-    ) == ("★", "Selected")
-
-
-def test_gamepad_row_badges_omit_unmatched_gamepad() -> None:
-    assert (
-        _gamepad_row_badges(
-            {"name": "Pad", "guid": "guid-1"},
-            {"guid": "guid-2", "name": ""},
-            {"guid": "guid-3", "name": ""},
-        )
-        == ()
-    )
-
-
-def test_gamepad_row_label_prefers_vid_pid_detail() -> None:
-    assert _gamepad_row_label(
-        {"name": "Pad", "guid": "guid-1", "vendor": "1118", "product": "654"},
-        "Pad",
-    ) == ("Pad\n[045e:028e] [guid-1]")
-
-
-def test_gamepad_row_label_includes_product_version() -> None:
-    assert _gamepad_row_label(
-        {
-            "name": "Pad",
-            "guid": "guid-1",
-            "vendor": "1118",
-            "product": "654",
-            "product_version": "276",
-        },
-        "Pad",
-    ) == ("Pad\nv276 [045e:028e] [guid-1]")
-
-
-def test_gamepad_metadata_summary_can_put_version_last() -> None:
+def test_gamepad_metadata_summary_formats_vid_pid() -> None:
     assert (
         _gamepad_metadata_summary(
             {
@@ -173,10 +116,9 @@ def test_gamepad_metadata_summary_can_put_version_last() -> None:
                 "vendor": "1118",
                 "product": "654",
                 "product_version": "276",
-            },
-            version_first=False,
+            }
         )
-        == "[045e:028e] [guid-1] v276"
+        == "[045e:028e]"
     )
 
 
@@ -236,12 +178,12 @@ def test_reload_selection_updates_saved_match_fields(tmp_path: Path) -> None:
     config_path = tmp_path / "gamepad-selection.json"
     gamepad = object.__new__(SDLGamepad)
     gamepad.selected_guid = "guid-1"
-    gamepad.name_filter = None
     gamepad.selected_gamepad = {
         "guid": "guid-1",
         "name": "Pad",
         "vendor": "1118",
         "product": "654",
+        "port": "",
     }
     gamepad._selection_mtime_ns = None
     gamepad._gamepad = None
@@ -265,6 +207,7 @@ def test_reload_selection_updates_saved_match_fields(tmp_path: Path) -> None:
         "guid": "guid-1",
         "vendor": "1118",
         "product": "654",
+        "port": "",
         "name": "Pad",
     }
 

@@ -18,7 +18,6 @@ from .application import (
     _clear_selected_gamepad,
     _gamepad_metadata_summary,
     _load_selected_gamepad,
-    _port_display_name,
     _save_selected_gamepad,
 )
 from .tray_render import _create_tk_window_icon
@@ -104,14 +103,14 @@ def _mode_texts(selected: dict[str, str] | None) -> tuple[str, str]:
     if selected is None:
         return ("Any available gamepad", "")
     has_identity = any(
-        selected.get(f, "") for f in ("guid", "vendor", "product", "name")
+        selected.get(f, "") for f in ("guid", "vendor", "product")
     )
     has_port = bool(selected.get("port", ""))
     if not has_identity and not has_port:
         return ("Any available gamepad", "")
     name = selected.get("name", "") or "Unknown controller"
     main = name if has_identity else "Any controller"
-    detail = _gamepad_metadata_summary(selected)  # type: ignore[arg-type]
+    detail = _gamepad_metadata_summary(selected)
     return (main, detail)
 
 
@@ -204,12 +203,13 @@ class GamepadSelectorWindow:
                     self.root.after_cancel(self._poll_after_id)
             self._poll_after_id = self.root.after(25, self._poll_ui_queue)
 
-    def _run_ui_thread(self) -> None:
+    def _run_ui_thread(self) -> None:  # noqa: PLR0915
         try:
             self.root = tk.Tk()
+            ttk.Style().theme_use("clam")
             self._window_icons: dict[bool, object] = {}
-            self.root.geometry("640x500")
-            self.root.minsize(600, 420)
+            self.root.geometry("650x500")
+            self.root.minsize(650, 420)
             self.root.protocol("WM_DELETE_WINDOW", self._dismiss)
 
             content = ttk.Frame(self.root, padding=18)
@@ -223,9 +223,7 @@ class GamepadSelectorWindow:
             mode_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
             mode_frame.columnconfigure(1, weight=1)
             ttk.Label(
-                mode_frame,
-                text="Target:",
-                font=("TkDefaultFont", 0, "bold"),
+                mode_frame, text="Target:", font=("TkDefaultFont", 0, "bold")
             ).grid(row=0, column=0, sticky="nw", padx=(0, 8))
             self.mode_label = ttk.Label(
                 mode_frame,
@@ -249,15 +247,13 @@ class GamepadSelectorWindow:
                 selectmode="browse",
             )
             self.gamepad_list.heading("name", text="Gamepad")
-            self.gamepad_list.heading("detail", text="Identity")
+            self.gamepad_list.heading("detail", text="Details")
             self.gamepad_list.column("name", width=300, anchor=tk.W)
             self.gamepad_list.column("detail", width=280, anchor=tk.W)
             self.gamepad_list.tag_configure("active", foreground="#2e7d32")
             self.gamepad_list.tag_configure("pinned", foreground="#1565c0")
             self.gamepad_list.tag_configure(
-                "active_pinned",
-                foreground="#2e7d32",
-                background="#e3f2fd",
+                "active_pinned", foreground="#2e7d32", background="#e3f2fd"
             )
             self.gamepad_list.grid(row=0, column=0, sticky="nsew")
             self.gamepad_list.bind(
@@ -289,7 +285,9 @@ class GamepadSelectorWindow:
 
             ttk.Label(criteria_outer, text="Criteria").pack(anchor="w", padx=2)
 
-            criteria_box = tk.Frame(criteria_outer, relief="groove", borderwidth=2)
+            criteria_box = tk.Frame(
+                criteria_outer, relief="groove", borderwidth=2
+            )
             criteria_box.pack()
 
             left_frame = ttk.Frame(criteria_box)
@@ -301,9 +299,7 @@ class GamepadSelectorWindow:
                 variable=self.pin_identity_var,
             ).pack(anchor="w")
             ttk.Checkbutton(
-                left_frame,
-                text="USB port",
-                variable=self.pin_port_var,
+                left_frame, text="Connection", variable=self.pin_port_var
             ).pack(anchor="w")
             self.select_button = ttk.Button(
                 left_frame,
@@ -324,11 +320,11 @@ class GamepadSelectorWindow:
             )
 
             self.any_button = ttk.Button(
-                criteria_box,
-                text="Any Gamepad",
-                command=self.use_any_gamepad,
+                criteria_box, text="Any Gamepad", command=self.use_any_gamepad
             )
-            self.any_button.grid(row=0, column=2, sticky="sw", padx=(0, 6), pady=6)
+            self.any_button.grid(
+                row=0, column=2, sticky="sw", padx=(0, 6), pady=6
+            )
 
             # Right side of bottom_row: Quit / Hide
             if self.hide_on_close:
@@ -390,7 +386,7 @@ class GamepadSelectorWindow:
             for field in GAMEPAD_SELECTION_FIELDS
         }
         if not self.pin_identity_var.get():
-            for field in ("guid", "vendor", "product", "name"):
+            for field in ("guid", "vendor", "product"):
                 result[field] = ""
         if not self.pin_port_var.get():
             result["port"] = ""
@@ -426,9 +422,7 @@ class GamepadSelectorWindow:
         self.select_button.state(["!disabled"])
 
     def _add_disabled_gamepad_row(self, text: str) -> None:
-        self.gamepad_list.insert(
-            "", tk.END, iid="disabled", values=(text, "")
-        )
+        self.gamepad_list.insert("", tk.END, iid="disabled", values=(text, ""))
         self.gamepad_list.selection_remove(self.gamepad_list.selection())
 
     def _update_connection_state_ui(self) -> None:
@@ -468,7 +462,7 @@ class GamepadSelectorWindow:
         if self.quit_callback is not None:
             self.quit_callback()
 
-    def _refresh_ui(self) -> None:
+    def _refresh_ui(self) -> None:  # noqa: C901, PLR0912
         if self.server_backend is not None:
             self.server_backend.ensure_started()
 
@@ -488,10 +482,8 @@ class GamepadSelectorWindow:
         self.mode_label.configure(text=main_text)
         self.mode_detail_label.configure(text=detail_text)
         if selected is None:
-            self.any_button.configure(text="✓ Any Gamepad")
             self.any_button.state(["disabled"])
         else:
-            self.any_button.configure(text="Any Gamepad")
             self.any_button.state(["!disabled"])
 
         try:
@@ -522,8 +514,9 @@ class GamepadSelectorWindow:
         for index, (gamepad, display_name) in enumerate(
             zip(self.gamepads, display_names, strict=True)
         ):
-            is_active = active_identity is not None and _gamepad_matches_selection(
-                gamepad, active_identity
+            is_active = (
+                active_identity is not None
+                and _gamepad_matches_selection(gamepad, active_identity)
             )
             is_pinned = selected is not None and _gamepad_matches_selection(
                 gamepad, selected
@@ -688,7 +681,7 @@ class GamepadSelectorWindow:
                 return
             gamepad_to_save = dict(self.gamepads[selected_row])
             if not pin_identity:
-                for field in ("guid", "vendor", "product", "name"):
+                for field in ("guid", "vendor", "product"):
                     gamepad_to_save[field] = ""
             if not pin_port:
                 gamepad_to_save["port"] = ""
