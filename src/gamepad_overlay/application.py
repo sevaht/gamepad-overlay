@@ -771,7 +771,7 @@ def _build_parser() -> argparse.ArgumentParser:
     output_group.add_argument(
         "--lan",
         action="store_true",
-        help="Allow websocket connections from other machines on the LAN.",
+        help="Bind to 0.0.0.0 instead of localhost (for testing across machines; not intended for normal use).",
     )
     output_group.add_argument(
         "--terminal",

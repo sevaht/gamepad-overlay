@@ -12,7 +12,11 @@ from .application import (
     _selection_config_path,
     run_server,
 )
-from .gamepad_selector import GamepadSelectorWindow, _status_text
+from .gamepad_selector import (
+    GamepadSelectorConfig,
+    GamepadSelectorWindow,
+    _status_text,
+)
 from .tray_backend import create_tray_icon
 from .tray_render import _tray_icon_renderer
 
@@ -120,10 +124,13 @@ class GamepadSelectorTray:
         self.server_backend.ensure_started()
         self.window = GamepadSelectorWindow(
             self.config_path,
+            GamepadSelectorConfig(
+                hide_on_close=True,
+                quit_callback=self._request_quit,
+                selection_changed_callback=self._sync_connection_state,
+                overlay_port=self.server_backend.port,
+            ),
             server_backend=self.server_backend,
-            hide_on_close=True,
-            quit_callback=self._request_quit,
-            selection_changed_callback=self._sync_connection_state,
         )
         self._tray_lock = Lock()
         self._tray_icon_connected: bool | None = None

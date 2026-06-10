@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import queue
 import re
 import subprocess
 import tkinter as tk
+import webbrowser
+from dataclasses import dataclass, field
 from threading import Event, Thread, current_thread
 from tkinter import ttk
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, ClassVar, Protocol, cast
+from urllib.parse import urlencode
 
 from .application import (
+    DEFAULT_PORT,
     GAMEPAD_SELECTION_FIELDS,
     SDLGamepad,
     _clear_selected_gamepad,
@@ -27,6 +32,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+_OVERLAY_URL_CONFIG_FILE_NAME = "overlay-url-config.json"
 
 
 class ServerBackend(Protocol):
@@ -118,25 +125,293 @@ def _list_available_gamepads() -> list[dict[str, object]]:
     return SDLGamepad.list_available_gamepads()
 
 
+@dataclass
+class GamepadSelectorConfig:
+    hide_on_close: bool
+    overlay_port: int = DEFAULT_PORT
+    quit_callback: Callable[[], None] | None = field(default=None)
+    selection_changed_callback: Callable[[], None] | None = field(default=None)
+
+
+class OverlayUrlWindow:
+    """Singleton Toplevel for viewing and configuring the overlay URL."""
+
+    _DEFAULTS: ClassVar[dict[str, object]] = {
+        "source": "websocket",
+        "layout": "xbox",
+        "theme": "Auto",
+        "background": "",
+        "stretch": False,
+        "blur": "0.5",
+        "digitalThreshold": "0.2",
+    }
+
+    def __init__(self, parent: tk.Tk, port: int, config_path: Path) -> None:
+        self._port = port
+        self._config_path = config_path
+        self._window = tk.Toplevel(parent)
+        self._window.title("Overlay URL")
+        self._window.resizable(False, False)
+        self._window.transient(parent)
+        self._window.protocol("WM_DELETE_WINDOW", self._window.withdraw)
+
+        m = self._window
+        self._source_var = tk.StringVar(master=m)
+        self._layout_var = tk.StringVar(master=m)
+        self._theme_var = tk.StringVar(master=m)
+        self._background_var = tk.StringVar(master=m)
+        self._stretch_var = tk.BooleanVar(master=m)
+        self._blur_var = tk.StringVar(master=m)
+        self._digital_threshold_var = tk.StringVar(master=m)
+        self._url_var = tk.StringVar(master=m)
+
+        self._apply_defaults()
+        self._load_config()
+
+        for var in (
+            self._source_var,
+            self._layout_var,
+            self._theme_var,
+            self._background_var,
+            self._stretch_var,
+            self._blur_var,
+            self._digital_threshold_var,
+        ):
+            var.trace_add("write", self._on_var_changed)
+
+        self._build_widgets()
+        self._update_url()
+
+    def _apply_defaults(self) -> None:
+        d = self._DEFAULTS
+        self._source_var.set(str(d["source"]))
+        self._layout_var.set(str(d["layout"]))
+        self._theme_var.set(str(d["theme"]))
+        self._background_var.set(str(d["background"]))
+        self._stretch_var.set(bool(d["stretch"]))
+        self._blur_var.set(str(d["blur"]))
+        self._digital_threshold_var.set(str(d["digitalThreshold"]))
+
+    def _load_config(self) -> None:
+        try:
+            data = json.loads(self._config_path.read_text())
+        except Exception:  # noqa: BLE001
+            return
+        if not isinstance(data, dict):
+            return
+        for key, var in (
+            ("source", self._source_var),
+            ("layout", self._layout_var),
+            ("theme", self._theme_var),
+            ("background", self._background_var),
+            ("blur", self._blur_var),
+            ("digitalThreshold", self._digital_threshold_var),
+        ):
+            if key in data and isinstance(data[key], str):
+                var.set(data[key])
+        if "stretch" in data and isinstance(data["stretch"], bool):
+            self._stretch_var.set(data["stretch"])
+
+    def _save_config(self) -> None:
+        data = {
+            "source": self._source_var.get(),
+            "layout": self._layout_var.get(),
+            "theme": self._theme_var.get(),
+            "background": self._background_var.get(),
+            "stretch": self._stretch_var.get(),
+            "blur": self._blur_var.get(),
+            "digitalThreshold": self._digital_threshold_var.get(),
+        }
+        try:
+            self._config_path.parent.mkdir(parents=True, exist_ok=True)
+            self._config_path.write_text(json.dumps(data, indent=2))
+        except Exception:  # noqa: BLE001
+            logger.debug("Failed to save overlay URL config", exc_info=True)
+
+    def _build_widgets(self) -> None:
+        outer = ttk.Frame(self._window, padding=14)
+        outer.pack(fill=tk.BOTH, expand=True)
+
+        url_frame = ttk.LabelFrame(outer, text="Overlay URL")
+        url_frame.pack(fill=tk.X, padx=4, pady=4)
+        url_entry = ttk.Entry(
+            url_frame, textvariable=self._url_var, state="readonly", width=60
+        )
+        url_entry.pack(fill=tk.X, padx=6, pady=(4, 2))
+        btn_frame = ttk.Frame(url_frame)
+        btn_frame.pack(anchor="w", padx=6, pady=(0, 6))
+        ttk.Button(btn_frame, text="Copy", command=self._copy_url).pack(
+            side=tk.LEFT, padx=(0, 6)
+        )
+        ttk.Button(
+            btn_frame, text="Launch in Browser", command=self._launch_browser
+        ).pack(side=tk.LEFT)
+
+        options_frame = ttk.LabelFrame(outer, text="Options")
+        options_frame.pack(fill=tk.X, padx=4, pady=4)
+        options_frame.columnconfigure(1, weight=1)
+
+        rows: list[tuple[str, tk.Widget]] = [
+            (
+                "Source  (default: websocket)",
+                ttk.Combobox(
+                    options_frame,
+                    textvariable=self._source_var,
+                    values=["websocket", "demo"],
+                    state="readonly",
+                    width=22,
+                ),
+            ),
+            (
+                "Layout  (default: xbox)",
+                ttk.Combobox(
+                    options_frame,
+                    textvariable=self._layout_var,
+                    values=["xbox", "xbox-digital-triggers", "snes"],
+                    state="readonly",
+                    width=22,
+                ),
+            ),
+            (
+                "Theme  (default: Auto)",
+                ttk.Combobox(
+                    options_frame,
+                    textvariable=self._theme_var,
+                    values=["Auto", "xbox", "snes"],
+                    state="readonly",
+                    width=22,
+                ),
+            ),
+            (
+                "Background  (optional CSS color)",
+                ttk.Entry(options_frame, textvariable=self._background_var),
+            ),
+            (
+                "Stretch",
+                ttk.Checkbutton(
+                    options_frame, text="", variable=self._stretch_var
+                ),
+            ),
+            (
+                "Blur  (default: 0.5)",
+                ttk.Entry(
+                    options_frame, textvariable=self._blur_var, width=10
+                ),
+            ),
+            (
+                "Digital Threshold 0-1  (default: 0.2)",
+                ttk.Entry(
+                    options_frame,
+                    textvariable=self._digital_threshold_var,
+                    width=10,
+                ),
+            ),
+        ]
+        for row_idx, (label, widget) in enumerate(rows):
+            ttk.Label(options_frame, text=label).grid(
+                row=row_idx, column=0, sticky="w", padx=(6, 8), pady=3
+            )
+            widget.grid(
+                row=row_idx, column=1, sticky="ew", padx=(0, 6), pady=3
+            )
+
+        reset_frame = ttk.Frame(outer)
+        reset_frame.pack(fill=tk.X, padx=4, pady=(8, 4))
+        ttk.Button(
+            reset_frame, text="Close", command=self._window.withdraw
+        ).pack(side=tk.RIGHT)
+        ttk.Button(
+            reset_frame,
+            text="Reset to Defaults",
+            command=self._reset_to_defaults,
+        ).pack(side=tk.RIGHT, padx=(0, 6))
+
+    def _build_url(self) -> str:
+        base = f"http://localhost:{self._port}/"
+        params: dict[str, str] = {}
+
+        source = self._source_var.get()
+        layout = self._layout_var.get()
+        theme = self._theme_var.get()
+
+        if source != "websocket":
+            params["source"] = source
+        if layout != "xbox":
+            params["layout"] = layout
+
+        # "Auto" means omit; any explicit selection is always included so the
+        # URL faithfully reflects what the user chose.
+        if theme != "Auto":
+            params["theme"] = theme
+
+        bg = self._background_var.get().strip()
+        if bg:
+            params["background"] = bg
+
+        if self._stretch_var.get():
+            params["stretch"] = "1"
+
+        blur = self._blur_var.get().strip()
+        if blur and blur != "0.5":
+            params["blur"] = blur
+
+        dt = self._digital_threshold_var.get().strip()
+        if dt and dt != "0.2":
+            params["digitalThreshold"] = dt
+
+        if params:
+            return base + "?" + urlencode(params)
+        return base
+
+    def _on_var_changed(self, *_: object) -> None:
+        self._update_url()
+        self._save_config()
+
+    def _update_url(self, *_: object) -> None:
+        self._url_var.set(self._build_url())
+
+    def _reset_to_defaults(self) -> None:
+        self._apply_defaults()
+
+    def _copy_url(self) -> None:
+        self._window.clipboard_clear()
+        self._window.clipboard_append(self._url_var.get())
+        self._window.update()
+
+    def _launch_browser(self) -> None:
+        webbrowser.open(self._url_var.get())
+
+    def update_icon(self, icon: tk.PhotoImage) -> None:
+        self._window.iconphoto(True, icon)
+        self._window.update_idletasks()
+
+    def show_and_raise(self) -> None:
+        self._window.deiconify()
+        self._window.lift()
+        self._window.focus_force()
+
+
 class GamepadSelectorWindow:
     def __init__(
         self,
         config_path: Path,
+        window_config: GamepadSelectorConfig,
         *,
         server_backend: ServerBackend | None = None,
-        hide_on_close: bool,
-        quit_callback: Callable[[], None] | None = None,
-        selection_changed_callback: Callable[[], None] | None = None,
     ) -> None:
         self.config_path = config_path
         self.server_backend = server_backend
-        self.hide_on_close = hide_on_close
-        self.quit_callback = quit_callback
-        self.selection_changed_callback = selection_changed_callback
+        self.hide_on_close = window_config.hide_on_close
+        self.quit_callback = window_config.quit_callback
+        self.selection_changed_callback = (
+            window_config.selection_changed_callback
+        )
+        self.overlay_port = window_config.overlay_port
         self.gamepads: list[dict[str, object]] = []
         self._saved_selection: dict[str, str] | None = None
         self._window_icon_connected: bool | None = None
         self._quit_dialog: tk.Toplevel | None = None
+        self._overlay_url_window: OverlayUrlWindow | None = None
         self._ui_ready = Event()
         self._ui_closed = Event()
         self._ui_queue: queue.SimpleQueue[
@@ -326,22 +601,32 @@ class GamepadSelectorWindow:
                 row=0, column=2, sticky="sw", padx=(0, 6), pady=6
             )
 
-            # Right side of bottom_row: Quit / Hide
-            if self.hide_on_close:
-                ttk.Button(
-                    bottom_row, text="Hide", command=self._dismiss
-                ).pack(side=tk.RIGHT, anchor="s")
+            # Right side: Overlay URL button above Quit/Hide buttons
+            right_frame = ttk.Frame(bottom_row)
+            right_frame.pack(side=tk.RIGHT, anchor="s")
 
             ttk.Button(
-                bottom_row,
+                right_frame,
+                text="Overlay URL...",
+                command=self._open_overlay_url_window,
+            ).pack(fill=tk.X, pady=(0, 4))
+
+            dismiss_frame = ttk.Frame(right_frame)
+            dismiss_frame.pack(fill=tk.X)
+
+            if self.hide_on_close:
+                ttk.Button(
+                    dismiss_frame, text="Hide", command=self._dismiss
+                ).pack(side=tk.RIGHT)
+
+            ttk.Button(
+                dismiss_frame,
                 text="Quit" if self.hide_on_close else "Close",
                 command=(
                     self._request_quit if self.hide_on_close else self._dismiss
                 ),
             ).pack(
-                side=tk.RIGHT,
-                anchor="s",
-                padx=(0, 8) if self.hide_on_close else (0, 0),
+                side=tk.RIGHT, padx=(0, 6) if self.hide_on_close else (0, 0)
             )
 
             self.root.withdraw()
@@ -360,6 +645,22 @@ class GamepadSelectorWindow:
             self.root.withdraw()
             return
         self._close_ui()
+
+    def _open_overlay_url_window(self) -> None:
+        if self._overlay_url_window is None:
+            config_path = (
+                self.config_path.parent / _OVERLAY_URL_CONFIG_FILE_NAME
+            )
+            self._overlay_url_window = OverlayUrlWindow(
+                self.root, self.overlay_port, config_path
+            )
+            if self._window_icon_connected is not None:
+                icon = self._window_icons.get(self._window_icon_connected)
+                if icon is not None:
+                    self._overlay_url_window.update_icon(
+                        cast("tk.PhotoImage", icon)
+                    )
+        self._overlay_url_window.show_and_raise()
 
     def hide(self) -> None:
         self._invoke_ui(self.root.withdraw)
@@ -454,6 +755,11 @@ class GamepadSelectorWindow:
                     self._quit_dialog.update_idletasks()
                 except tk.TclError:
                     pass
+            if self._overlay_url_window is not None:
+                with contextlib.suppress(tk.TclError):
+                    self._overlay_url_window.update_icon(
+                        cast("tk.PhotoImage", icon)
+                    )
 
     def _update_connection_state(self) -> None:
         self._invoke_ui(self._update_connection_state_ui)
