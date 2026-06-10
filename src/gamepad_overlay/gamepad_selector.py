@@ -561,7 +561,10 @@ class GamepadSelectorWindow:
             ttk.Label(criteria_outer, text="Criteria").pack(anchor="w", padx=2)
 
             criteria_box = tk.Frame(
-                criteria_outer, relief="groove", borderwidth=2
+                criteria_outer,
+                relief="groove",
+                borderwidth=2,
+                background=ttk.Style().lookup("TFrame", "background"),
             )
             criteria_box.pack()
 
