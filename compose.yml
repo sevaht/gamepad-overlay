@@ -1,8 +1,0 @@
-services:
-  test:
-    build:
-      context: .
-      pull: true
-      target: test
-    tty: true
-    stdin_open: true
