@@ -11,8 +11,8 @@ from gamepad_overlay.application import (
     _gamepad_metadata_summary,
     _save_selected_gamepad,
 )
-from gamepad_overlay.tray import (
-    ManagedServerBackend,
+from gamepad_overlay.tray import ManagedServerBackend
+from gamepad_overlay.tray_window import (
     _gamepad_display_names,
     _gamepad_matches_selection,
     _gamepad_row_badges,

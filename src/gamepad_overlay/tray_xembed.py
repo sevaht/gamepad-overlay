@@ -14,9 +14,8 @@ host on the session bus. Unlike pystray's ``_xorg`` backend it:
   on opaque ones (no ``grab_button`` hack required);
 * dispatches left-click to ``on_activate`` and right-click to ``on_quit``.
 
-The public surface mirrors the subset of :class:`pystray.Icon` that the tray
-uses (``icon``/``title``/``visible`` plus :meth:`run` and :meth:`stop`), so it
-is a drop-in alternative.
+It implements the ``TrayIcon`` interface from :mod:`gamepad_overlay.tray_backend`
+(``set_icon`` / ``title`` / ``visible`` plus :meth:`run` and :meth:`stop`).
 """
 
 from __future__ import annotations

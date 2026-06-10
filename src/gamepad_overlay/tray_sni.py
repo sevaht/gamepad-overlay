@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import signal as _signal
 from typing import TYPE_CHECKING
@@ -8,15 +9,11 @@ from typing import TYPE_CHECKING
 from dbus_next import BusType, Variant
 from dbus_next.aio import MessageBus
 from dbus_next.constants import PropertyAccess
-from dbus_next.service import (
-    ServiceInterface,
-    dbus_property,
-    method,
-)
-from dbus_next.service import (
-    signal as dbus_signal,
-)
+from dbus_next.service import ServiceInterface, dbus_property, method
+from dbus_next.service import signal as dbus_signal
 from PIL import Image
+
+from .tray_backend import SNIRegistrationError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -95,9 +92,7 @@ def _argb_bytes(image: Image.Image) -> bytes:
     return Image.merge("RGBA", (alpha, red, green, blue)).tobytes()
 
 
-def _render_pixmaps(
-    render_icon: "Callable[[int], Image.Image]",
-) -> list[list]:
+def _render_pixmaps(render_icon: "Callable[[int], Image.Image]") -> list[list]:
     # IconPixmap is an array of (width, height, bytes); we provide a single
     # square ARGB32 entry rendered natively at SNI_ICON_SIZE.
     image = render_icon(SNI_ICON_SIZE).convert("RGBA")
@@ -105,12 +100,7 @@ def _render_pixmaps(
 
 
 class StatusNotifierItemInterface(ServiceInterface):
-    def __init__(
-        self,
-        icon_pixmap: list,
-        title: str,
-        menu_path: str,
-    ) -> None:
+    def __init__(self, icon_pixmap: list, title: str, menu_path: str) -> None:
         super().__init__("org.kde.StatusNotifierItem")
         self._icon_pixmap = icon_pixmap
         self._title = title
@@ -118,9 +108,7 @@ class StatusNotifierItemInterface(ServiceInterface):
         self._on_activate: Callable[[], None] | None = None
         self._on_secondary: Callable[[], None] | None = None
 
-    def update_icon(
-        self, icon_pixmap: list
-    ) -> None:
+    def update_icon(self, icon_pixmap: list) -> None:
         # Only signal on an actual change; the tray syncs state periodically
         # and re-emitting unchanged values makes hosts flicker the icon/tooltip.
         if icon_pixmap == self._icon_pixmap:
@@ -252,10 +240,7 @@ class DBusMenuInterface(ServiceInterface):
 
     @method()
     def GetLayout(
-        self,
-        parent_id: "i",
-        recursion_depth: "i",
-        property_names: "as",
+        self, parent_id: "i", recursion_depth: "i", property_names: "as"
     ) -> "u(ia{sv}av)":
         # Two out-args (revision: u, layout: (ia{sv}av)); a single wrapping
         # struct "(u(ia{sv}av))" would add an extra nesting layer that
@@ -282,26 +267,22 @@ class DBusMenuInterface(ServiceInterface):
         ]
 
     @method()
-    def Event(
-        self, id: "i", event_id: "s", data: "v", timestamp: "u"  # noqa: A002
-    ):
+    def Event(self, menu_id: "i", event_id: "s", data: "v", timestamp: "u"):
         # The canonical dbusmenu Event signature is (id, eventId, data,
         # timestamp) -> "isvu"; libdbusmenu looks the method up by signature.
         if event_id == "clicked":
             for item_id, _, callback in self._items:
-                if item_id == id:
+                if item_id == menu_id:
                     callback()
                     break
 
     @method()
-    def GetProperty(
-        self, id: "i", name: "s"  # noqa: A002
-    ) -> "v":
-        props = self._properties(id)
+    def GetProperty(self, menu_id: "i", name: "s") -> "v":
+        props = self._properties(menu_id)
         return props.get(name, Variant("s", ""))
 
     @method()
-    def AboutToShow(self, id: "i") -> "b":  # noqa: A002
+    def AboutToShow(self, menu_id: "i") -> "b":
         # The menu is static, so nothing needs updating before it is shown.
         return False
 
@@ -330,6 +311,9 @@ class SNITrayIcon:
         self._bus: MessageBus | None = None
         self._stop_future: asyncio.Future[None] | None = None
         self._setup_callback: Callable[[object], None] | None = None
+        # Strong references to fire-and-forget re-registration tasks so the
+        # event loop does not garbage-collect them mid-flight.
+        self._pending_tasks: set[asyncio.Task[bool]] = set()
 
     @property
     def visible(self) -> bool:
@@ -359,9 +343,7 @@ class SNITrayIcon:
             loop = self._stop_future.get_loop()
             loop.call_soon_threadsafe(self._stop_future.set_result, None)
 
-    def run(
-        self, setup: Callable[[object], None] | None = None
-    ) -> None:
+    def run(self, setup: Callable[[object], None] | None = None) -> None:
         self._setup_callback = setup
         asyncio.run(self._async_run())
 
@@ -371,7 +353,8 @@ class SNITrayIcon:
         On minimal setups the watcher (e.g. ``snixembed``) may be started
         after this app, so registering once at startup is not enough.
         """
-        assert self._bus is not None  # noqa: S101
+        if self._bus is None:
+            return
         try:
             introspection = await self._bus.introspect(
                 "org.freedesktop.DBus", "/org/freedesktop/DBus"
@@ -384,13 +367,10 @@ class SNITrayIcon:
             def _on_name_owner_changed(
                 name: str, _old_owner: str, new_owner: str
             ) -> None:
-                if (
-                    name == "org.kde.StatusNotifierWatcher"
-                    and new_owner
-                ):
-                    asyncio.ensure_future(  # noqa: RUF006
-                        self._register_with_watcher()
-                    )
+                if name == "org.kde.StatusNotifierWatcher" and new_owner:
+                    task = asyncio.ensure_future(self._register_with_watcher())
+                    self._pending_tasks.add(task)
+                    task.add_done_callback(self._pending_tasks.discard)
 
             dbus_iface.on_name_owner_changed(_on_name_owner_changed)
         except Exception:  # noqa: BLE001
@@ -399,20 +379,18 @@ class SNITrayIcon:
             )
 
     async def _register_with_watcher(self) -> bool:
-        assert self._bus is not None  # noqa: S101
+        if self._bus is None:
+            return False
         try:
             introspection = await self._bus.introspect(
-                "org.kde.StatusNotifierWatcher",
-                "/StatusNotifierWatcher",
+                "org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher"
             )
             proxy = self._bus.get_proxy_object(
                 "org.kde.StatusNotifierWatcher",
                 "/StatusNotifierWatcher",
                 introspection,
             )
-            watcher = proxy.get_interface(
-                "org.kde.StatusNotifierWatcher"
-            )
+            watcher = proxy.get_interface("org.kde.StatusNotifierWatcher")
             # dbus-next exposes D-Bus methods in snake_case with a call_ prefix.
             await watcher.call_register_status_notifier_item(
                 self._bus.unique_name
@@ -429,18 +407,13 @@ class SNITrayIcon:
         loop = asyncio.get_running_loop()
 
         def _signal_stop() -> None:
-            if (
-                self._stop_future is not None
-                and not self._stop_future.done()
-            ):
+            if self._stop_future is not None and not self._stop_future.done():
                 self._stop_future.set_result(None)
 
         for sig in (_signal.SIGINT, _signal.SIGTERM):
-            try:
+            # Not supported on this platform, or not on the main thread.
+            with contextlib.suppress(NotImplementedError, RuntimeError):
                 loop.add_signal_handler(sig, _signal_stop)
-            except (NotImplementedError, RuntimeError):
-                # Not supported on this platform, or not on the main thread.
-                pass
 
         self._bus = MessageBus(bus_type=BusType.SESSION)
         await self._bus.connect()
@@ -466,8 +439,6 @@ class SNITrayIcon:
         if not await self._register_with_watcher():
             # No usable watcher at startup. Abort so the caller can fall back
             # to a backend that does not need an SNI host (e.g. XEmbed).
-            from .tray import SNIRegistrationError
-
             self._bus.disconnect()
             msg = "No StatusNotifierWatcher available"
             raise SNIRegistrationError(msg)

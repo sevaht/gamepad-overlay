@@ -60,6 +60,12 @@ exclude = ["^release/"]
 module = "gamepad_overlay.tray_sni"
 ignore_errors = true
 
+# pystray is a Windows/macOS-only dependency (not installed on Linux, where the
+# linters run) and ships no type stubs.
+[[tool.mypy.overrides]]
+module = "pystray"
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
@@ -79,9 +85,8 @@ select = [
 [tool.ruff.lint.per-file-ignores]
 "checks" = ["S603"]
 "tests/**/*" = ["PLR2004", "S101"]
-"typings/sdl2/__init__.pyi" = ["ANN401", "N801", "N802"]
-"**/tray_sni.py" = ["ANN", "ARG002", "F722", "F821", "N802", "SIM105", "UP037"]
-"typings/Xlib/**/*.pyi" = ["ANN401", "A002", "N801", "N802", "N818"]
+"**/tray_sni.py" = ["ANN201", "ARG002", "F722", "F821", "N802", "UP037"]
+"typings/Xlib/**/*.pyi" = ["ANN401", "A002", "N818"]
 
 [tool.uv.sources]
 sevaht-utility = { git = "https://github.com/nacitar/sevaht-utility.git", rev = "main" }
