@@ -7,6 +7,41 @@ from tkinter import font as tkfont
 from tkinter import ttk
 
 
+def setup_checkbutton_styles() -> None:
+    """Replace clam's X indicator with alt's checkmark glyph for TCheckbutton."""
+    s = ttk.Style()
+    s.element_create(
+        "alt.Checkbutton.indicator", "from", "alt", "Checkbutton.indicator"
+    )
+    s.layout(
+        "TCheckbutton",
+        [
+            (
+                "Checkbutton.padding",
+                {
+                    "sticky": "nswe",
+                    "children": [
+                        (
+                            "alt.Checkbutton.indicator",
+                            {"side": "left", "sticky": ""},
+                        ),
+                        (
+                            "Checkbutton.focus",
+                            {
+                                "side": "left",
+                                "sticky": "w",
+                                "children": [
+                                    ("Checkbutton.label", {"sticky": "nswe"})
+                                ],
+                            },
+                        ),
+                    ],
+                },
+            )
+        ],
+    )
+
+
 class LabelGrooveFrame(tk.LabelFrame):
     """tk.LabelFrame with groove border, theme-matched background, and an
     interior frame whose bottom padding compensates for the label inset so

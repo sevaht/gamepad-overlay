@@ -74,7 +74,7 @@
 
 (() => {
     const DEFAULTS = Object.freeze({
-        digitalThreshold: 0.2,
+        digitalThreshold: 20,
         topLeftX: 0,
         topLeftY: 0,
         wsPort: 8765,
@@ -105,13 +105,6 @@
             getComputedStyle(element).getPropertyValue(propertyName)
         );
         return Number.isFinite(value) ? value : null;
-    }
-
-    function resolvePreserveAspectRatio(query) {
-        if (query.get("stretch") === "1") {
-            return "none";
-        }
-        return "xMidYMid meet";
     }
 
     function resolveWebSocketUrl(query) {
@@ -258,7 +251,7 @@
                 leftTriggerMode: normalizeTriggerMode(controls.leftTriggerMode, "analog"),
                 rightTriggerMode: normalizeTriggerMode(controls.rightTriggerMode, "analog"),
                 drawLeftOriginRingWithoutStick: controls.drawLeftOriginRingWithoutStick !== false,
-                digitalThreshold: Math.max(0, Math.min(1, Number(controls.digitalThreshold) || DEFAULTS.digitalThreshold)),
+                digitalThreshold: Math.max(0, Math.min(100, Number(controls.digitalThreshold) || DEFAULTS.digitalThreshold)),
             },
         };
     }
@@ -328,9 +321,10 @@
         const theme = hasExplicitTheme
             ? (query.get("theme") || "")
             : layoutProfile.defaultTheme;
-        const digitalThreshold = query.has("digitalThreshold")
-            ? Math.max(0, Math.min(1, queryNumber(query, "digitalThreshold", layoutProfile.controls.digitalThreshold)))
+        const digitalThresholdPct = query.has("digitalThreshold")
+            ? queryNumber(query, "digitalThreshold", layoutProfile.controls.digitalThreshold)
             : layoutProfile.controls.digitalThreshold;
+        const digitalThreshold = Math.max(0, Math.min(1, digitalThresholdPct / 100));
         await loadThemeCss(theme);
         OverlayTheme.applyCssDefaults(document.documentElement);
         OverlayTheme.normalizeButtonColorVars(document.documentElement);
@@ -357,12 +351,11 @@
         });
 
         const overlayRegion = overlay.region;
-        const preserveAspectRatio = resolvePreserveAspectRatio(query);
         context.svg.setAttribute(
             "viewBox",
             `${overlayRegion.topLeft.x} ${overlayRegion.topLeft.y} ${overlay.width} ${overlay.height}`
         );
-        context.svg.setAttribute("preserveAspectRatio", preserveAspectRatio);
+        context.svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
         context.svg.style.setProperty("shape-rendering", "geometricPrecision");
 
         const blur = queryNumber(query, "blur", defaultBlur);
@@ -377,9 +370,6 @@
                     const svgRect = context.svg.getBoundingClientRect();
                     const scaleX = svgRect.width / overlay.width;
                     const scaleY = svgRect.height / overlay.height;
-                    if (preserveAspectRatio === "none") {
-                        return Math.sqrt(scaleX * scaleY) || 1;
-                    }
                     return Math.min(scaleX, scaleY) || 1;
                 }
 

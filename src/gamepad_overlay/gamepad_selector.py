@@ -22,7 +22,7 @@ from .application import (
     GamepadSelection,
     SDLGamepad,
 )
-from .tk_utils import LabelGrooveFrame
+from .tk_utils import LabelGrooveFrame, setup_checkbutton_styles
 from .tray_render import _create_tk_window_icon
 
 if TYPE_CHECKING:
@@ -100,6 +100,21 @@ def _list_available_gamepads() -> list[GamepadInfo]:
     return SDLGamepad.list_available_gamepads()
 
 
+def _clear_entry_selections(widget: tk.Misc) -> None:
+    if isinstance(widget, tk.Entry):
+        with contextlib.suppress(tk.TclError):
+            widget.selection_clear()
+    for child in widget.winfo_children():
+        _clear_entry_selections(child)
+
+
+def _safe_float(val: str, default: float) -> float:
+    try:
+        return float(val)
+    except ValueError:
+        return default
+
+
 @dataclass
 class GamepadSelectorConfig:
     hide_on_close: bool
@@ -116,9 +131,8 @@ class OverlayUrlWindow:
         "layout": "xbox",
         "theme": "Auto",
         "background": "",
-        "stretch": False,
         "blur": "0.5",
-        "digitalThreshold": "0.2",
+        "digitalThreshold": "20",
     }
 
     def __init__(self, parent: tk.Tk, port: int, config_path: Path) -> None:
@@ -135,7 +149,6 @@ class OverlayUrlWindow:
         self._layout_var = tk.StringVar(master=m)
         self._theme_var = tk.StringVar(master=m)
         self._background_var = tk.StringVar(master=m)
-        self._stretch_var = tk.BooleanVar(master=m)
         self._blur_var = tk.StringVar(master=m)
         self._digital_threshold_var = tk.StringVar(master=m)
         self._url_var = tk.StringVar(master=m)
@@ -148,7 +161,6 @@ class OverlayUrlWindow:
             self._layout_var,
             self._theme_var,
             self._background_var,
-            self._stretch_var,
             self._blur_var,
             self._digital_threshold_var,
         ):
@@ -163,7 +175,6 @@ class OverlayUrlWindow:
         self._layout_var.set(str(d["layout"]))
         self._theme_var.set(str(d["theme"]))
         self._background_var.set(str(d["background"]))
-        self._stretch_var.set(bool(d["stretch"]))
         self._blur_var.set(str(d["blur"]))
         self._digital_threshold_var.set(str(d["digitalThreshold"]))
 
@@ -180,12 +191,20 @@ class OverlayUrlWindow:
             ("theme", self._theme_var),
             ("background", self._background_var),
             ("blur", self._blur_var),
-            ("digitalThreshold", self._digital_threshold_var),
         ):
             if key in data and isinstance(data[key], str):
                 var.set(data[key])
-        if "stretch" in data and isinstance(data["stretch"], bool):
-            self._stretch_var.set(data["stretch"])
+        if "digitalThreshold" in data and isinstance(
+            data["digitalThreshold"], str
+        ):
+            val = data["digitalThreshold"]
+            try:
+                fval = float(val)
+                if fval < 1.0:
+                    val = str(round(fval * 100))
+            except ValueError:
+                val = str(self._DEFAULTS["digitalThreshold"])
+            self._digital_threshold_var.set(val)
 
     def _save_config(self) -> None:
         data = {
@@ -193,7 +212,6 @@ class OverlayUrlWindow:
             "layout": self._layout_var.get(),
             "theme": self._theme_var.get(),
             "background": self._background_var.get(),
-            "stretch": self._stretch_var.get(),
             "blur": self._blur_var.get(),
             "digitalThreshold": self._digital_threshold_var.get(),
         }
@@ -232,7 +250,7 @@ class OverlayUrlWindow:
         inner = options_frame.interior
         rows: list[tuple[str, tk.Widget]] = [
             (
-                "Source  (default: websocket)",
+                "Source",
                 ttk.Combobox(
                     inner,
                     textvariable=self._source_var,
@@ -242,7 +260,7 @@ class OverlayUrlWindow:
                 ),
             ),
             (
-                "Layout  (default: xbox)",
+                "Layout",
                 ttk.Combobox(
                     inner,
                     textvariable=self._layout_var,
@@ -252,7 +270,7 @@ class OverlayUrlWindow:
                 ),
             ),
             (
-                "Theme  (default: Auto)",
+                "Theme",
                 ttk.Combobox(
                     inner,
                     textvariable=self._theme_var,
@@ -262,21 +280,30 @@ class OverlayUrlWindow:
                 ),
             ),
             (
-                "Background  (optional CSS color)",
+                "Background",
                 ttk.Entry(inner, textvariable=self._background_var),
             ),
             (
-                "Stretch",
-                ttk.Checkbutton(inner, text="", variable=self._stretch_var),
+                "Blur",
+                ttk.Spinbox(
+                    inner,
+                    textvariable=self._blur_var,
+                    from_=0.0,
+                    to=20.0,
+                    increment=0.5,
+                    format="%.1f",
+                    width=8,
+                ),
             ),
             (
-                "Blur  (default: 0.5)",
-                ttk.Entry(inner, textvariable=self._blur_var, width=10),
-            ),
-            (
-                "Digital Threshold 0-1  (default: 0.2)",
-                ttk.Entry(
-                    inner, textvariable=self._digital_threshold_var, width=10
+                "Digital Threshold %",
+                ttk.Spinbox(
+                    inner,
+                    textvariable=self._digital_threshold_var,
+                    from_=1,
+                    to=100,
+                    increment=1,
+                    width=8,
                 ),
             ),
         ]
@@ -332,16 +359,17 @@ class OverlayUrlWindow:
         if bg:
             params["background"] = bg
 
-        if self._stretch_var.get():
-            params["stretch"] = "1"
-
         blur = self._blur_var.get().strip()
-        if blur and blur != "0.5":
-            params["blur"] = blur
+        blur_default = float(str(self._DEFAULTS["blur"]))
+        blur_val = max(0.0, min(20.0, _safe_float(blur, blur_default)))
+        if blur_val != blur_default:
+            params["blur"] = f"{blur_val:.10g}"
 
         dt = self._digital_threshold_var.get().strip()
-        if dt and dt != "0.2":
-            params["digitalThreshold"] = dt
+        dt_default = int(str(self._DEFAULTS["digitalThreshold"]))
+        dt_pct = max(1, min(100, int(_safe_float(dt, float(dt_default)))))
+        if dt_pct != dt_default:
+            params["digitalThreshold"] = str(dt_pct)
 
         if params:
             return base + "?" + urlencode(params)
@@ -373,6 +401,7 @@ class OverlayUrlWindow:
         self._window.deiconify()
         self._window.lift()
         self._window.focus_force()
+        _clear_entry_selections(self._window)
 
 
 class GamepadSelectorWindow:
@@ -467,6 +496,7 @@ class GamepadSelectorWindow:
             self.root = tk.Tk()
             style = ttk.Style()
             style.theme_use("clam")
+            setup_checkbutton_styles()
             self._window_icons: dict[bool, object] = {}
             self.root.geometry("650x500")
             self.root.minsize(650, 420)
