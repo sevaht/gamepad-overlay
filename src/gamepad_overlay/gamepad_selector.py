@@ -12,6 +12,7 @@ import tkinter as tk
 import webbrowser
 from dataclasses import dataclass, field
 from threading import Event, Thread, current_thread
+from tkinter import font as tkfont
 from tkinter import ttk
 from typing import TYPE_CHECKING, ClassVar, Protocol, cast
 from urllib.parse import urlencode
@@ -232,14 +233,24 @@ class OverlayUrlWindow:
         outer = ttk.Frame(self._window, padding=14)
         outer.pack(fill=tk.BOTH, expand=True)
 
-        url_frame = ttk.LabelFrame(outer, text="Overlay URL")
+        bg = ttk.Style().lookup("TFrame", "background")
+        label_inset = (
+            tkfont.nametofont("TkDefaultFont").metrics("linespace") // 2
+        )
+        url_frame = tk.LabelFrame(
+            outer,
+            text="Overlay URL",
+            relief="groove",
+            borderwidth=2,
+            background=bg,
+        )
         url_frame.pack(fill=tk.X, padx=4, pady=4)
         url_entry = ttk.Entry(
             url_frame, textvariable=self._url_var, state="readonly", width=60
         )
-        url_entry.pack(fill=tk.X, padx=6, pady=(4, 2))
+        url_entry.pack(fill=tk.X, padx=6, pady=(0, 2))
         btn_frame = ttk.Frame(url_frame)
-        btn_frame.pack(anchor="w", padx=6, pady=(0, 6))
+        btn_frame.pack(anchor="w", padx=6, pady=(0, label_inset))
         ttk.Button(btn_frame, text="Copy", command=self._copy_url).pack(
             side=tk.LEFT, padx=(0, 6)
         )
@@ -247,7 +258,13 @@ class OverlayUrlWindow:
             btn_frame, text="Launch in Browser", command=self._launch_browser
         ).pack(side=tk.LEFT)
 
-        options_frame = ttk.LabelFrame(outer, text="Options")
+        options_frame = tk.LabelFrame(
+            outer,
+            text="Options",
+            relief="groove",
+            borderwidth=2,
+            background=bg,
+        )
         options_frame.pack(fill=tk.X, padx=4, pady=4)
         options_frame.columnconfigure(1, weight=1)
 
@@ -307,12 +324,23 @@ class OverlayUrlWindow:
                 ),
             ),
         ]
+        last_row_idx = len(rows) - 1
         for row_idx, (label, widget) in enumerate(rows):
+            top_pad = 0 if row_idx == 0 else 3
+            bot_pad = label_inset if row_idx == last_row_idx else 3
             ttk.Label(options_frame, text=label).grid(
-                row=row_idx, column=0, sticky="w", padx=(6, 8), pady=3
+                row=row_idx,
+                column=0,
+                sticky="w",
+                padx=(6, 8),
+                pady=(top_pad, bot_pad),
             )
             widget.grid(
-                row=row_idx, column=1, sticky="ew", padx=(0, 6), pady=3
+                row=row_idx,
+                column=1,
+                sticky="ew",
+                padx=(0, 6),
+                pady=(top_pad, bot_pad),
             )
 
         reset_frame = ttk.Frame(outer)
@@ -481,7 +509,11 @@ class GamepadSelectorWindow:
     def _run_ui_thread(self) -> None:  # noqa: PLR0915
         try:
             self.root = tk.Tk()
-            ttk.Style().theme_use("clam")
+            style = ttk.Style()
+            style.theme_use("clam")
+            label_inset = (
+                tkfont.nametofont("TkDefaultFont").metrics("linespace") // 2
+            )
             self._window_icons: dict[bool, object] = {}
             self.root.geometry("650x500")
             self.root.minsize(650, 420)
@@ -552,24 +584,23 @@ class GamepadSelectorWindow:
             bottom_row = ttk.Frame(content)
             bottom_row.grid(row=2, column=0, sticky="ew", pady=(8, 0))
 
-            # tk.Frame groove box + separate Label above: uniform pady=6 on all
-            # sides so the separator gap is symmetric (ttk.LabelFrame's embedded
-            # title creates an inherent top-heavy asymmetry that can't be padding'd away).
-            criteria_outer = ttk.Frame(bottom_row)
-            criteria_outer.pack(side=tk.LEFT, anchor="sw")
-
-            ttk.Label(criteria_outer, text="Criteria").pack(anchor="w", padx=2)
-
-            criteria_box = tk.Frame(
-                criteria_outer,
+            criteria_box = tk.LabelFrame(
+                bottom_row,
+                text="Criteria",
                 relief="groove",
                 borderwidth=2,
-                background=ttk.Style().lookup("TFrame", "background"),
+                background=style.lookup("TFrame", "background"),
             )
-            criteria_box.pack()
+            criteria_box.pack(side=tk.LEFT, anchor="sw")
 
             left_frame = ttk.Frame(criteria_box)
-            left_frame.grid(row=0, column=0, sticky="nsw", padx=(6, 0), pady=6)
+            left_frame.grid(
+                row=0,
+                column=0,
+                sticky="nsw",
+                padx=(6, 0),
+                pady=(0, label_inset),
+            )
 
             ttk.Checkbutton(
                 left_frame,
@@ -594,14 +625,18 @@ class GamepadSelectorWindow:
             )
 
             ttk.Separator(criteria_box, orient=tk.VERTICAL).grid(
-                row=0, column=1, sticky="nsew", padx=10, pady=6
+                row=0, column=1, sticky="nsew", padx=10, pady=(0, label_inset)
             )
 
             self.any_button = ttk.Button(
                 criteria_box, text="Any Gamepad", command=self.use_any_gamepad
             )
             self.any_button.grid(
-                row=0, column=2, sticky="sw", padx=(0, 6), pady=6
+                row=0,
+                column=2,
+                sticky="sw",
+                padx=(0, 6),
+                pady=(0, label_inset),
             )
 
             # Right side: Overlay URL button above Quit/Hide buttons
