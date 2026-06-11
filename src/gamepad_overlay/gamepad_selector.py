@@ -18,12 +18,9 @@ from urllib.parse import urlencode
 
 from .application import (
     DEFAULT_PORT,
-    GAMEPAD_SELECTION_FIELDS,
+    GamepadInfo,
+    GamepadSelection,
     SDLGamepad,
-    _clear_selected_gamepad,
-    _gamepad_metadata_summary,
-    _load_selected_gamepad,
-    _save_selected_gamepad,
 )
 from .tk_utils import LabelGrooveFrame
 from .tray_render import _create_tk_window_icon
@@ -46,7 +43,7 @@ class ServerBackend(Protocol):
 
     def client_count(self) -> int: ...
 
-    def active_gamepad(self) -> dict[str, object] | None: ...
+    def active_gamepad(self) -> GamepadInfo | None: ...
 
     def stop(self) -> None: ...
 
@@ -60,26 +57,8 @@ def _status_text(*, attached: bool, client_count: int) -> str:
     )
 
 
-def _gamepad_matches_selection(
-    gamepad: dict[str, object], selected: dict[str, str] | None
-) -> bool:
-    return SDLGamepad._matches_selected_gamepad(gamepad, selected)
-
-
-def _gamepad_selection_identity(gamepad: dict[str, object]) -> dict[str, str]:
-    return {
-        field_name: str(gamepad.get(field_name, "")).strip()
-        for field_name in ("guid", "vendor", "product", "name")
-    }
-
-
-def _gamepad_identity_hint(gamepad: dict[str, object]) -> str:
-    metadata = _gamepad_metadata_summary(gamepad)
-    return metadata or "No stable identifier exposed"
-
-
-def _gamepad_display_names(gamepads: list[dict[str, object]]) -> list[str]:
-    names = [str(gamepad.get("name", "unknown")) for gamepad in gamepads]
+def _gamepad_display_names(gamepads: list[GamepadInfo]) -> list[str]:
+    names = [gamepad.name for gamepad in gamepads]
     duplicates = {name for name in names if names.count(name) > 1}
     if not duplicates:
         return names
@@ -96,33 +75,28 @@ def _gamepad_display_names(gamepads: list[dict[str, object]]) -> list[str]:
 
 
 def _selected_gamepad_index(
-    gamepads: list[dict[str, object]], selected: dict[str, str] | None
+    gamepads: list[GamepadInfo], selected: GamepadSelection | None
 ) -> int | None:
     if selected is None:
         return None
     for index, gamepad in enumerate(gamepads):
-        if _gamepad_matches_selection(gamepad, selected):
+        if selected.matches(gamepad):
             return index
     return None
 
 
-def _mode_texts(selected: dict[str, str] | None) -> tuple[str, str]:
+def _mode_texts(selected: GamepadSelection | None) -> tuple[str, str]:
     """Return (name_line, detail_line) for the mode bar (no prefix — caller adds 'Target:')."""
-    if selected is None:
+    if selected is None or selected.is_any():
         return ("Any available gamepad", "")
-    has_identity = any(
-        selected.get(f, "") for f in ("guid", "vendor", "product")
-    )
-    has_port = bool(selected.get("port", ""))
-    if not has_identity and not has_port:
-        return ("Any available gamepad", "")
-    name = selected.get("name", "") or "Unknown controller"
+    has_identity = bool(selected.guid or selected.vendor or selected.product)
+    name = selected.name or "Unknown controller"
     main = name if has_identity else "Any controller"
-    detail = _gamepad_metadata_summary(selected)
+    detail = selected.metadata_summary()
     return (main, detail)
 
 
-def _list_available_gamepads() -> list[dict[str, object]]:
+def _list_available_gamepads() -> list[GamepadInfo]:
     return SDLGamepad.list_available_gamepads()
 
 
@@ -417,8 +391,8 @@ class GamepadSelectorWindow:
             window_config.selection_changed_callback
         )
         self.overlay_port = window_config.overlay_port
-        self.gamepads: list[dict[str, object]] = []
-        self._saved_selection: dict[str, str] | None = None
+        self.gamepads: list[GamepadInfo] = []
+        self._saved_selection: GamepadSelection | None = None
         self._window_icon_connected: bool | None = None
         self._quit_dialog: tk.Toplevel | None = None
         self._overlay_url_window: OverlayUrlWindow | None = None
@@ -681,18 +655,11 @@ class GamepadSelectorWindow:
             return None
         return int(selection[0])
 
-    def _would_save_selection(self, selected_row: int) -> dict[str, str]:
-        gamepad = self.gamepads[selected_row]
-        result = {
-            field: str(gamepad.get(field, "")).strip()
-            for field in GAMEPAD_SELECTION_FIELDS
-        }
-        if not self.pin_identity_var.get():
-            for field in ("guid", "vendor", "product"):
-                result[field] = ""
-        if not self.pin_port_var.get():
-            result["port"] = ""
-        return result
+    def _would_save_selection(self, selected_row: int) -> GamepadSelection:
+        return self.gamepads[selected_row].as_selection(
+            pin_identity=self.pin_identity_var.get(),
+            pin_port=self.pin_port_var.get(),
+        )
 
     def _update_select_button_state(self) -> None:
         selected_row = self._current_selected_row()
@@ -707,17 +674,13 @@ class GamepadSelectorWindow:
             self.select_button.state(["disabled"])
             return
 
-        port = str(self.gamepads[selected_row].get("port", "")).strip()
-        if pin_port and not port:
+        if pin_port and not self.gamepads[selected_row].port:
             self.select_button.state(["disabled"])
             return
 
         if self._saved_selection is not None:
             proposed = self._would_save_selection(selected_row)
-            if all(
-                proposed.get(f, "") == self._saved_selection.get(f, "")
-                for f in GAMEPAD_SELECTION_FIELDS
-            ):
+            if proposed == self._saved_selection:
                 self.select_button.state(["disabled"])
                 return
 
@@ -776,7 +739,7 @@ class GamepadSelectorWindow:
         previous_row = self._current_selected_row()
         self.gamepad_list.delete(*self.gamepad_list.get_children())
 
-        self._saved_selection = _load_selected_gamepad(self.config_path)
+        self._saved_selection = GamepadSelection.load(self.config_path)
         selected = self._saved_selection
         active_gamepad = (
             self.server_backend.active_gamepad()
@@ -807,14 +770,14 @@ class GamepadSelectorWindow:
             self._update_select_button_state()
             return
 
-        guids = [str(g.get("guid", "")) for g in self.gamepads]
+        guids = [g.guid for g in self.gamepads]
         if len(guids) != len(set(guids)) and not self.pin_port_var.get():
             self.pin_port_var.set(True)
 
         selected_row = _selected_gamepad_index(self.gamepads, selected)
         display_names = _gamepad_display_names(self.gamepads)
-        active_identity = (
-            _gamepad_selection_identity(active_gamepad)
+        active_selection = (
+            active_gamepad.as_selection(pin_identity=True, pin_port=False)
             if active_gamepad is not None
             else None
         )
@@ -822,12 +785,10 @@ class GamepadSelectorWindow:
             zip(self.gamepads, display_names, strict=True)
         ):
             is_active = (
-                active_identity is not None
-                and _gamepad_matches_selection(gamepad, active_identity)
+                active_selection is not None
+                and active_selection.matches(gamepad)
             )
-            is_pinned = selected is not None and _gamepad_matches_selection(
-                gamepad, selected
-            )
+            is_pinned = selected is not None and selected.matches(gamepad)
 
             if is_active and is_pinned:
                 tag = "active_pinned"
@@ -843,7 +804,11 @@ class GamepadSelectorWindow:
                 "",
                 tk.END,
                 iid=str(index),
-                values=(row_name, _gamepad_identity_hint(gamepad)),
+                values=(
+                    row_name,
+                    gamepad.metadata_summary()
+                    or "No stable identifier exposed",
+                ),
                 tags=(tag,) if tag else (),
             )
 
@@ -986,13 +951,10 @@ class GamepadSelectorWindow:
             pin_port = self.pin_port_var.get()
             if not pin_identity and not pin_port:
                 return
-            gamepad_to_save = dict(self.gamepads[selected_row])
-            if not pin_identity:
-                for field in ("guid", "vendor", "product"):
-                    gamepad_to_save[field] = ""
-            if not pin_port:
-                gamepad_to_save["port"] = ""
-            _save_selected_gamepad(self.config_path, gamepad_to_save)
+            selection = self.gamepads[selected_row].as_selection(
+                pin_identity=pin_identity, pin_port=pin_port
+            )
+            selection.save(self.config_path)
             self._refresh_ui()
             if self.selection_changed_callback is not None:
                 self.selection_changed_callback()
@@ -1001,7 +963,7 @@ class GamepadSelectorWindow:
 
     def use_any_gamepad(self) -> None:
         def _use_any() -> None:
-            _clear_selected_gamepad(self.config_path)
+            GamepadSelection.clear(self.config_path)
             self._refresh_ui()
             if self.selection_changed_callback is not None:
                 self.selection_changed_callback()

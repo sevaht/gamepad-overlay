@@ -20,7 +20,7 @@ from .cli_output import announce
 from .websocket_server import WebSocketBroadcaster
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Sequence
     from threading import Event
 
 GAMEPAD_SELECTION_FIELDS = ("guid", "vendor", "product", "port")
@@ -200,10 +200,181 @@ def _build_inputs() -> dict[GamepadInput, Input]:
     return inputs
 
 
+def _format_hex_identifier(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        return f"{int(text):04x}"
+    except ValueError:
+        return text
+
+
+def _get_device_port_path(device_path: str) -> str:
+    """Return a stable port identifier for a device node, cross-platform."""
+    if not device_path:
+        return ""
+    if platform.system() == "Linux":
+        by_path_dir = Path("/dev/input/by-path")
+        if not by_path_dir.is_dir():
+            return ""
+        try:
+            real_target = Path(device_path).resolve()
+            for link in by_path_dir.iterdir():
+                try:
+                    if link.resolve() == real_target:
+                        return link.name
+                except OSError:
+                    continue
+        except OSError:
+            pass
+        return ""
+    return device_path
+
+
+def _port_display_name(port: str) -> str:
+    """Return a concise display form of a port path (strips PCI prefix on Linux)."""
+    usb_idx = port.find("usb-")
+    return port[usb_idx:] if usb_idx != -1 else port
+
+
+@dataclass(frozen=True)
+class GamepadInfo:
+    index: int
+    name: str
+    guid: str
+    path: str
+    port: str
+    vendor: str
+    product: str
+    product_version: str
+
+    def vid_pid(self) -> str:
+        v = _format_hex_identifier(self.vendor)
+        p = _format_hex_identifier(self.product)
+        return f"{v}:{p}" if v and p else ""
+
+    def metadata_summary(self) -> str:
+        id_parts: list[str] = []
+        vp = self.vid_pid()
+        if vp:
+            id_parts.append(f"[{vp}]")
+        elif self.guid:
+            id_parts.append(f"[{self.guid}]")
+        if self.port:
+            id_parts.append(f"[{_port_display_name(self.port)}]")
+        return " ".join(id_parts)
+
+    def as_selection(
+        self, *, pin_identity: bool = True, pin_port: bool = False
+    ) -> GamepadSelection:
+        return GamepadSelection(
+            guid=self.guid if pin_identity else "",
+            vendor=self.vendor if pin_identity else "",
+            product=self.product if pin_identity else "",
+            port=self.port if pin_port else "",
+            name=self.name,
+        )
+
+
+@dataclass(frozen=True)
+class GamepadSelection:
+    guid: str = ""
+    vendor: str = ""
+    product: str = ""
+    port: str = ""
+    name: str = field(default="", compare=False)
+
+    def is_any(self) -> bool:
+        return not any([self.guid, self.vendor, self.product, self.port])
+
+    def metadata_summary(self) -> str:
+        v = _format_hex_identifier(self.vendor)
+        p = _format_hex_identifier(self.product)
+        if v and p:
+            return f"[{v}:{p}]"
+        if v or p:
+            return f"[{v or '????'}:{p or '????'}]"
+        return ""
+
+    def matches(self, gamepad: GamepadInfo) -> bool:
+        matched = False
+        for sel_val, gpad_val in (
+            (self.guid, gamepad.guid),
+            (self.vendor, gamepad.vendor),
+            (self.product, gamepad.product),
+            (self.port, gamepad.port),
+        ):
+            if not sel_val:
+                continue
+            matched = True
+            if not gpad_val or sel_val.lower() != gpad_val.lower():
+                return False
+        return matched
+
+    def target_description(self) -> str:
+        if self.is_any():
+            return "any gamepad"
+        has_identity = bool(self.guid or self.vendor or self.product)
+        port = self.port
+        name = self.name or "unknown controller"
+        vp = _format_hex_identifier(self.vendor)
+        pp = _format_hex_identifier(self.product)
+        vid_pid = f"{vp}:{pp}" if vp and pp else ""
+        if vid_pid:
+            name_str = f"{name} [{vid_pid}]"
+        elif has_identity:
+            name_str = f"{name} [{self.guid}]" if self.guid else name
+        else:
+            name_str = name
+        if has_identity and port:
+            return f"{name_str} on {_port_display_name(port)}"
+        if has_identity:
+            return f"{name_str} (any port)"
+        if port:
+            return f"any controller on {_port_display_name(port)}"
+        return "any gamepad"
+
+    def save(self, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            "guid": self.guid,
+            "vendor": self.vendor,
+            "product": self.product,
+            "port": self.port,
+            "name": self.name,
+        }
+        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+    @classmethod
+    def load(cls, path: Path) -> GamepadSelection | None:
+        if not path.exists():
+            return None
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            logger.warning(
+                "Failed to read gamepad selection config at %s", path
+            )
+            return None
+        result = cls(
+            guid=str(payload.get("guid", "")).strip(),
+            vendor=str(payload.get("vendor", "")).strip(),
+            product=str(payload.get("product", "")).strip(),
+            port=str(payload.get("port", "")).strip(),
+            name=str(payload.get("name", "")).strip(),
+        )
+        return None if result.is_any() else result
+
+    @staticmethod
+    def clear(path: Path) -> None:
+        with suppress(FileNotFoundError):
+            path.unlink()
+
+
 @dataclass
 class SDLGamepad:
-    selected_guid: str | None = None
-    selected_gamepad: dict[str, str] | None = None
+    selected_gamepad: GamepadSelection | None = None
     _gamepad: Any = field(default=None, init=False)
     _gamepad_id: int | None = field(default=None, init=False)
     inputs: dict[GamepadInput, Input] = field(
@@ -214,9 +385,7 @@ class SDLGamepad:
     _dpad_up: bool = field(default=False, init=False)
     _dpad_down: bool = field(default=False, init=False)
     _selection_mtime_ns: int | None = field(default=None, init=False)
-    _active_gamepad_info: dict[str, object] | None = field(
-        default=None, init=False
-    )
+    _active_gamepad_info: GamepadInfo | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         if not sdl3.SDL_Init(sdl3.SDL_INIT_GAMEPAD):
@@ -228,9 +397,7 @@ class SDLGamepad:
 
     def _target_description(self) -> str:
         if self.selected_gamepad is not None:
-            return _selection_target_description(self.selected_gamepad)
-        if self.selected_guid:
-            return f"guid={self.selected_guid}"
+            return self.selected_gamepad.target_description()
         return "any gamepad"
 
     @staticmethod
@@ -274,51 +441,39 @@ class SDLGamepad:
                 sdl3.SDL_free(gamepad_ids)
 
     @staticmethod
-    def _gamepad_info(gamepad_id: int) -> dict[str, object]:
+    def _gamepad_info(gamepad_id: int) -> GamepadInfo:
         name_ptr = sdl3.SDL_GetGamepadNameForID(gamepad_id)
         name = "unknown" if name_ptr is None else name_ptr.decode("utf-8")
         sdl_path = SDLGamepad._device_string(
             gamepad_id, "SDL_GetGamepadPathForID"
         )
-        return {
-            "index": gamepad_id,
-            "name": name,
-            "guid": SDLGamepad._device_guid(gamepad_id),
-            "path": sdl_path,
-            "port": _get_device_port_path(sdl_path),
-            "vendor": SDLGamepad._device_integer(
+        return GamepadInfo(
+            index=gamepad_id,
+            name=name,
+            guid=SDLGamepad._device_guid(gamepad_id),
+            path=sdl_path,
+            port=_get_device_port_path(sdl_path),
+            vendor=SDLGamepad._device_integer(
                 gamepad_id, "SDL_GetGamepadVendorForID"
             ),
-            "product": SDLGamepad._device_integer(
+            product=SDLGamepad._device_integer(
                 gamepad_id, "SDL_GetGamepadProductForID"
             ),
-            "product_version": SDLGamepad._device_integer(
+            product_version=SDLGamepad._device_integer(
                 gamepad_id, "SDL_GetGamepadProductVersionForID"
             ),
-        }
+        )
 
     @staticmethod
     def _matches_selected_gamepad(
-        gamepad: dict[str, object], selected: dict[str, str] | None
+        gamepad: GamepadInfo, selected: GamepadSelection | None
     ) -> bool:
         if selected is None:
             return True
-
-        matched_field = False
-        for field_name in GAMEPAD_SELECTION_FIELDS:
-            selected_value = selected.get(field_name, "")
-            if not selected_value:
-                continue
-            matched_field = True
-            gamepad_value = str(gamepad.get(field_name, "")).strip()
-            if not gamepad_value:
-                return False
-            if selected_value.lower() != gamepad_value.lower():
-                return False
-        return matched_field
+        return selected.matches(gamepad)
 
     @staticmethod
-    def list_available_gamepads() -> list[dict[str, object]]:
+    def list_available_gamepads() -> list[GamepadInfo]:
         initialized_here = False
         if sdl3.SDL_WasInit(sdl3.SDL_INIT_GAMEPAD) == 0:
             if not sdl3.SDL_Init(sdl3.SDL_INIT_GAMEPAD):
@@ -338,19 +493,11 @@ class SDLGamepad:
     def _try_open_gamepad(self) -> bool:
         for gamepad_id in self._enumerate_gamepad_ids():
             gamepad_info = self._gamepad_info(gamepad_id)
-            guid = str(gamepad_info.get("guid", ""))
-            name = str(gamepad_info.get("name", "unknown"))
+            name = gamepad_info.name
 
             if (
-                self.selected_guid
-                and guid.lower() != self.selected_guid.lower()
-            ):
-                continue
-            if (
                 self.selected_gamepad is not None
-                and not self._matches_selected_gamepad(
-                    gamepad_info, self.selected_gamepad
-                )
+                and not self.selected_gamepad.matches(gamepad_info)
             ):
                 continue
 
@@ -366,30 +513,18 @@ class SDLGamepad:
             self._gamepad = gamepad
             self._gamepad_id = int(sdl3.SDL_GetGamepadID(gamepad))
             self._active_gamepad_info = gamepad_info
-            metadata = _gamepad_metadata_summary(gamepad_info)
+            metadata = gamepad_info.metadata_summary()
             suffix = f" {metadata}" if metadata else ""
             announce(f"Connected to gamepad: {name}{suffix}", logger)
             return True
         return False
 
-    def _selection_signature(self) -> tuple[str | None, tuple[str, ...]]:
-        selection_values: tuple[str, ...] = ()
-        if self.selected_gamepad is not None:
-            selection_values = tuple(
-                self.selected_gamepad.get(field_name, "")
-                for field_name in GAMEPAD_SELECTION_FIELDS
-            )
-        return (self.selected_guid, selection_values)
-
     def _apply_selection(
-        self, selected: dict[str, str] | None, *, announce_change: bool
+        self, selected: GamepadSelection | None, *, announce_change: bool
     ) -> None:
-        guid = selected.get("guid") if selected else None
-        normalized_guid = guid or None
-        old_signature = self._selection_signature()
-        self.selected_guid = normalized_guid
+        old_selection = self.selected_gamepad
         self.selected_gamepad = selected
-        if self._selection_signature() == old_signature:
+        if self.selected_gamepad == old_selection:
             return
         if announce_change:
             announce(
@@ -411,7 +546,7 @@ class SDLGamepad:
         if mtime_ns == self._selection_mtime_ns:
             return
         self._selection_mtime_ns = mtime_ns
-        selected = _load_selected_gamepad(path)
+        selected = GamepadSelection.load(path)
         self._apply_selection(selected, announce_change=True)
 
     def _wait_for_gamepad(
@@ -476,12 +611,12 @@ class SDLGamepad:
         stop_event: Event | None = None,
         device_change_callback: Callable[[], None] | None = None,
         active_gamepad_callback: (
-            Callable[[dict[str, object] | None], None] | None
+            Callable[[GamepadInfo | None], None] | None
         ) = None,
     ) -> None:
         event = sdl3.SDL_Event()
         announced_waiting = False
-        reported_active_gamepad: dict[str, object] | None = None
+        reported_active_gamepad: GamepadInfo | None = None
 
         def report_active_gamepad() -> None:
             nonlocal reported_active_gamepad
@@ -628,9 +763,7 @@ class ServerRunConfig:
     terminal: bool = False
     stop_event: Event | None = None
     device_change_callback: Callable[[], None] | None = None
-    active_gamepad_callback: (
-        Callable[[dict[str, object] | None], None] | None
-    ) = None
+    active_gamepad_callback: Callable[[GamepadInfo | None], None] | None = None
     client_count_callback: Callable[[int], None] | None = None
 
 
@@ -796,104 +929,10 @@ def _print_available_gamepads() -> int:
     if not gamepads:
         print("No compatible gamepads detected.")
         return 0
-    for gamepad_info in gamepads:
-        metadata = _gamepad_metadata_summary(gamepad_info)
-        meta_str = f"  {metadata}" if metadata else ""
-        print(f"[{gamepad_info['index']}] {gamepad_info['name']}{meta_str}")
+    for g in gamepads:
+        meta = g.metadata_summary()
+        print(f"[{g.index}] {g.name}" + (f"  {meta}" if meta else ""))
     return 0
-
-
-def _format_hex_identifier(value: object) -> str:
-    text = str(value or "").strip()
-    if not text:
-        return ""
-    try:
-        return f"{int(text):04x}"
-    except ValueError:
-        return text
-
-
-def _gamepad_vid_pid(gamepad: Mapping[str, object]) -> str:
-    vendor = _format_hex_identifier(gamepad.get("vendor"))
-    product = _format_hex_identifier(gamepad.get("product"))
-    if vendor and product:
-        return f"{vendor}:{product}"
-    return ""
-
-
-def _get_device_port_path(device_path: str) -> str:
-    """Return a stable port identifier for a device node, cross-platform."""
-    if not device_path:
-        return ""
-    if platform.system() == "Linux":
-        by_path_dir = Path("/dev/input/by-path")
-        if not by_path_dir.is_dir():
-            return ""
-        try:
-            real_target = Path(device_path).resolve()
-            for link in by_path_dir.iterdir():
-                try:
-                    if link.resolve() == real_target:
-                        return link.name
-                except OSError:
-                    continue
-        except OSError:
-            pass
-        return ""
-    # Windows: HID path encodes USB location and is stable per port.
-    # macOS/other: use SDL path as best-effort.
-    return device_path
-
-
-def _port_display_name(port: str) -> str:
-    """Return a concise display form of a port path (strips PCI prefix on Linux)."""
-    usb_idx = port.find("usb-")
-    return port[usb_idx:] if usb_idx != -1 else port
-
-
-def _selection_target_description(
-    selected: Mapping[str, object] | None,
-) -> str:
-    if not selected or not any(str(v).strip() for v in selected.values()):
-        return "any gamepad"
-    has_identity = any(
-        str(selected.get(f, "")).strip()
-        for f in ("guid", "vendor", "product", "name")
-    )
-    port = str(selected.get("port", "")).strip()
-    name = str(selected.get("name", "")).strip() or "unknown controller"
-    vid_pid = _gamepad_vid_pid(selected)
-    if vid_pid:
-        name_str = f"{name} [{vid_pid}]"
-    elif has_identity:
-        guid = str(selected.get("guid", "")).strip()
-        name_str = f"{name} [{guid}]" if guid else name
-    else:
-        name_str = name
-    if has_identity and port:
-        return f"{name_str} on {_port_display_name(port)}"
-    if has_identity:
-        return f"{name_str} (any port)"
-    if port:
-        return f"any controller on {_port_display_name(port)}"
-    return "any gamepad"
-
-
-def _gamepad_metadata_summary(gamepad: Mapping[str, object]) -> str:
-    id_parts: list[str] = []
-    vendor_product = _gamepad_vid_pid(gamepad)
-    if vendor_product:
-        id_parts.append(f"[{vendor_product}]")
-    else:
-        guid = str(gamepad.get("guid", "")).strip()
-        if guid:
-            id_parts.append(f"[{guid}]")
-    port = str(gamepad.get("port", "")).strip()
-    if port:
-        usb_idx = port.find("usb-")
-        port_display = port[usb_idx:] if usb_idx != -1 else port
-        id_parts.append(f"[{port_display}]")
-    return " ".join(id_parts)
 
 
 def _select_and_save_gamepad(config_path: Path) -> int:
@@ -901,57 +940,53 @@ def _select_and_save_gamepad(config_path: Path) -> int:
     if selected is None:
         print("No gamepad selected.")
         return 1
-    if not selected:
-        _clear_selected_gamepad(config_path)
+    if selected.is_any():
+        GamepadSelection.clear(config_path)
         print("Will use any gamepad.")
         return 0
-    _save_selected_gamepad(config_path, selected)
-    print(
-        f"Saved gamepad selection: {_selection_target_description(selected)}"
-    )
+    selected.save(config_path)
+    print(f"Saved gamepad selection: {selected.target_description()}")
     return 0
 
 
 def _save_gamepad_by_criteria(
     guid: str | None, name: str | None, port: str | None, config_path: Path
 ) -> int:
-    selection: dict[str, str] = dict.fromkeys(GAMEPAD_SELECTION_FIELDS, "")
     if name:
         gamepads = SDLGamepad.list_available_gamepads()
         matches = [
             g
             for g in gamepads
-            if name.lower() in str(g.get("name", "")).lower()
-            and (not port or str(g.get("port", "")) == port)
+            if name.lower() in g.name.lower() and (not port or g.port == port)
         ]
         if not matches:
             desc = repr(name) + (f" on port {port!r}" if port else "")
             print(f"No connected gamepad matches {desc}.")
             return 1
         found = matches[0]
-        selection["guid"] = str(found.get("guid", ""))
-        selection["vendor"] = str(found.get("vendor", ""))
-        selection["product"] = str(found.get("product", ""))
-        selection["name"] = str(found.get("name", ""))
-        if port:
-            selection["port"] = port
+        selection = GamepadSelection(
+            guid=found.guid,
+            vendor=found.vendor,
+            product=found.product,
+            port=port or "",
+            name=found.name,
+        )
     elif guid:
-        selection["guid"] = guid
-        if port:
-            selection["port"] = port
         gamepads = SDLGamepad.list_available_gamepads()
-        for g in gamepads:
-            if str(g.get("guid", "")).lower() == guid.lower():
-                selection["vendor"] = str(g.get("vendor", ""))
-                selection["product"] = str(g.get("product", ""))
-                selection["name"] = str(g.get("name", ""))
-                break
+        found_gamepad = next(
+            (g for g in gamepads if g.guid.lower() == guid.lower()), None
+        )
+        selection = GamepadSelection(
+            guid=guid,
+            vendor=found_gamepad.vendor if found_gamepad else "",
+            product=found_gamepad.product if found_gamepad else "",
+            port=port or "",
+            name=found_gamepad.name if found_gamepad else "",
+        )
     else:
-        selection["port"] = port or ""
-    _save_selected_gamepad(config_path, selection)
-    print(
-        f"Saved gamepad selection: {_selection_target_description(selection)}"
-    )
+        selection = GamepadSelection(port=port or "")
+    selection.save(config_path)
+    print(f"Saved gamepad selection: {selection.target_description()}")
     return 0
 
 
@@ -968,7 +1003,7 @@ def _run_tray(args: argparse.Namespace, config_path: Path) -> int:
 
 
 def run_server(config: ServerRunConfig) -> int:
-    selected_config = _load_selected_gamepad(config.config_path)
+    selected_config = GamepadSelection.load(config.config_path)
 
     if config.terminal:
         monitor: GamepadMonitor = TerminalGamepadMonitor()
@@ -985,13 +1020,7 @@ def run_server(config: ServerRunConfig) -> int:
             websocket_broadcaster=websocket_broadcaster
         )
 
-    gamepad = SDLGamepad(
-        selected_guid=(
-            selected_config.get("guid") if selected_config else None
-        )
-        or None,
-        selected_gamepad=selected_config,
-    )
+    gamepad = SDLGamepad(selected_gamepad=selected_config)
     selection_watch_path = config.config_path
     try:
         gamepad.read_loop(
@@ -1067,7 +1096,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912
         return _print_available_gamepads()
 
     if args.any_gamepad:
-        _clear_selected_gamepad(config_path)
+        GamepadSelection.clear(config_path)
         print("Will use any gamepad.")
         return 0
 
@@ -1095,49 +1124,17 @@ def _selection_config_path() -> Path:
     return base / "gamepad-overlay" / SELECTION_CONFIG_FILE_NAME
 
 
-def _load_selected_gamepad(path: Path) -> dict[str, str] | None:
-    if not path.exists():
-        return None
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        logger.warning("Failed to read gamepad selection config at %s", path)
-        return None
-    result = {
-        field_name: str(payload.get(field_name, "")).strip()
-        for field_name in (*GAMEPAD_SELECTION_FIELDS, "name")
-    }
-    if not any(result[f] for f in GAMEPAD_SELECTION_FIELDS):
-        return None
-    return result
-
-
-def _save_selected_gamepad(path: Path, selected: Mapping[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    data = {
-        field_name: str(selected.get(field_name, "")).strip()
-        for field_name in (*GAMEPAD_SELECTION_FIELDS, "name")
-    }
-    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-
-
-def _clear_selected_gamepad(path: Path) -> None:
-    with suppress(FileNotFoundError):
-        path.unlink()
-
-
 def _interactive_select_gamepad() -> (  # noqa: C901, PLR0912
-    dict[str, object] | None
+    GamepadSelection | None
 ):
     gamepads = SDLGamepad.list_available_gamepads()
     if not gamepads:
         print("No compatible gamepads detected.")
         return None
     print("Detected gamepads:")
-    for idx, gamepad in enumerate(gamepads, start=1):
-        metadata = _gamepad_metadata_summary(gamepad)
-        meta_str = f"  {metadata}" if metadata else ""
-        print(f"  {idx}) {gamepad['name']}{meta_str}")
+    for idx, g in enumerate(gamepads, start=1):
+        meta = g.metadata_summary()
+        print(f"  {idx}) {g.name}" + (f"  {meta}" if meta else ""))
     print("  0) (any gamepad)")
     print()
     while True:
@@ -1155,12 +1152,13 @@ def _interactive_select_gamepad() -> (  # noqa: C901, PLR0912
             continue
         selected_index = int(choice)
         if selected_index == 0:
-            return {}  # signal "use any"
+            return GamepadSelection()
         if 1 <= selected_index <= len(gamepads):
-            selected = dict(gamepads[selected_index - 1])
-            port = str(selected.get("port", "")).strip()
-            if port:
-                port_display = _port_display_name(port)
+            found = gamepads[selected_index - 1]
+            pin_identity = True
+            pin_port = False
+            if found.port:
+                port_display = _port_display_name(found.port)
                 print("  Match by:")
                 print("    1) Controller identity only (any port)")
                 print(f"    2) USB port only ({port_display})")
@@ -1172,14 +1170,16 @@ def _interactive_select_gamepad() -> (  # noqa: C901, PLR0912
                         print()
                         return None
                     if criteria in ("", "1"):
-                        selected["port"] = ""
                         break
                     if criteria == "2":
-                        for field in ("guid", "vendor", "product"):
-                            selected[field] = ""
+                        pin_identity = False
+                        pin_port = True
                         break
                     if criteria == "3":
+                        pin_port = True
                         break
                     print("  Enter 1, 2, or 3.")
-            return selected
+            return found.as_selection(
+                pin_identity=pin_identity, pin_port=pin_port
+            )
         print("Selection out of range.")

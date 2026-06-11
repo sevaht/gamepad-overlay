@@ -5,15 +5,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from gamepad_overlay.application import (
+    GamepadInfo,
+    GamepadSelection,
     SDLGamepad,
     ServerRunConfig,
-    _clear_selected_gamepad,
-    _gamepad_metadata_summary,
-    _save_selected_gamepad,
 )
 from gamepad_overlay.gamepad_selector import (
     _gamepad_display_names,
-    _gamepad_matches_selection,
     _selected_gamepad_index,
     _status_text,
 )
@@ -23,6 +21,29 @@ if TYPE_CHECKING:
     from threading import Event
 
     from pytest import MonkeyPatch
+
+
+def _make_gamepad(  # noqa: PLR0913
+    *,
+    index: int = 0,
+    name: str = "Pad",
+    guid: str = "guid-1",
+    path: str = "",
+    port: str = "",
+    vendor: str = "",
+    product: str = "",
+    product_version: str = "",
+) -> GamepadInfo:
+    return GamepadInfo(
+        index=index,
+        name=name,
+        guid=guid,
+        path=path,
+        port=port,
+        vendor=vendor,
+        product=product,
+        product_version=product_version,
+    )
 
 
 def test_status_text_defaults_to_detached() -> None:
@@ -48,17 +69,9 @@ def test_save_selected_gamepad_persists_only_match_fields(
 ) -> None:
     path = tmp_path / "gamepad-selection.json"
 
-    _save_selected_gamepad(
-        path,
-        {
-            "guid": "guid-1",
-            "name": "Pad",
-            "path": "device-path",
-            "vendor": "1118",
-            "product": "654",
-            "product_version": "276",
-        },
-    )
+    GamepadSelection(
+        guid="guid-1", vendor="1118", product="654", port="", name="Pad"
+    ).save(path)
 
     assert json.loads(path.read_text(encoding="utf-8")) == {
         "guid": "guid-1",
@@ -70,80 +83,65 @@ def test_save_selected_gamepad_persists_only_match_fields(
 
 
 def test_gamepad_matches_selection_is_case_insensitive_for_guid() -> None:
-    assert _gamepad_matches_selection(
-        {"guid": "GUID-1", "name": "Xbox Wireless Gamepad"},
-        {"guid": "guid-1", "name": ""},
-    )
+    gamepad = _make_gamepad(guid="GUID-1", name="Xbox Wireless Gamepad")
+    selection = GamepadSelection(guid="guid-1")
+    assert selection.matches(gamepad)
 
 
 def test_gamepad_matches_selection_ignores_unstable_metadata() -> None:
-    assert _gamepad_matches_selection(
-        {
-            "guid": "guid-1",
-            "name": "Pad",
-            "path": "new-path",
-            "product_version": "2",
-        },
-        {
-            "guid": "GUID-1",
-            "name": "Pad",
-            "path": "old-path",
-            "product_version": "1",
-        },
+    gamepad = _make_gamepad(
+        guid="guid-1", name="Pad", path="new-path", product_version="2"
     )
+    selection = GamepadSelection(guid="GUID-1", name="Pad")
+    assert selection.matches(gamepad)
 
 
 def test_gamepad_matches_selection_requires_stable_metadata() -> None:
-    assert not _gamepad_matches_selection(
-        {"guid": "guid-1", "name": "Pad", "vendor": "1118", "product": "654"},
-        {"guid": "guid-1", "name": "Pad", "vendor": "1118", "product": "999"},
+    gamepad = _make_gamepad(
+        guid="guid-1", name="Pad", vendor="1118", product="654"
     )
+    selection = GamepadSelection(
+        guid="guid-1", name="Pad", vendor="1118", product="999"
+    )
+    assert not selection.matches(gamepad)
 
 
 def test_gamepad_matches_selection_ignores_name_differences() -> None:
     # Name is display-only; different names do not block a match on hardware identity.
-    assert _gamepad_matches_selection(
-        {"guid": "guid-1", "name": "Other Pad"},
-        {"guid": "guid-1", "name": "Xbox"},
-    )
+    gamepad = _make_gamepad(guid="guid-1", name="Other Pad")
+    selection = GamepadSelection(guid="guid-1", name="Xbox")
+    assert selection.matches(gamepad)
 
 
 def test_gamepad_metadata_summary_formats_vid_pid() -> None:
-    assert (
-        _gamepad_metadata_summary(
-            {
-                "guid": "guid-1",
-                "vendor": "1118",
-                "product": "654",
-                "product_version": "276",
-            }
-        )
-        == "[045e:028e]"
+    gamepad = _make_gamepad(
+        vendor="1118", product="654", product_version="276"
     )
+    assert gamepad.metadata_summary() == "[045e:028e]"
 
 
 def test_gamepad_display_names_disambiguates_duplicate_names() -> None:
-    gamepads: list[dict[str, object]] = [
-        {"name": "Pad", "guid": "000000000001"},
-        {"name": "Pad", "guid": "000000000002"},
+    gamepads = [
+        _make_gamepad(name="Pad", guid="000000000001"),
+        _make_gamepad(name="Pad", guid="000000000002"),
     ]
 
     assert _gamepad_display_names(gamepads) == (["Pad [1]", "Pad [2]"])
 
 
 def test_selected_gamepad_index_returns_matching_gamepad() -> None:
-    gamepads: list[dict[str, object]] = [
-        {"name": "First Pad", "guid": "guid-1"},
-        {"name": "Second Pad", "guid": "guid-2"},
+    gamepads = [
+        _make_gamepad(name="First Pad", guid="guid-1"),
+        _make_gamepad(name="Second Pad", guid="guid-2"),
     ]
 
     assert (
-        _selected_gamepad_index(gamepads, {"guid": "guid-2", "name": ""}) == 1
+        _selected_gamepad_index(gamepads, GamepadSelection(guid="guid-2")) == 1
     )
 
 
 def test_selected_gamepad_index_returns_none_for_any_gamepad() -> None:
-    gamepads: list[dict[str, object]] = [{"name": "Pad", "guid": "guid-1"}]
+    gamepads = [_make_gamepad(name="Pad", guid="guid-1")]
 
     assert _selected_gamepad_index(gamepads, None) is None
 
@@ -170,52 +168,34 @@ def test_managed_server_backend_tracks_gamepad_connection() -> None:
     backend = ManagedServerBackend(config_path=Path("gamepad-selection.json"))
 
     assert not backend.is_gamepad_connected()
-    backend.active_gamepad_info = {"guid": "guid-1"}
+    backend.active_gamepad_info = _make_gamepad(guid="guid-1")
     assert backend.is_gamepad_connected()
 
 
 def test_reload_selection_updates_saved_match_fields(tmp_path: Path) -> None:
     config_path = tmp_path / "gamepad-selection.json"
     gamepad = object.__new__(SDLGamepad)
-    gamepad.selected_guid = "guid-1"
-    gamepad.selected_gamepad = {
-        "guid": "guid-1",
-        "name": "Pad",
-        "vendor": "1118",
-        "product": "654",
-        "port": "",
-    }
+    gamepad.selected_gamepad = GamepadSelection(
+        guid="guid-1", name="Pad", vendor="1118", product="654", port=""
+    )
     gamepad._selection_mtime_ns = None
     gamepad._gamepad = None
     gamepad._gamepad_id = None
 
-    _save_selected_gamepad(
-        config_path,
-        {
-            "guid": "guid-1",
-            "name": "Pad",
-            "path": "new-path",
-            "vendor": "1118",
-            "product": "654",
-            "product_version": "276",
-        },
-    )
+    GamepadSelection(
+        guid="guid-1", name="Pad", vendor="1118", product="654", port=""
+    ).save(config_path)
     gamepad.reload_selection_from_config(config_path)
 
     assert gamepad.selected_gamepad is not None
-    assert gamepad.selected_gamepad == {
-        "guid": "guid-1",
-        "vendor": "1118",
-        "product": "654",
-        "port": "",
-        "name": "Pad",
-    }
+    assert gamepad.selected_gamepad == GamepadSelection(
+        guid="guid-1", vendor="1118", product="654", port="", name="Pad"
+    )
 
-    _clear_selected_gamepad(config_path)
+    GamepadSelection.clear(config_path)
     gamepad.reload_selection_from_config(config_path)
 
     assert gamepad.selected_gamepad is None
-    assert gamepad.selected_guid is None
 
 
 def test_managed_server_backend_status_is_running_while_thread_alive(

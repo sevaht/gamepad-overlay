@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from .application import (
     DEFAULT_PORT,
+    GamepadInfo,
     ServerRunConfig,
     _selection_config_path,
     run_server,
@@ -36,16 +37,12 @@ class ManagedServerBackend:
     lan: bool = False
     terminal: bool = False
     device_change_callback: Callable[[], None] | None = None
-    active_gamepad_callback: (
-        Callable[[dict[str, object] | None], None] | None
-    ) = None
+    active_gamepad_callback: Callable[[GamepadInfo | None], None] | None = None
     client_count_callback: Callable[[int], None] | None = None
     thread: Thread | None = field(default=None, init=False)
     stop_event: Event = field(default_factory=Event, init=False)
     failed: bool = field(default=False, init=False)
-    active_gamepad_info: dict[str, object] | None = field(
-        default=None, init=False
-    )
+    active_gamepad_info: GamepadInfo | None = field(default=None, init=False)
     connected_client_count: int = field(default=0, init=False)
 
     def ensure_started(self) -> None:
@@ -91,7 +88,7 @@ class ManagedServerBackend:
     def client_count(self) -> int:
         return self.connected_client_count
 
-    def active_gamepad(self) -> dict[str, object] | None:
+    def active_gamepad(self) -> GamepadInfo | None:
         return self.active_gamepad_info
 
     def stop(self) -> None:
@@ -162,10 +159,10 @@ class GamepadSelectorTray:
         self.window.refresh()
         self._sync_connection_state()
 
-    def _handle_active_gamepad_changed(self, active_gamepad: object) -> None:
-        self.server_backend.active_gamepad_info = (
-            active_gamepad if isinstance(active_gamepad, dict) else None
-        )
+    def _handle_active_gamepad_changed(
+        self, active_gamepad: GamepadInfo | None
+    ) -> None:
+        self.server_backend.active_gamepad_info = active_gamepad
         self.window.refresh()
         self._sync_connection_state()
 
