@@ -13,10 +13,16 @@ readme = "README.md"
 license = "Unlicense"
 requires-python = ">=3.12"
 dependencies = [
-    "PySide6-Essentials>=6.9.0",
+    "Pillow>=12.2.0",
     "PySDL3>=0.9.11b1",
     "sevaht-utility",
     "websockets>=16.0",
+    # Windows/macOS tray uses pystray; Linux uses the StatusNotifierItem
+    # (dbus-next) backend, falling back to a self-contained XEmbed icon
+    # (python-xlib) on bare X11 window managers with no SNI host.
+    "pystray>=0.19.5; sys_platform == 'win32' or sys_platform == 'darwin'",
+    "dbus-next>=0.2.3; sys_platform == 'linux'",
+    "python-xlib>=0.33; sys_platform == 'linux'",
 ]
 
 [project.scripts]
@@ -27,7 +33,6 @@ dev = [
     "black (>=26.3.1,<27.0.0)",
     "build (>=1.4.2,<2.0.0)",
     "mypy (>=1.20.0,<2.0.0)",
-    "PySide6>=6.9.0",
     "pytest (>=9.0.2,<10.0.0)",
     "ruff (>=0.15.8,<0.16.0)",
     "twine (>=6.2.0,<7.0.0)",
@@ -51,6 +56,16 @@ strict = true
 mypy_path = ["typings"]
 exclude = ["^release/"]
 
+[[tool.mypy.overrides]]
+module = "gamepad_overlay.tray_sni"
+ignore_errors = true
+
+# pystray is a Windows/macOS-only dependency (not installed on Linux, where the
+# linters run) and ships no type stubs.
+[[tool.mypy.overrides]]
+module = "pystray"
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
@@ -70,7 +85,8 @@ select = [
 [tool.ruff.lint.per-file-ignores]
 "checks" = ["S603"]
 "tests/**/*" = ["PLR2004", "S101"]
-"typings/sdl2/__init__.pyi" = ["ANN401", "N801", "N802"]
+"**/tray_sni.py" = ["ANN201", "ARG002", "F722", "F821", "N802", "UP037"]
+"typings/Xlib/**/*.pyi" = ["ANN401", "A002", "N818"]
 
 [tool.uv.sources]
 sevaht-utility = { git = "https://github.com/nacitar/sevaht-utility.git", rev = "main" }
