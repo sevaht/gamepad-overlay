@@ -289,13 +289,16 @@ class GamepadSelection:
         return not any([self.guid, self.vendor, self.product, self.port])
 
     def metadata_summary(self) -> str:
+        parts: list[str] = []
         v = _format_hex_identifier(self.vendor)
         p = _format_hex_identifier(self.product)
         if v and p:
-            return f"[{v}:{p}]"
-        if v or p:
-            return f"[{v or '????'}:{p or '????'}]"
-        return ""
+            parts.append(f"[{v}:{p}]")
+        elif v or p:
+            parts.append(f"[{v or '????'}:{p or '????'}]")
+        if self.port:
+            parts.append(f"[{_port_display_name(self.port)}]")
+        return " ".join(parts)
 
     def matches(self, gamepad: GamepadInfo) -> bool:
         matched = False
@@ -1161,8 +1164,8 @@ def _interactive_select_gamepad() -> (  # noqa: C901, PLR0912
                 port_display = _port_display_name(found.port)
                 print("  Match by:")
                 print("    1) Controller identity only (any port)")
-                print(f"    2) USB port only ({port_display})")
-                print("    3) Both identity and USB port")
+                print(f"    2) Connection only ({port_display})")
+                print("    3) Both identity and connection")
                 while True:
                     try:
                         criteria = input("  Choose [1]: ").strip()

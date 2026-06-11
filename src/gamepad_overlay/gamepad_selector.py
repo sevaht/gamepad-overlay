@@ -607,7 +607,7 @@ class GamepadSelectorWindow:
             self.root.withdraw()
             self._ui_ready.set()
             self._poll_ui_queue()
-            self._refresh_ui()
+            self._reload()
             self.root.mainloop()
         except tk.TclError as exc:
             self._ui_error = exc
@@ -732,15 +732,70 @@ class GamepadSelectorWindow:
         if self.quit_callback is not None:
             self.quit_callback()
 
-    def _refresh_ui(self) -> None:  # noqa: C901, PLR0912
+    def _populate_gamepad_rows(
+        self,
+        selected: GamepadSelection | None,
+        active_gamepad: GamepadInfo | None,
+        previous_row: int | None,
+    ) -> None:
+        selected_row = _selected_gamepad_index(self.gamepads, selected)
+        display_names = _gamepad_display_names(self.gamepads)
+        active_selection = (
+            active_gamepad.as_selection(pin_identity=True, pin_port=False)
+            if active_gamepad is not None
+            else None
+        )
+        for index, (gamepad, display_name) in enumerate(
+            zip(self.gamepads, display_names, strict=True)
+        ):
+            is_active = (
+                active_selection is not None
+                and active_selection.matches(gamepad)
+            )
+            is_pinned = selected is not None and selected.matches(gamepad)
+            if is_active and is_pinned:
+                tag = "active_pinned"
+            elif is_active:
+                tag = "active"
+            elif is_pinned:
+                tag = "pinned"
+            else:
+                tag = ""
+            row_name = f"★ {display_name}" if is_active else display_name
+            self.gamepad_list.insert(
+                "",
+                tk.END,
+                iid=str(index),
+                values=(
+                    row_name,
+                    gamepad.metadata_summary()
+                    or "No stable identifier exposed",
+                ),
+                tags=(tag,) if tag else (),
+            )
+        if selected_row is not None:
+            self.gamepad_list.selection_set(str(selected_row))
+            self.gamepad_list.focus(str(selected_row))
+        elif previous_row is not None and previous_row < len(self.gamepads):
+            self.gamepad_list.selection_set(str(previous_row))
+            self.gamepad_list.focus(str(previous_row))
+        self._update_select_button_state()
+
+    def _reload(self) -> None:
         if self.server_backend is not None:
             self.server_backend.ensure_started()
 
         previous_row = self._current_selected_row()
         self.gamepad_list.delete(*self.gamepad_list.get_children())
 
+        previous_selection = self._saved_selection
         self._saved_selection = GamepadSelection.load(self.config_path)
         selected = self._saved_selection
+        if selected is not None and selected != previous_selection:
+            self.pin_identity_var.set(
+                bool(selected.guid or selected.vendor or selected.product)
+            )
+            self.pin_port_var.set(bool(selected.port))
         active_gamepad = (
             self.server_backend.active_gamepad()
             if self.server_backend is not None
@@ -774,55 +829,11 @@ class GamepadSelectorWindow:
         if len(guids) != len(set(guids)) and not self.pin_port_var.get():
             self.pin_port_var.set(True)
 
-        selected_row = _selected_gamepad_index(self.gamepads, selected)
-        display_names = _gamepad_display_names(self.gamepads)
-        active_selection = (
-            active_gamepad.as_selection(pin_identity=True, pin_port=False)
-            if active_gamepad is not None
-            else None
-        )
-        for index, (gamepad, display_name) in enumerate(
-            zip(self.gamepads, display_names, strict=True)
-        ):
-            is_active = (
-                active_selection is not None
-                and active_selection.matches(gamepad)
-            )
-            is_pinned = selected is not None and selected.matches(gamepad)
-
-            if is_active and is_pinned:
-                tag = "active_pinned"
-            elif is_active:
-                tag = "active"
-            elif is_pinned:
-                tag = "pinned"
-            else:
-                tag = ""
-
-            row_name = f"★ {display_name}" if is_active else display_name
-            self.gamepad_list.insert(
-                "",
-                tk.END,
-                iid=str(index),
-                values=(
-                    row_name,
-                    gamepad.metadata_summary()
-                    or "No stable identifier exposed",
-                ),
-                tags=(tag,) if tag else (),
-            )
-
-        if selected_row is not None:
-            self.gamepad_list.selection_set(str(selected_row))
-            self.gamepad_list.focus(str(selected_row))
-        elif previous_row is not None and previous_row < len(self.gamepads):
-            self.gamepad_list.selection_set(str(previous_row))
-            self.gamepad_list.focus(str(previous_row))
-        self._update_select_button_state()
+        self._populate_gamepad_rows(selected, active_gamepad, previous_row)
 
     def show(self) -> None:
         def _show() -> None:
-            self._refresh_ui()
+            self._reload()
             if self.root.state() == "withdrawn":
                 mx, my, mw, mh = self._primary_monitor_bounds()
                 ww = self.root.winfo_reqwidth()
@@ -868,7 +879,7 @@ class GamepadSelectorWindow:
         return (0, 0, sw, sh)
 
     def refresh(self) -> None:
-        self._invoke_ui(self._refresh_ui)
+        self._invoke_ui(self._reload)
 
     def confirm_quit(self) -> bool:
         def _confirm() -> bool:
@@ -955,7 +966,7 @@ class GamepadSelectorWindow:
                 pin_identity=pin_identity, pin_port=pin_port
             )
             selection.save(self.config_path)
-            self._refresh_ui()
+            self._reload()
             if self.selection_changed_callback is not None:
                 self.selection_changed_callback()
 
@@ -964,7 +975,7 @@ class GamepadSelectorWindow:
     def use_any_gamepad(self) -> None:
         def _use_any() -> None:
             GamepadSelection.clear(self.config_path)
-            self._refresh_ui()
+            self._reload()
             if self.selection_changed_callback is not None:
                 self.selection_changed_callback()
 
