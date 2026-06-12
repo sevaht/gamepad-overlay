@@ -24,31 +24,18 @@ def main() -> int:
     )
     commands = [
         (
-            ["uv", "run", "black", "--target-version", "py312", ".", *scripts],
+            ["black", "--target-version", "py312", ".", *scripts],
             "formatting code",
         ),
         (
-            [
-                "uv",
-                "run",
-                "ruff",
-                "check",
-                "--fix",
-                "--select",
-                "I",
-                ".",
-                *scripts,
-            ],
+            ["ruff", "check", "--fix", "--select", "I", ".", *scripts],
             "sorting imports",
         ),
+        (["mypy", "--scripts-are-modules", *scripts], "typechecking scripts"),
+        (["mypy", "."], "typechecking package"),
+        (["ruff", "check", ".", *scripts], "linting"),
         (
-            ["uv", "run", "mypy", "--scripts-are-modules", *scripts],
-            "typechecking scripts",
-        ),
-        (["uv", "run", "mypy", "."], "typechecking package"),
-        (["uv", "run", "ruff", "check", ".", *scripts], "linting"),
-        (
-            ["uv", "run", "pytest"]
+            ["pytest"]
             + ([f"--junitxml={args.junitxml}"] if args.junitxml else []),
             "executing tests",
         ),
@@ -56,7 +43,12 @@ def main() -> int:
     for command, description in commands:
         print(f"Running {command[0]}... ({description})")
         try:
-            run(command, check=True, cwd=project_root_dir, env=env)
+            run(
+                ["uv", "run", *command],  # noqa: S607
+                check=True,
+                cwd=project_root_dir,
+                env=env,
+            )
         except CalledProcessError as e:
             return e.returncode
         print()
