@@ -176,6 +176,21 @@ def _exclude_unwanted_analysis_entry(entry: tuple[str, str, str]) -> bool:
     return False
 
 
+if sys.platform == "win32":
+    sys.path.insert(0, str(PROJECT_ROOT / "src"))
+    from gamepad_overlay.tray_render import _create_face_buttons_image
+
+    _ico_path = Path(workpath).resolve() / "gamepad-overlay.ico"
+    _ico_path.parent.mkdir(parents=True, exist_ok=True)
+    _ico_sizes = [16, 32, 48, 64, 128, 256]
+    _ico_imgs = [
+        _create_face_buttons_image(connected=True, size=s) for s in _ico_sizes
+    ]
+    _ico_imgs[0].save(str(_ico_path), format="ICO", append_images=_ico_imgs[1:])
+    EXE_ICON: str | None = str(_ico_path)
+else:
+    EXE_ICON = None
+
 datas: list[tuple[str, str]] = []
 binaries: list[tuple[str, str]] = []
 hiddenimports: list[str] = []
@@ -257,6 +272,7 @@ exe = EXE(
     upx=False,
     console=sys.platform != "win32",
     disable_windowed_traceback=False,
+    icon=EXE_ICON,
 )
 
 coll = COLLECT(

@@ -189,6 +189,13 @@ class GamepadSelectorTray:
 
     def _setup(self, _icon: object) -> None:
         self.icon.visible = True
+        with self._tray_lock:
+            # pystray on Windows can't update the HICON before the event loop
+            # starts, so any set_icon calls made before _setup (e.g. from the
+            # server's initial gamepad-detection callback) are silently lost.
+            # Reset the cached state here so _apply_tray_state always calls
+            # set_icon once the loop is running and NIM_MODIFY will take effect.
+            self._tray_icon_connected = None
         self._apply_tray_state()
         if not self._start_hidden:
             self.window.show()
