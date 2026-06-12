@@ -37,7 +37,7 @@ class ServerRunConfig:
 
 
 @dataclass
-class TerminalGamepadMonitor:
+class _GamepadStateMonitor:
     state: dict[str, float] = field(default_factory=dict)
 
     def on_start(self, _gamepad: SDLGamepad, inputs: list[Input]) -> None:
@@ -52,9 +52,6 @@ class TerminalGamepadMonitor:
     def on_sync(self, _gamepad: SDLGamepad) -> None:
         self.broadcast()
 
-    def broadcast(self) -> None:
-        print(f"STATE: {self}")
-
     def on_update(
         self, _gamepad: SDLGamepad, gamepad_input: Input, value: int
     ) -> None:
@@ -65,6 +62,9 @@ class TerminalGamepadMonitor:
         else:
             internal = gamepad_input.identifier.internal
             logger.warning(f"UNHANDLED: {internal} = {value}")
+
+    def broadcast(self) -> None:
+        raise NotImplementedError
 
     def __repr__(self) -> str:
         return " ".join(
@@ -73,40 +73,17 @@ class TerminalGamepadMonitor:
 
 
 @dataclass
-class WebSocketGamepadMonitor:
-    websocket_broadcaster: WebSocketBroadcaster
-    state: dict[str, float] = field(default_factory=dict)
+class TerminalGamepadMonitor(_GamepadStateMonitor):
+    def broadcast(self) -> None:
+        print(f"STATE: {self}")
 
-    def on_start(self, _gamepad: SDLGamepad, inputs: list[Input]) -> None:
-        logger.info(f"START: initializing {len(inputs)} inputs.")
-        self.state = {
-            gamepad_input.identifier.user.name: 0.0
-            for gamepad_input in inputs
-            if gamepad_input.identifier.user
-        }
-        self.broadcast()
 
-    def on_sync(self, _gamepad: SDLGamepad) -> None:
-        self.broadcast()
+@dataclass
+class WebSocketGamepadMonitor(_GamepadStateMonitor):
+    websocket_broadcaster: WebSocketBroadcaster = field(kw_only=True)
 
     def broadcast(self) -> None:
         self.websocket_broadcaster.send_state(self.state)
-
-    def on_update(
-        self, _gamepad: SDLGamepad, gamepad_input: Input, value: int
-    ) -> None:
-        if gamepad_input.identifier.user:
-            name = gamepad_input.identifier.user.name
-            logger.debug(f"Update: {name} = {value}")
-            self.state[name] = gamepad_input.range.as_percentage(value)
-        else:
-            internal = gamepad_input.identifier.internal
-            logger.warning(f"UNHANDLED: {internal} = {value}")
-
-    def __repr__(self) -> str:
-        return " ".join(
-            f"{name}={value}" for name, value in self.state.items()
-        )
 
 
 def run_server(config: ServerRunConfig) -> int:

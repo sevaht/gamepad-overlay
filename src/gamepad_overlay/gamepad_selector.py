@@ -875,14 +875,6 @@ class GamepadSelectorWindow:
 
         self._invoke_ui(_show)
 
-    def is_visible(self) -> bool:
-        return bool(
-            self._invoke_ui_sync(
-                lambda: self.root.state() != "withdrawn"
-                and self.root.winfo_viewable()
-            )
-        )
-
     def _primary_monitor_bounds(self) -> tuple[int, int, int, int]:
         try:
             result = subprocess.run(

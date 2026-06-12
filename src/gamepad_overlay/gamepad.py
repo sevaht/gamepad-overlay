@@ -18,7 +18,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from threading import Event
 
-GAMEPAD_SELECTION_FIELDS = ("guid", "vendor", "product", "port")
 SELECTION_CONFIG_FILE_NAME = "gamepad-selection.json"
 
 logger = logging.getLogger(__name__)
@@ -461,14 +460,6 @@ class SDLGamepad:
         )
 
     @staticmethod
-    def _matches_selected_gamepad(
-        gamepad: GamepadInfo, selected: GamepadSelection | None
-    ) -> bool:
-        if selected is None:
-            return True
-        return selected.matches(gamepad)
-
-    @staticmethod
     def list_available_gamepads() -> list[GamepadInfo]:
         initialized_here = False
         if sdl3.SDL_WasInit(sdl3.SDL_INIT_GAMEPAD) == 0:
@@ -515,6 +506,13 @@ class SDLGamepad:
             return True
         return False
 
+    def _release_gamepad(self) -> None:
+        if self._gamepad is not None:
+            sdl3.SDL_CloseGamepad(self._gamepad)
+        self._gamepad = None
+        self._gamepad_id = None
+        self._active_gamepad_info = None
+
     def _apply_selection(
         self, selected: GamepadSelection | None, *, announce_change: bool
     ) -> None:
@@ -527,11 +525,7 @@ class SDLGamepad:
                 f"Gamepad target changed to: {self._target_description()}",
                 logger,
             )
-        if self._gamepad is not None:
-            sdl3.SDL_CloseGamepad(self._gamepad)
-            self._gamepad = None
-            self._gamepad_id = None
-            self._active_gamepad_info = None
+        self._release_gamepad()
 
     def reload_selection_from_config(self, path: Path) -> None:
         try:
@@ -592,11 +586,7 @@ class SDLGamepad:
             monitor.on_sync(self)
 
     def close(self) -> None:
-        if self._gamepad:
-            sdl3.SDL_CloseGamepad(self._gamepad)
-            self._gamepad = None
-            self._gamepad_id = None
-            self._active_gamepad_info = None
+        self._release_gamepad()
         sdl3.SDL_QuitSubSystem(sdl3.SDL_INIT_GAMEPAD)
 
     def read_loop(
@@ -673,11 +663,7 @@ class SDLGamepad:
                 logger,
                 level=logging.WARNING,
             )
-            if self._gamepad is not None:
-                sdl3.SDL_CloseGamepad(self._gamepad)
-            self._gamepad = None
-            self._gamepad_id = None
-            self._active_gamepad_info = None
+            self._release_gamepad()
             return False
 
         if event.type == sdl3.SDL_EVENT_GAMEPAD_ADDED:
