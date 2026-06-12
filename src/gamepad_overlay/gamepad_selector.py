@@ -16,12 +16,9 @@ from tkinter import ttk
 from typing import TYPE_CHECKING, ClassVar, Protocol, cast
 from urllib.parse import urlencode
 
-from .application import (
-    DEFAULT_PORT,
-    GamepadInfo,
-    GamepadSelection,
-    SDLGamepad,
-)
+from . import platform_dirs
+from .gamepad import GamepadInfo, GamepadSelection, SDLGamepad
+from .server import DEFAULT_PORT
 from .tk_utils import LabelGrooveFrame, setup_checkbutton_styles
 from .tray_render import _create_tk_window_icon
 
@@ -654,7 +651,8 @@ class GamepadSelectorWindow:
     def _open_overlay_url_window(self) -> None:
         if self._overlay_url_window is None:
             config_path = (
-                self.config_path.parent / _OVERLAY_URL_CONFIG_FILE_NAME
+                platform_dirs().user_config_path
+                / _OVERLAY_URL_CONFIG_FILE_NAME
             )
             self._overlay_url_window = OverlayUrlWindow(
                 self.root, self.overlay_port, config_path

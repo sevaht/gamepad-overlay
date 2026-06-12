@@ -23,6 +23,7 @@ dependencies = [
     "pystray>=0.19.5; sys_platform == 'win32' or sys_platform == 'darwin'",
     "dbus-next>=0.2.3; sys_platform == 'linux'",
     "python-xlib>=0.33; sys_platform == 'linux'",
+    "platformdirs>=4.10.0",
 ]
 
 [project.scripts]

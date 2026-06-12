@@ -6,18 +6,14 @@ from dataclasses import dataclass, field
 from threading import Event, Lock, Thread
 from typing import TYPE_CHECKING, Any
 
-from .application import (
-    DEFAULT_PORT,
-    GamepadInfo,
-    ServerRunConfig,
-    _selection_config_path,
-    run_server,
-)
+from . import platform_dirs
+from .gamepad import SELECTION_CONFIG_FILE_NAME, GamepadInfo
 from .gamepad_selector import (
     GamepadSelectorConfig,
     GamepadSelectorWindow,
     _status_text,
 )
+from .server import DEFAULT_PORT, ServerRunConfig, run_server
 from .tray_backend import create_tray_icon
 from .tray_render import _tray_icon_renderer
 
@@ -108,7 +104,10 @@ class GamepadSelectorTray:
         lan: bool = False,
         terminal: bool = False,
     ) -> None:
-        self.config_path = config_path or _selection_config_path()
+        self.config_path = (
+            config_path
+            or platform_dirs().user_config_path / SELECTION_CONFIG_FILE_NAME
+        )
         self.server_backend = ManagedServerBackend(
             config_path=self.config_path,
             port=port,

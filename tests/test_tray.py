@@ -4,12 +4,7 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from gamepad_overlay.application import (
-    GamepadInfo,
-    GamepadSelection,
-    SDLGamepad,
-    ServerRunConfig,
-)
+from gamepad_overlay.gamepad import GamepadInfo, GamepadSelection, SDLGamepad
 from gamepad_overlay.gamepad_selector import (
     _gamepad_display_names,
     _selected_gamepad_index,
@@ -21,6 +16,8 @@ if TYPE_CHECKING:
     from threading import Event
 
     from pytest import MonkeyPatch
+
+    from gamepad_overlay.server import ServerRunConfig
 
 
 def _make_gamepad(  # noqa: PLR0913
