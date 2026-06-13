@@ -9,12 +9,19 @@ from sevaht_utility.log_utility import add_log_arguments, configure_logging
 
 from . import platform_dirs
 from .gamepad import (
-    SELECTION_CONFIG_FILE_NAME,
+    CONFIG_FILE_NAME,
     GamepadSelection,
     SDLGamepad,
     port_display_name,
 )
-from .server import DEFAULT_PORT, ServerRunConfig, run_server
+from .server import (
+    MAX_PORT,
+    MIN_PORT,
+    ServerRunConfig,
+    load_server_port,
+    run_server,
+    save_server_port,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -23,8 +30,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _selection_config_path() -> Path:
-    return platform_dirs().user_config_path / SELECTION_CONFIG_FILE_NAME
+def _config_path() -> Path:
+    return platform_dirs().user_config_path / CONFIG_FILE_NAME
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -71,6 +78,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Include physical port in the saved selection"
         " (combinable with --gamepad-guid or --gamepad-name).",
     )
+    selection_group.add_argument(
+        "--port",
+        type=int,
+        metavar="PORT",
+        help=f"Set the websocket server port ({MIN_PORT}-{MAX_PORT}) and exit.",
+    )
 
     run_group = parser.add_argument_group(
         "run mode",
@@ -98,13 +111,6 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print gamepad state to the terminal instead of broadcasting"
         " via websocket.",
-    )
-    run_group.add_argument(
-        "--port",
-        type=int,
-        default=DEFAULT_PORT,
-        metavar="PORT",
-        help=f"Websocket port to listen on (default: {DEFAULT_PORT}).",
     )
 
     add_log_arguments(parser)
@@ -182,7 +188,6 @@ def _run_tray(args: argparse.Namespace, config_path: Path) -> int:
 
     return run_tray(
         config_path=config_path,
-        port=args.port,
         lan=args.lan,
         terminal=args.terminal,
         start_hidden=args.hide,
@@ -193,19 +198,21 @@ def _run_headless_server(args: argparse.Namespace, config_path: Path) -> int:
     return run_server(
         ServerRunConfig(
             config_path=config_path,
-            port=args.port,
+            port=load_server_port(config_path),
             lan=args.lan,
             terminal=args.terminal,
         )
     )
 
 
-def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912
+def main(  # noqa: C901, PLR0911, PLR0912
+    argv: Sequence[str] | None = None,
+) -> int:
     parser = _build_parser()
     args = parser.parse_args(args=argv)
     configure_logging(args)
 
-    config_path = _selection_config_path()
+    config_path = _config_path()
 
     # Detect which mode is active
     selection_args: list[str] = []
@@ -220,6 +227,8 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912
     )
     if has_criteria:
         selection_args.append("--gamepad-guid/name/port")
+    if args.port is not None:
+        selection_args.append("--port")
 
     run_args: list[str] = []
     if args.headless:
@@ -230,8 +239,6 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912
         run_args.append("--lan")
     if args.terminal:
         run_args.append("--terminal")
-    if args.port != DEFAULT_PORT:
-        run_args.append("--port")
 
     if len(selection_args) > 1:
         parser.error(
@@ -262,6 +269,13 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912
             port=args.gamepad_port,
             config_path=config_path,
         )
+
+    if args.port is not None:
+        if not (MIN_PORT <= args.port <= MAX_PORT):
+            parser.error(f"--port must be between {MIN_PORT} and {MAX_PORT}")
+        save_server_port(args.port, _config_path())
+        print(f"Server port set to {args.port}.")
+        return 0
 
     # Run mode
     if not args.headless:

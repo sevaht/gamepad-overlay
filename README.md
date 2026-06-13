@@ -1,222 +1,158 @@
 # Gamepad Overlay
 
-Gamepad input server plus browser-based overlay UI for OBS.
+Shows your gamepad inputs as a visual overlay in OBS (or any tool that supports browser sources).
 
-The intended workflow is:
+The app runs in your system tray, reads your controller, and serves an overlay page your streaming software can display.
 
-1. run `gamepad-overlay`
-2. point OBS at `http://127.0.0.1:8765/`
-3. let the overlay connect back to the local server over the same port
+---
 
-The default input source is `websocket`, which is the intended OBS workflow.
-The other input sources (`demo` and `browser`) are for experimentation,
-previewing, and testing.
+## Installation
 
-## Quick Start
+Download the latest release for your platform from the Releases page and extract the archive. No installer needed — just run the executable inside.
 
-Requirements for running from source:
+**Windows:** `gamepad-overlay.exe`  
+**Linux:** `gamepad-overlay`
 
-- Python 3.12+
-- `uv`
+---
 
-Platform notes:
+## Getting Started
 
-- PySDL3 manages SDL3 binaries itself for source installs.
-- Packaged releases are intended to bundle everything needed to run.
+1. **Run the app.** A window opens showing your connected gamepads and a tray icon appears.
+2. **Select your controller.** Click the gamepad you want to use, then click **Save Selection**. If you only have one controller or don't care which one is used, leave it on *Any available gamepad*.
+3. **Open OBS** and add a **Browser Source**.
+4. **Get the URL.** In the gamepad overlay window, click **Overlay URL**. Copy the URL shown and paste it into your OBS browser source.
+5. **Done.** The overlay will display your controller inputs in your stream or recording.
 
-Run:
+---
+
+## Gamepad Selection
+
+The main window lists all connected gamepads. Select one and click **Save Selection** to lock in that controller.
+
+When you select a gamepad you can choose how it's matched:
+
+- **Identity** — matches by hardware ID (GUID, vendor, product). The controller will be recognized regardless of which USB port it's plugged into.
+- **Physical Port** — matches by the specific USB port. Useful if you want to always use whichever controller is plugged into a particular port.
+- **Both** — requires both identity and port to match.
+
+If you select *Any available gamepad*, the overlay uses whatever controller is connected at the time.
+
+---
+
+## Overlay URL Window
+
+Open this from the main window with the **Overlay URL** button. It shows the full URL to paste into OBS and lets you configure the overlay appearance.
+
+### Overlay Settings
+
+| Setting | Description |
+|---|---|
+| **Source** | `websocket` (normal use) or `demo` (animated preview, no controller needed) |
+| **Layout** | Controller shape — `xbox`, `xbox-digital-triggers`, or `snes` |
+| **Theme** | Color scheme — `Auto` (follows layout default), `xbox`, or `snes` |
+| **Background** | Any CSS color or background value (e.g. `green`, `#00ff00`, `transparent`). Leave blank for the layout default. |
+| **Blur** | Anti-aliasing/blur amount. `0` disables it. |
+| **Digital Threshold %** | How far an analog trigger must be pressed before it registers as a digital press. Default is 20%. |
+
+Changes to overlay settings take effect immediately and are saved automatically.
+
+### Server Settings
+
+| Setting | Description |
+|---|---|
+| **Server Port** | The port the local server listens on. Default is `8765`. Change this if something else on your machine is using that port. |
+
+After changing the port, click **Apply Server Settings**. The server restarts on the new port and the URL updates to match. Update your OBS browser source with the new URL.
+
+**Reset to Defaults** restores all overlay settings and the server port to their original values.
+
+---
+
+## Layouts and Themes
+
+Layouts control the shape and behavior of the controller display. Themes control colors and visual style. They are independent — any theme can be combined with any layout.
+
+**Built-in layouts:**
+- `xbox` — standard Xbox controller with analog triggers
+- `xbox-digital-triggers` — Xbox controller with triggers shown as digital buttons
+- `snes` — SNES-style controller (no analog sticks or triggers)
+
+**Built-in themes:**
+- `xbox` — dark Xbox color scheme
+- `snes` — SNES color scheme
+
+---
+
+## Troubleshooting
+
+**The overlay isn't showing any input.**  
+Make sure the app is running and the correct gamepad is selected. Check that the URL in your OBS browser source matches what the Overlay URL window shows.
+
+**The overlay won't connect to the server.**  
+Try the URL with `127.0.0.1` instead of `localhost`. Some systems resolve these differently.
+
+**I want to test the overlay without a controller.**  
+Set **Source** to `demo` in the Overlay URL window. The overlay will cycle through animations so you can preview it.
+
+**Something else is using port 8765.**  
+Open the Overlay URL window, go to **Server Settings**, change the port, and click **Apply Server Settings**. Update your OBS browser source with the new URL.
+
+---
+
+## OBS Browser Source Tips
+
+- Set the browser source resolution to match the area you want the overlay to occupy (e.g. 1920×1080 for full screen, or a smaller size for a corner overlay).
+- The overlay scales to fill its browser source. Use OBS transform controls to position and resize it on your canvas.
+- Enable **Shutdown source when not visible** if you want the overlay to disconnect when the scene isn't active.
+
+---
+
+## Advanced / CLI
+
+The app can also be controlled from the command line.
+
+**List connected gamepads:**
+```
+gamepad-overlay --list-gamepads
+```
+
+**Select gamepad by name:**
+```
+gamepad-overlay --gamepad-name "Xbox"
+```
+
+**Select gamepad by GUID:**
+```
+gamepad-overlay --gamepad-guid <guid>
+```
+
+**Use any gamepad:**
+```
+gamepad-overlay --any-gamepad
+```
+
+**Set the server port:**
+```
+gamepad-overlay --port 9000
+```
+
+**Start with the window hidden:**
+```
+gamepad-overlay --hide
+```
+
+**Run without a system tray (headless):**
+```
+gamepad-overlay --headless
+```
+
+---
+
+## Running from Source
+
+Requires Python 3.12+ and [`uv`](https://docs.astral.sh/uv/).
 
 ```bash
 uv sync
 uv run gamepad-overlay
-```
-
-By default, this opens the Qt selector window, creates a tray icon, and starts
-the local server.
-
-To point OBS at the overlay, use a Browser Source with:
-
-```text
-http://127.0.0.1:8765/
-```
-
-You do not need to specify `source=websocket` unless you want to be explicit.
-
-Example explicit URL:
-
-```text
-http://127.0.0.1:8765/?source=websocket&layout=xbox&theme=xbox
-```
-
-The local server listens on:
-
-- host: `localhost` by default
-- port: `8765`
-- websocket path: `/gamepad-overlay`
-
-## Packaged Releases
-
-Tagged releases include portable archives for Windows and Linux. Each archive
-extracts to a directory shaped like:
-
-```text
-gamepad-overlay-<tag>-<platform>/
-  gamepad-overlay
-  _internal/
-  README.md
-```
-
-Run the packaged app from the extracted directory. It serves the overlay itself
-at `http://127.0.0.1:8765/`.
-
-## Gamepad Selection
-
-The server supports both interactive and explicit gamepad selection.
-
-Interactively select a connected gamepad:
-
-```bash
-uv run gamepad-overlay --select-gamepad
-```
-
-Choose `0` in that selector to use any gamepad.
-
-Clear the saved gamepad selection explicitly:
-
-```bash
-uv run gamepad-overlay --any-gamepad
-```
-
-Select gamepad by GUID:
-
-```bash
-uv run gamepad-overlay --gamepad-guid <guid>
-```
-
-Select gamepad by case-insensitive name substring:
-
-```bash
-uv run gamepad-overlay --gamepad-name "Xbox"
-```
-
-Additional useful commands:
-
-```bash
-uv run gamepad-overlay --hide
-uv run gamepad-overlay --headless
-uv run gamepad-overlay --list-gamepads
-uv run gamepad-overlay --lan
-uv run gamepad-overlay --terminal
-```
-
-Selected gamepad config is persisted to:
-
-- Linux: `~/.config/gamepad-overlay/gamepad-selection.json` unless `XDG_CONFIG_HOME` is set
-- Windows: under the current user's home directory in `.config/gamepad-overlay/gamepad-selection.json`
-
-## Overlay Parameters
-
-### Overlay / Display
-
-- `theme=<name>`
-  Loads `overlay-theme-<name>.css`.
-  If omitted, the selected layout can provide a default theme. Otherwise it falls back to `xbox`.
-
-- `layout=<name>`
-  Loads `overlay-layout-<name>.js`.
-  If omitted, defaults to `xbox`.
-
-- `background=<css-color-or-css-background-value>`
-  Sets `document.body.style.background`.
-
-- `stretch=1`
-  Disables aspect-ratio preservation and stretches the overlay to fill the available area.
-
-- `blur=<number>`
-  Overrides the default SVG blur / anti-aliasing amount.
-  If omitted, the default comes from the theme if it defines one, otherwise from the layout if it defines one, otherwise from the built-in app fallback.
-
-### Input Source Selection
-
-- `source=websocket|browser|demo`
-  If omitted, the default is `websocket`.
-
-### Websocket Source
-
-- When served from `http://` or `https://`, the overlay connects back to the same origin at `/gamepad-overlay`.
-- When loaded from `file://`, it connects to `ws://localhost:8765/gamepad-overlay`.
-- `wsHost=<hostname-or-ip>` overrides the host if needed.
-
-### Browser Source
-
-- `padIndex=<number>`
-  Gamepad index hint. Useful for debugging/testing, but not as stable as ID matching.
-
-- `padIdContains=<substring>`
-  Preferred browser-gamepad selector.
-
-- `padAllowAll=1`
-  Allows non-standard-mapped browser gamepads.
-
-- `pollHz=<number>`
-  Browser polling frequency. Defaults to `240`.
-
-### Input Behavior
-
-- `digitalThreshold=<0..1>`
-  Defaults to `0.2` unless a layout overrides it.
-
-## Layouts and Themes
-
-Layouts and themes are separate.
-
-- A layout controls geometry and behavior.
-- A theme controls colors and rendering finish.
-
-Built-in layouts:
-
-- `xbox`
-- `xbox-digital-triggers`
-- `snes`
-
-Built-in themes:
-
-- `xbox`
-- `snes`
-
-Themes can define:
-
-- button and analog colors
-- border colors
-- optional default blur via `--overlay-default-blur`
-
-Layouts can define:
-
-- default theme
-- optional default blur
-- button dimensions
-- border sizes
-- analog-stick presence
-- trigger modes (`analog`, `digital`, `none`)
-- ring sizing values
-- default digital threshold
-
-## Example URLs
-
-Demo preview:
-
-```text
-http://127.0.0.1:8765/?source=demo&layout=snes&theme=snes
-```
-
-Browser API testing:
-
-```text
-http://127.0.0.1:8765/?source=browser&layout=xbox&theme=xbox
-```
-
-Digital trigger layout preview:
-
-```text
-http://127.0.0.1:8765/?layout=xbox-digital-triggers&source=demo
 ```

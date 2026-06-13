@@ -4,7 +4,6 @@ import ctypes
 import json
 import logging
 import platform
-from contextlib import suppress
 from dataclasses import dataclass, field
 from enum import IntEnum, auto, unique
 from pathlib import Path
@@ -18,7 +17,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from threading import Event
 
-SELECTION_CONFIG_FILE_NAME = "gamepad-selection.json"
+CONFIG_FILE_NAME = "config.json"
 
 logger = logging.getLogger(__name__)
 
@@ -332,25 +331,36 @@ class GamepadSelection:
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        data = {
+        try:
+            config: dict[str, object] = json.loads(
+                path.read_text(encoding="utf-8")
+            )
+            if not isinstance(config, dict):
+                config = {}
+        except Exception:  # noqa: BLE001
+            config = {}
+        config["selection"] = {
             "guid": self.guid,
             "vendor": self.vendor,
             "product": self.product,
             "port": self.port,
             "name": self.name,
         }
-        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
 
     @classmethod
     def load(cls, path: Path) -> GamepadSelection | None:
         if not path.exists():
             return None
         try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
+            config = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            logger.warning(
-                "Failed to read gamepad selection config at %s", path
-            )
+            logger.warning("Failed to read config at %s", path)
+            return None
+        if not isinstance(config, dict):
+            return None
+        payload = config.get("selection")
+        if not isinstance(payload, dict):
             return None
         result = cls(
             guid=str(payload.get("guid", "")).strip(),
@@ -363,8 +373,17 @@ class GamepadSelection:
 
     @staticmethod
     def clear(path: Path) -> None:
-        with suppress(FileNotFoundError):
-            path.unlink()
+        if not path.exists():
+            return
+        try:
+            config = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(config, dict) and "selection" in config:
+                del config["selection"]
+                path.write_text(
+                    json.dumps(config, indent=2) + "\n", encoding="utf-8"
+                )
+        except Exception:  # noqa: BLE001, S110
+            pass
 
 
 @dataclass

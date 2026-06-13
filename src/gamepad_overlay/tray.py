@@ -7,13 +7,13 @@ from threading import Event, Lock, Thread
 from typing import TYPE_CHECKING, Any
 
 from . import platform_dirs
-from .gamepad import SELECTION_CONFIG_FILE_NAME, GamepadInfo
+from .gamepad import CONFIG_FILE_NAME, GamepadInfo
 from .gamepad_selector import (
     GamepadSelectorConfig,
     GamepadSelectorWindow,
     _status_text,
 )
-from .server import DEFAULT_PORT, ServerRunConfig, run_server
+from .server import DEFAULT_PORT, ServerRunConfig, load_server_port, run_server
 from .tray_backend import create_tray_icon
 from .tray_render import _tray_icon_renderer
 
@@ -94,23 +94,29 @@ class ManagedServerBackend:
         self.active_gamepad_info = None
         self.connected_client_count = 0
 
+    def restart(self, new_port: int) -> None:
+        self.stop()
+        if self.thread is not None:
+            self.thread.join(timeout=2.0)
+        self.port = new_port
+        self.thread = None
+        self.ensure_started()
+
 
 class GamepadSelectorTray:
     def __init__(
         self,
         config_path: Path | None = None,
         *,
-        port: int = DEFAULT_PORT,
         lan: bool = False,
         terminal: bool = False,
     ) -> None:
         self.config_path = (
-            config_path
-            or platform_dirs().user_config_path / SELECTION_CONFIG_FILE_NAME
+            config_path or platform_dirs().user_config_path / CONFIG_FILE_NAME
         )
         self.server_backend = ManagedServerBackend(
             config_path=self.config_path,
-            port=port,
+            port=load_server_port(self.config_path),
             lan=lan,
             terminal=terminal,
             device_change_callback=self._refresh_from_backend,
@@ -124,7 +130,6 @@ class GamepadSelectorTray:
                 hide_on_close=True,
                 quit_callback=self._request_quit,
                 selection_changed_callback=self._sync_connection_state,
-                overlay_port=self.server_backend.port,
             ),
             server_backend=self.server_backend,
         )
@@ -231,14 +236,11 @@ def _restore_signal_handlers(handlers: list[tuple[int, Any]]) -> None:
 def run_tray(
     *,
     config_path: Path | None = None,
-    port: int = DEFAULT_PORT,
     lan: bool = False,
     terminal: bool = False,
     start_hidden: bool = False,
 ) -> int:
-    tray = GamepadSelectorTray(
-        config_path, port=port, lan=lan, terminal=terminal
-    )
+    tray = GamepadSelectorTray(config_path, lan=lan, terminal=terminal)
     handlers = _install_signal_handlers(tray._quit)
     try:
         return tray.run(start_hidden=start_hidden)

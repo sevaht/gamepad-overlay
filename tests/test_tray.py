@@ -64,18 +64,20 @@ def test_status_text_uses_singular_client_label() -> None:
 def test_save_selected_gamepad_persists_only_match_fields(
     tmp_path: Path,
 ) -> None:
-    path = tmp_path / "gamepad-selection.json"
+    path = tmp_path / "config.json"
 
     GamepadSelection(
         guid="guid-1", vendor="1118", product="654", port="", name="Pad"
     ).save(path)
 
     assert json.loads(path.read_text(encoding="utf-8")) == {
-        "guid": "guid-1",
-        "vendor": "1118",
-        "product": "654",
-        "port": "",
-        "name": "Pad",
+        "selection": {
+            "guid": "guid-1",
+            "vendor": "1118",
+            "product": "654",
+            "port": "",
+            "name": "Pad",
+        }
     }
 
 
@@ -153,7 +155,7 @@ def test_managed_server_backend_starts_in_process_server(
 
     monkeypatch.setattr("gamepad_overlay.tray.run_server", fake_run_server)
 
-    backend = ManagedServerBackend(config_path=Path("gamepad-selection.json"))
+    backend = ManagedServerBackend(config_path=Path("config.json"))
     backend.ensure_started()
     backend.thread.join(timeout=1) if backend.thread is not None else None
 
@@ -162,7 +164,7 @@ def test_managed_server_backend_starts_in_process_server(
 
 
 def test_managed_server_backend_tracks_gamepad_connection() -> None:
-    backend = ManagedServerBackend(config_path=Path("gamepad-selection.json"))
+    backend = ManagedServerBackend(config_path=Path("config.json"))
 
     assert not backend.is_gamepad_connected()
     backend.active_gamepad_info = _make_gamepad(guid="guid-1")
@@ -170,7 +172,7 @@ def test_managed_server_backend_tracks_gamepad_connection() -> None:
 
 
 def test_reload_selection_updates_saved_match_fields(tmp_path: Path) -> None:
-    config_path = tmp_path / "gamepad-selection.json"
+    config_path = tmp_path / "config.json"
     gamepad = object.__new__(SDLGamepad)
     gamepad.selected_gamepad = GamepadSelection(
         guid="guid-1", name="Pad", vendor="1118", product="654", port=""
@@ -208,7 +210,7 @@ def test_managed_server_backend_status_is_running_while_thread_alive(
 
     monkeypatch.setattr("gamepad_overlay.tray.run_server", fake_run_server)
 
-    backend = ManagedServerBackend(config_path=Path("gamepad-selection.json"))
+    backend = ManagedServerBackend(config_path=Path("config.json"))
     backend.ensure_started()
 
     assert started
@@ -230,7 +232,7 @@ def test_managed_server_backend_stop_signals_thread(
 
     monkeypatch.setattr("gamepad_overlay.tray.run_server", fake_run_server)
 
-    backend = ManagedServerBackend(config_path=Path("gamepad-selection.json"))
+    backend = ManagedServerBackend(config_path=Path("config.json"))
     backend.ensure_started()
     backend.stop()
     backend.thread.join(timeout=1) if backend.thread is not None else None

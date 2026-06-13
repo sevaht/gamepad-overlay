@@ -16,14 +16,19 @@ from tkinter import ttk
 from typing import TYPE_CHECKING, ClassVar, Protocol, cast
 from urllib.parse import urlencode
 
-from . import platform_dirs
 from .gamepad import (
     GamepadInfo,
     GamepadSelection,
     SDLGamepad,
     port_display_name,
 )
-from .server import DEFAULT_PORT
+from .server import (
+    DEFAULT_PORT,
+    MAX_PORT,
+    MIN_PORT,
+    load_server_port,
+    save_server_port,
+)
 from .tk_utils import LabelGrooveFrame, setup_checkbutton_styles
 from .tray_render import _create_tk_window_icon
 
@@ -32,8 +37,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
-
-_OVERLAY_URL_CONFIG_FILE_NAME = "overlay-url-config.json"
 
 
 class ServerBackend(Protocol):
@@ -48,6 +51,8 @@ class ServerBackend(Protocol):
     def active_gamepad(self) -> GamepadInfo | None: ...
 
     def stop(self) -> None: ...
+
+    def restart(self, new_port: int) -> None: ...
 
 
 def _status_text(*, attached: bool, client_count: int) -> str:
@@ -120,7 +125,6 @@ def _safe_float(val: str, default: float) -> float:
 @dataclass
 class GamepadSelectorConfig:
     hide_on_close: bool
-    overlay_port: int = DEFAULT_PORT
     quit_callback: Callable[[], None] | None = field(default=None)
     selection_changed_callback: Callable[[], None] | None = field(default=None)
 
@@ -137,9 +141,16 @@ class OverlayUrlWindow:
         "digitalThreshold": "20",
     }
 
-    def __init__(self, parent: tk.Tk, port: int, config_path: Path) -> None:
-        self._port = port
+    def __init__(
+        self,
+        parent: tk.Tk,
+        config_path: Path,
+        server_backend: ServerBackend | None = None,
+    ) -> None:
         self._config_path = config_path
+        self._server_backend = server_backend
+        self._apply_button: ttk.Button | None = None
+        self._applied_port: int = load_server_port(self._config_path)
         self._window = tk.Toplevel(parent)
         self._window.title("Overlay URL")
         self._window.resizable(False, False)
@@ -153,10 +164,12 @@ class OverlayUrlWindow:
         self._background_var = tk.StringVar(master=m)
         self._blur_var = tk.StringVar(master=m)
         self._digital_threshold_var = tk.StringVar(master=m)
+        self._port_var = tk.StringVar(master=m)
         self._url_var = tk.StringVar(master=m)
 
         self._apply_defaults()
         self._load_config()
+        self._port_var.set(str(self._applied_port))
 
         for var in (
             self._source_var,
@@ -167,6 +180,7 @@ class OverlayUrlWindow:
             self._digital_threshold_var,
         ):
             var.trace_add("write", self._on_var_changed)
+        self._port_var.trace_add("write", self._on_port_var_changed)
 
         self._build_widgets()
         self._update_url()
@@ -182,9 +196,12 @@ class OverlayUrlWindow:
 
     def _load_config(self) -> None:
         try:
-            data = json.loads(self._config_path.read_text())
+            config = json.loads(self._config_path.read_text())
         except Exception:  # noqa: BLE001
             return
+        if not isinstance(config, dict):
+            return
+        data = config.get("overlay")
         if not isinstance(data, dict):
             return
         for key, var in (
@@ -209,7 +226,7 @@ class OverlayUrlWindow:
             self._digital_threshold_var.set(val)
 
     def _save_config(self) -> None:
-        data = {
+        overlay_data = {
             "source": self._source_var.get(),
             "layout": self._layout_var.get(),
             "theme": self._theme_var.get(),
@@ -219,7 +236,16 @@ class OverlayUrlWindow:
         }
         try:
             self._config_path.parent.mkdir(parents=True, exist_ok=True)
-            self._config_path.write_text(json.dumps(data, indent=2))
+            try:
+                config: dict[str, object] = json.loads(
+                    self._config_path.read_text()
+                )
+                if not isinstance(config, dict):
+                    config = {}
+            except Exception:  # noqa: BLE001
+                config = {}
+            config["overlay"] = overlay_data
+            self._config_path.write_text(json.dumps(config, indent=2))
         except Exception:  # noqa: BLE001
             logger.debug("Failed to save overlay URL config", exc_info=True)
 
@@ -245,12 +271,12 @@ class OverlayUrlWindow:
             btn_frame, text="Launch in Browser", command=self._launch_browser
         ).pack(side=tk.LEFT)
 
-        options_frame = LabelGrooveFrame(outer, text="Options")
+        options_frame = LabelGrooveFrame(outer, text="Overlay Settings")
         options_frame.pack(fill=tk.X, padx=4, pady=4)
         options_frame.interior.columnconfigure(1, weight=1)
 
         inner = options_frame.interior
-        rows: list[tuple[str, tk.Widget]] = [
+        overlay_rows: list[tuple[str, tk.Widget]] = [
             (
                 "Source",
                 ttk.Combobox(
@@ -309,8 +335,8 @@ class OverlayUrlWindow:
                 ),
             ),
         ]
-        last_row_idx = len(rows) - 1
-        for row_idx, (label, widget) in enumerate(rows):
+        last_row_idx = len(overlay_rows) - 1
+        for row_idx, (label, widget) in enumerate(overlay_rows):
             top_pad = 0 if row_idx == 0 else 3
             bot_pad = 0 if row_idx == last_row_idx else 3
             ttk.Label(options_frame.interior, text=label).grid(
@@ -328,6 +354,31 @@ class OverlayUrlWindow:
                 pady=(top_pad, bot_pad),
             )
 
+        server_frame = LabelGrooveFrame(outer, text="Server Settings")
+        server_frame.pack(fill=tk.X, padx=4, pady=4)
+        server_frame.interior.columnconfigure(1, weight=1)
+        ttk.Label(server_frame.interior, text="Server Port").grid(
+            row=0, column=0, sticky="w", padx=(6, 8), pady=3
+        )
+        ttk.Spinbox(
+            server_frame.interior,
+            textvariable=self._port_var,
+            from_=MIN_PORT,
+            to=MAX_PORT,
+            increment=1,
+            width=8,
+        ).grid(row=0, column=1, sticky="ew", padx=(0, 6), pady=3)
+        if self._server_backend is not None:
+            self._apply_button = ttk.Button(
+                server_frame.interior,
+                text="Apply Server Settings",
+                command=self._apply_server_settings,
+                state="disabled",
+            )
+            self._apply_button.grid(
+                row=1, column=0, columnspan=2, sticky="w", padx=6, pady=(2, 6)
+            )
+
         reset_frame = ttk.Frame(outer)
         reset_frame.pack(fill=tk.X, padx=4, pady=(8, 4))
         ttk.Button(
@@ -340,7 +391,7 @@ class OverlayUrlWindow:
         ).pack(side=tk.RIGHT, padx=(0, 6))
 
     def _build_url(self) -> str:
-        base = f"http://localhost:{self._port}/"
+        base = f"http://localhost:{self._applied_port}/"
         params: dict[str, str] = {}
 
         source = self._source_var.get()
@@ -381,11 +432,60 @@ class OverlayUrlWindow:
         self._update_url()
         self._save_config()
 
+    def _on_port_var_changed(self, *_: object) -> None:
+        try:
+            port = int(self._port_var.get())
+            if MIN_PORT <= port <= MAX_PORT:
+                save_server_port(port, self._config_path)
+        except ValueError:
+            pass
+        self._update_apply_button_state()
+
+    def _update_apply_button_state(self) -> None:
+        if self._apply_button is None or self._server_backend is None:
+            return
+        try:
+            port = int(self._port_var.get())
+            valid = MIN_PORT <= port <= MAX_PORT
+        except ValueError:
+            valid = False
+        if valid and port != self._applied_port:
+            self._apply_button.state(["!disabled"])
+        else:
+            self._apply_button.state(["disabled"])
+
+    def _apply_server_settings(self) -> None:
+        if self._server_backend is None or self._apply_button is None:
+            return
+        try:
+            port = int(self._port_var.get())
+        except ValueError:
+            return
+        if not (MIN_PORT <= port <= MAX_PORT):
+            return
+        self._applied_port = port
+        self._update_url()
+        self._apply_button.state(["disabled"])
+        Thread(
+            target=self._server_backend.restart, args=(port,), daemon=True
+        ).start()
+
     def _update_url(self, *_: object) -> None:
         self._url_var.set(self._build_url())
 
     def _reset_to_defaults(self) -> None:
         self._apply_defaults()
+        self._applied_port = DEFAULT_PORT
+        self._port_var.set(str(DEFAULT_PORT))
+        save_server_port(DEFAULT_PORT, self._config_path)
+        self._update_url()
+        self._update_apply_button_state()
+        if self._server_backend is not None:
+            Thread(
+                target=self._server_backend.restart,
+                args=(DEFAULT_PORT,),
+                daemon=True,
+            ).start()
 
     def _copy_url(self) -> None:
         self._window.clipboard_clear()
@@ -400,6 +500,8 @@ class OverlayUrlWindow:
         self._window.update_idletasks()
 
     def show_and_raise(self) -> None:
+        self._port_var.set(str(self._applied_port))
+        self._update_apply_button_state()
         self._window.deiconify()
         self._window.lift()
         self._window.focus_force()
@@ -421,7 +523,6 @@ class GamepadSelectorWindow:
         self.selection_changed_callback = (
             window_config.selection_changed_callback
         )
-        self.overlay_port = window_config.overlay_port
         self.gamepads: list[GamepadInfo] = []
         self._saved_selection: GamepadSelection | None = None
         self._window_icon_connected: bool | None = None
@@ -663,12 +764,8 @@ class GamepadSelectorWindow:
 
     def _open_overlay_url_window(self) -> None:
         if self._overlay_url_window is None:
-            config_path = (
-                platform_dirs().user_config_path
-                / _OVERLAY_URL_CONFIG_FILE_NAME
-            )
             self._overlay_url_window = OverlayUrlWindow(
-                self.root, self.overlay_port, config_path
+                self.root, self.config_path, server_backend=self.server_backend
             )
             if self._window_icon_connected is not None:
                 icon = self._window_icons.get(self._window_icon_connected)

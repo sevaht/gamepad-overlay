@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -20,8 +21,43 @@ if TYPE_CHECKING:
     from threading import Event
 
 DEFAULT_PORT = 8765
+MIN_PORT = 1025
+MAX_PORT = 65535
 
 logger = logging.getLogger(__name__)
+
+
+def load_server_port(path: Path) -> int:
+    try:
+        config = json.loads(path.read_text())
+        if isinstance(config, dict):
+            server = config.get("server")
+            if isinstance(server, dict):
+                port = server.get("port")
+                if isinstance(port, int) and MIN_PORT <= port <= MAX_PORT:
+                    return port
+    except Exception:  # noqa: BLE001, S110
+        pass
+    return DEFAULT_PORT
+
+
+def save_server_port(port: int, path: Path) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            config: dict[str, object] = json.loads(path.read_text())
+            if not isinstance(config, dict):
+                config = {}
+        except Exception:  # noqa: BLE001
+            config = {}
+        server_section = config.get("server", {})
+        if not isinstance(server_section, dict):
+            server_section = {}
+        server_section["port"] = port
+        config["server"] = server_section
+        path.write_text(json.dumps(config, indent=2))
+    except Exception:  # noqa: BLE001
+        logger.debug("Failed to save server port config", exc_info=True)
 
 
 @dataclass
