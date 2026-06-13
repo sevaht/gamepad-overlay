@@ -34,6 +34,7 @@ def main() -> int:
         (["mypy", "--scripts-are-modules", *scripts], "typechecking scripts"),
         (["mypy", "."], "typechecking package"),
         (["ruff", "check", ".", *scripts], "linting"),
+        (["vulture", "src/", "tests/", *scripts], "finding dead code"),
         (
             ["pytest"]
             + ([f"--junitxml={args.junitxml}"] if args.junitxml else []),

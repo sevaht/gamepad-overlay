@@ -9,7 +9,8 @@ from typing import TYPE_CHECKING
 from dbus_next import BusType, Variant
 from dbus_next.aio import MessageBus
 from dbus_next.constants import PropertyAccess
-from dbus_next.service import ServiceInterface, dbus_property, method
+from dbus_next.service import ServiceInterface, dbus_property
+from dbus_next.service import method as dbus_method
 from dbus_next.service import signal as dbus_signal
 from PIL import Image
 
@@ -125,17 +126,17 @@ class StatusNotifierItemInterface(ServiceInterface):
         # property and only re-read it when NewToolTip fires.
         self.NewToolTip()
 
-    @method()
+    @dbus_method()
     def Activate(self, x: "i", y: "i"):
         if self._on_activate:
             self._on_activate()
 
-    @method()
+    @dbus_method()
     def SecondaryActivate(self, x: "i", y: "i"):
         if self._on_secondary:
             self._on_secondary()
 
-    @method()
+    @dbus_method()
     def ContextMenu(self, x: "i", y: "i"):
         pass
 
@@ -238,9 +239,9 @@ class DBusMenuInterface(ServiceInterface):
                 }
         return {}
 
-    @method()
+    @dbus_method()
     def GetLayout(
-        self, parent_id: "i", recursion_depth: "i", property_names: "as"
+        self, _parent_id: "i", _recursion_depth: "i", _property_names: "as"
     ) -> "u(ia{sv}av)":
         # Two out-args (revision: u, layout: (ia{sv}av)); a single wrapping
         # struct "(u(ia{sv}av))" would add an extra nesting layer that
@@ -255,9 +256,9 @@ class DBusMenuInterface(ServiceInterface):
             children.append(Variant("(ia{sv}av)", [item_id, props, []]))
         return [self._revision, [0, {}, children]]
 
-    @method()
+    @dbus_method()
     def GetGroupProperties(
-        self, ids: "ai", property_names: "as"
+        self, ids: "ai", _property_names: "as"
     ) -> "a(ia{sv})":
         ids_set = set(ids)
         return [
@@ -266,8 +267,8 @@ class DBusMenuInterface(ServiceInterface):
             if item_id in ids_set
         ]
 
-    @method()
-    def Event(self, menu_id: "i", event_id: "s", data: "v", timestamp: "u"):
+    @dbus_method()
+    def Event(self, menu_id: "i", event_id: "s", data: "v", _timestamp: "u"):
         # The canonical dbusmenu Event signature is (id, eventId, data,
         # timestamp) -> "isvu"; libdbusmenu looks the method up by signature.
         if event_id == "clicked":
@@ -276,17 +277,17 @@ class DBusMenuInterface(ServiceInterface):
                     callback()
                     break
 
-    @method()
+    @dbus_method()
     def GetProperty(self, menu_id: "i", name: "s") -> "v":
         props = self._properties(menu_id)
         return props.get(name, Variant("s", ""))
 
-    @method()
+    @dbus_method()
     def AboutToShow(self, menu_id: "i") -> "b":
         # The menu is static, so nothing needs updating before it is shown.
         return False
 
-    @method()
+    @dbus_method()
     def AboutToShowGroup(self, ids: "ai") -> "aiai":
         return [[], []]
 
