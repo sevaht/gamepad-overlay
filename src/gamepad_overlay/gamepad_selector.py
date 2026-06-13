@@ -17,7 +17,12 @@ from typing import TYPE_CHECKING, ClassVar, Protocol, cast
 from urllib.parse import urlencode
 
 from . import platform_dirs
-from .gamepad import GamepadInfo, GamepadSelection, SDLGamepad
+from .gamepad import (
+    GamepadInfo,
+    GamepadSelection,
+    SDLGamepad,
+    port_display_name,
+)
 from .server import DEFAULT_PORT
 from .tk_utils import LabelGrooveFrame, setup_checkbutton_styles
 from .tray_render import _create_tk_window_icon
@@ -495,8 +500,8 @@ class GamepadSelectorWindow:
             style.theme_use("clam")
             setup_checkbutton_styles()
             self._window_icons: dict[bool, object] = {}
-            self.root.geometry("650x500")
-            self.root.minsize(650, 420)
+            self.root.geometry("750x500")
+            self.root.minsize(750, 420)
             self.root.protocol("WM_DELETE_WINDOW", self._dismiss)
 
             content = ttk.Frame(self.root, padding=18)
@@ -529,14 +534,23 @@ class GamepadSelectorWindow:
 
             self.gamepad_list = ttk.Treeview(
                 list_frame,
-                columns=("name", "detail"),
+                columns=("name", "identity", "port"),
                 show="headings",
                 selectmode="browse",
             )
             self.gamepad_list.heading("name", text="Gamepad")
-            self.gamepad_list.heading("detail", text="Details")
-            self.gamepad_list.column("name", width=300, anchor=tk.W)
-            self.gamepad_list.column("detail", width=280, anchor=tk.W)
+            self.gamepad_list.heading("identity", text="Identity")
+            self.gamepad_list.heading("port", text="Physical Port")
+            _init_w = 700
+            _default_col_proportions = (0.41, 0.26, 0.33)
+            for _col, _proportion in zip(
+                ("name", "identity", "port"),
+                _default_col_proportions,
+                strict=True,
+            ):
+                self.gamepad_list.column(
+                    _col, width=int(_init_w * _proportion), anchor=tk.W
+                )
             self.gamepad_list.tag_configure("active", foreground="#2e7d32")
             self.gamepad_list.tag_configure("pinned", foreground="#1565c0")
             self.gamepad_list.tag_configure(
@@ -550,6 +564,7 @@ class GamepadSelectorWindow:
             self.gamepad_list.bind(
                 "<Double-1>", lambda _event: self.select_current_gamepad()
             )
+            self.gamepad_list.bind("<Configure>", self._on_gamepad_list_resize)
 
             scrollbar = ttk.Scrollbar(
                 list_frame, orient=tk.VERTICAL, command=self.gamepad_list.yview
@@ -571,12 +586,10 @@ class GamepadSelectorWindow:
             left_frame.grid(row=0, column=0, sticky="nsw", padx=(6, 0))
 
             ttk.Checkbutton(
-                left_frame,
-                text="Controller identity",
-                variable=self.pin_identity_var,
+                left_frame, text="Identity", variable=self.pin_identity_var
             ).pack(anchor="w")
             ttk.Checkbutton(
-                left_frame, text="Connection", variable=self.pin_port_var
+                left_frame, text="Physical port", variable=self.pin_port_var
             ).pack(anchor="w")
             self.select_button = ttk.Button(
                 left_frame,
@@ -714,8 +727,21 @@ class GamepadSelectorWindow:
 
         self.select_button.state(["!disabled"])
 
+    def _on_gamepad_list_resize(self, event: tk.Event[tk.Widget]) -> None:
+        cols = ("name", "identity", "port")
+        widths = [int(self.gamepad_list.column(c, "width")) for c in cols]
+        total = sum(widths)
+        if total <= 0:
+            return
+        for col, w in zip(cols, widths, strict=True):
+            self.gamepad_list.column(
+                col, width=max(1, int(w / total * event.width))
+            )
+
     def _add_disabled_gamepad_row(self, text: str) -> None:
-        self.gamepad_list.insert("", tk.END, iid="disabled", values=(text, ""))
+        self.gamepad_list.insert(
+            "", tk.END, iid="disabled", values=(text, "", "")
+        )
         self.gamepad_list.selection_remove(self.gamepad_list.selection())
 
     def _update_connection_state_ui(self) -> None:
@@ -790,15 +816,22 @@ class GamepadSelectorWindow:
             else:
                 tag = ""
             row_name = f"★ {display_name}" if is_active else display_name
+            vp = gamepad.vid_pid()
+            identity_str = (
+                f"[{vp}]"
+                if vp
+                else (
+                    f"[{gamepad.guid}]"
+                    if gamepad.guid
+                    else "No stable identifier"
+                )
+            )
+            port_str = port_display_name(gamepad.port) if gamepad.port else ""
             self.gamepad_list.insert(
                 "",
                 tk.END,
                 iid=str(index),
-                values=(
-                    row_name,
-                    gamepad.metadata_summary()
-                    or "No stable identifier exposed",
-                ),
+                values=(row_name, identity_str, port_str),
                 tags=(tag,) if tag else (),
             )
         if selected_row is not None:

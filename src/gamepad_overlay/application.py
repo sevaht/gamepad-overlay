@@ -68,7 +68,7 @@ def _build_parser() -> argparse.ArgumentParser:
     selection_group.add_argument(
         "--gamepad-port",
         metavar="PORT",
-        help="Include connection path in the saved selection"
+        help="Include physical port in the saved selection"
         " (combinable with --gamepad-guid or --gamepad-name).",
     )
 
@@ -307,8 +307,8 @@ def _interactive_select_gamepad() -> (  # noqa: C901, PLR0912
                 port_disp = port_display_name(found.port)
                 print("  Match by:")
                 print("    1) Controller identity only (any port)")
-                print(f"    2) Connection only ({port_disp})")
-                print("    3) Both identity and connection")
+                print(f"    2) Physical port only ({port_disp})")
+                print("    3) Both identity and physical port")
                 while True:
                     try:
                         criteria = input("  Choose [1]: ").strip()
