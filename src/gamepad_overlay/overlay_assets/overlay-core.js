@@ -43,9 +43,7 @@ function unreachable(message = "Unreachable") {
 
 class Vector2 {
     static ZERO = Object.freeze(this.splat(0));
-    static ONE = Object.freeze(this.splat(1));
     static TWO = Object.freeze(this.splat(2));
-    static THREE = Object.freeze(this.splat(3));
 
     static #ADD = 0;
     static #SUBTRACT = 1;
@@ -79,7 +77,6 @@ class Vector2 {
     divide({x, y} = {}) { this.#applyComponent(Vector2.#DIVIDE, true, x, 1); this.#applyComponent(Vector2.#DIVIDE, false, y, 1); return this; }
     clone() { return new this.constructor(this); }
     toString() { return `${this.x},${this.y}`; }
-    toObject() { return {x: this.x, y: this.y}; }
     equals(other) { return other instanceof Vector2 && this.x === other.x && this.y === other.y; }
 
     #applyComponent(operation, isX, operand, skipValue) {
@@ -195,6 +192,59 @@ class DpadLayout {
     }
 }
 
+function clamp01(value) {
+    return Math.max(0, Math.min(1, Number(value) || 0));
+}
+
+function clamp11(value) {
+    return Math.max(-1, Math.min(1, Number(value) || 0));
+}
+
+function clamp255(value) {
+    return Math.max(0, Math.min(255, Number(value) || 0));
+}
+
+// Resolve a CSS color string (rgb(), rgba(), or "r,g,b[,a]") to an rgba()
+// string, applying fallbackAlpha when the source has no explicit alpha.
+function parseColorToRgba(value, fallbackAlpha) {
+    const raw = String(value || "").trim();
+    if (!raw) {
+        return null;
+    }
+    const rgbMatch = raw.match(/^rgb\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*\)$/i);
+    if (rgbMatch) {
+        return `rgba(${clamp255(rgbMatch[1])}, ${clamp255(rgbMatch[2])}, ${clamp255(rgbMatch[3])}, ${clamp01(fallbackAlpha)})`;
+    }
+    const rgbaMatch = raw.match(/^rgba\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*\)$/i);
+    if (rgbaMatch) {
+        return `rgba(${clamp255(rgbaMatch[1])}, ${clamp255(rgbaMatch[2])}, ${clamp255(rgbaMatch[3])}, ${clamp01(rgbaMatch[4])})`;
+    }
+    const commaSeparatedParts = raw.split(",").map((part) => part.trim());
+    if (commaSeparatedParts.length === 3) {
+        return `rgba(${clamp255(commaSeparatedParts[0])}, ${clamp255(commaSeparatedParts[1])}, ${clamp255(commaSeparatedParts[2])}, ${clamp01(fallbackAlpha)})`;
+    }
+    if (commaSeparatedParts.length === 4) {
+        return `rgba(${clamp255(commaSeparatedParts[0])}, ${clamp255(commaSeparatedParts[1])}, ${clamp255(commaSeparatedParts[2])}, ${clamp01(commaSeparatedParts[3])})`;
+    }
+    return raw;
+}
+
+// Rewrite an element's --btn-released/--btn-pressed custom properties into
+// fully-resolved rgba() values, folding in the configured default alphas.
+function normalizeButtonColorVars(element) {
+    const computedStyle = getComputedStyle(element);
+    const releasedDefaultAlpha = Number.parseFloat(computedStyle.getPropertyValue("--btn-released-default-alpha")) || 0.7;
+    const pressedDefaultAlpha = Number.parseFloat(computedStyle.getPropertyValue("--btn-pressed-default-alpha")) || 1;
+    const releasedResolved = parseColorToRgba(computedStyle.getPropertyValue("--btn-released"), releasedDefaultAlpha);
+    const pressedResolved = parseColorToRgba(computedStyle.getPropertyValue("--btn-pressed"), pressedDefaultAlpha);
+    if (releasedResolved != null) {
+        element.style.setProperty("--btn-released", releasedResolved);
+    }
+    if (pressedResolved != null) {
+        element.style.setProperty("--btn-pressed", pressedResolved);
+    }
+}
+
 function clampNormalizedOffsetToEllipse({offset, halfSize}) {
     const x = assertFiniteNumber(offset.x, "offset.x");
     const y = assertFiniteNumber(offset.y, "offset.y");
@@ -222,5 +272,10 @@ window.OverlayCore = Object.freeze({
     Region,
     DpadLayout,
     clampNormalizedOffsetToEllipse,
+    clamp01,
+    clamp11,
+    clamp255,
+    parseColorToRgba,
+    normalizeButtonColorVars,
 });
 })();

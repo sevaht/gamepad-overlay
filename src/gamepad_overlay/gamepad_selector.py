@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import json
 import logging
 import queue
 import re
@@ -16,6 +15,7 @@ from tkinter import ttk
 from typing import TYPE_CHECKING, ClassVar, Protocol, cast
 from urllib.parse import urlencode
 
+from .config import read_section, update_section
 from .gamepad import (
     GamepadInfo,
     GamepadSelection,
@@ -115,9 +115,9 @@ def _clear_entry_selections(widget: tk.Misc) -> None:
         _clear_entry_selections(child)
 
 
-def _safe_float(val: str, default: float) -> float:
+def _safe_float(text: str, default: float) -> float:
     try:
-        return float(val)
+        return float(text)
     except ValueError:
         return default
 
@@ -152,20 +152,20 @@ class OverlayUrlWindow:
         self._apply_button: ttk.Button | None = None
         self._applied_port: int = load_server_port(self._config_path)
         self._window = tk.Toplevel(parent)
-        self._window.title("Overlay URL")
+        self._window.title("Gamepad Overlay URL")
         self._window.resizable(False, False)
         self._window.transient(parent)
         self._window.protocol("WM_DELETE_WINDOW", self._window.withdraw)
 
-        m = self._window
-        self._source_var = tk.StringVar(master=m)
-        self._layout_var = tk.StringVar(master=m)
-        self._theme_var = tk.StringVar(master=m)
-        self._background_var = tk.StringVar(master=m)
-        self._blur_var = tk.StringVar(master=m)
-        self._digital_threshold_var = tk.StringVar(master=m)
-        self._port_var = tk.StringVar(master=m)
-        self._url_var = tk.StringVar(master=m)
+        window = self._window
+        self._source_var = tk.StringVar(master=window)
+        self._layout_var = tk.StringVar(master=window)
+        self._theme_var = tk.StringVar(master=window)
+        self._background_var = tk.StringVar(master=window)
+        self._blur_var = tk.StringVar(master=window)
+        self._digital_threshold_var = tk.StringVar(master=window)
+        self._port_var = tk.StringVar(master=window)
+        self._url_var = tk.StringVar(master=window)
 
         self._apply_defaults()
         self._load_config()
@@ -186,68 +186,55 @@ class OverlayUrlWindow:
         self._update_url()
 
     def _apply_defaults(self) -> None:
-        d = self._DEFAULTS
-        self._source_var.set(str(d["source"]))
-        self._layout_var.set(str(d["layout"]))
-        self._theme_var.set(str(d["theme"]))
-        self._background_var.set(str(d["background"]))
-        self._blur_var.set(str(d["blur"]))
-        self._digital_threshold_var.set(str(d["digitalThreshold"]))
+        defaults = self._DEFAULTS
+        self._source_var.set(str(defaults["source"]))
+        self._layout_var.set(str(defaults["layout"]))
+        self._theme_var.set(str(defaults["theme"]))
+        self._background_var.set(str(defaults["background"]))
+        self._blur_var.set(str(defaults["blur"]))
+        self._digital_threshold_var.set(str(defaults["digitalThreshold"]))
 
     def _load_config(self) -> None:
-        try:
-            config = json.loads(self._config_path.read_text())
-        except Exception:  # noqa: BLE001
-            return
-        if not isinstance(config, dict):
-            return
-        data = config.get("overlay")
-        if not isinstance(data, dict):
-            return
-        for key, var in (
+        overlay_data = read_section(self._config_path, "overlay")
+        for key, variable in (
             ("source", self._source_var),
             ("layout", self._layout_var),
             ("theme", self._theme_var),
             ("background", self._background_var),
             ("blur", self._blur_var),
         ):
-            if key in data and isinstance(data[key], str):
-                var.set(data[key])
-        if "digitalThreshold" in data and isinstance(
-            data["digitalThreshold"], str
-        ):
-            val = data["digitalThreshold"]
-            try:
-                fval = float(val)
-                if fval < 1.0:
-                    val = str(round(fval * 100))
-            except ValueError:
-                val = str(self._DEFAULTS["digitalThreshold"])
-            self._digital_threshold_var.set(val)
+            value = overlay_data.get(key)
+            if isinstance(value, str):
+                variable.set(value)
+        threshold = overlay_data.get("digitalThreshold")
+        if isinstance(threshold, str):
+            self._digital_threshold_var.set(
+                self._normalize_threshold_text(threshold)
+            )
+
+    def _normalize_threshold_text(self, threshold_text: str) -> str:
+        """Convert a legacy 0..1 fractional threshold to a 1..100 percentage."""
+        try:
+            threshold_value = float(threshold_text)
+        except ValueError:
+            return str(self._DEFAULTS["digitalThreshold"])
+        if threshold_value < 1.0:
+            return str(round(threshold_value * 100))
+        return threshold_text
 
     def _save_config(self) -> None:
-        overlay_data = {
-            "source": self._source_var.get(),
-            "layout": self._layout_var.get(),
-            "theme": self._theme_var.get(),
-            "background": self._background_var.get(),
-            "blur": self._blur_var.get(),
-            "digitalThreshold": self._digital_threshold_var.get(),
-        }
-        try:
-            self._config_path.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                config: dict[str, object] = json.loads(
-                    self._config_path.read_text()
-                )
-                if not isinstance(config, dict):
-                    config = {}
-            except Exception:  # noqa: BLE001
-                config = {}
-            config["overlay"] = overlay_data
-            self._config_path.write_text(json.dumps(config, indent=2))
-        except Exception:  # noqa: BLE001
-            logger.debug("Failed to save overlay URL config", exc_info=True)
+        update_section(
+            self._config_path,
+            "overlay",
+            {
+                "source": self._source_var.get(),
+                "layout": self._layout_var.get(),
+                "theme": self._theme_var.get(),
+                "background": self._background_var.get(),
+                "blur": self._blur_var.get(),
+                "digitalThreshold": self._digital_threshold_var.get(),
+            },
+        )
 
     def _build_widgets(self) -> None:
         outer = ttk.Frame(self._window, padding=14)
@@ -408,21 +395,26 @@ class OverlayUrlWindow:
         if theme != "Auto":
             params["theme"] = theme
 
-        bg = self._background_var.get().strip()
-        if bg:
-            params["background"] = bg
+        background = self._background_var.get().strip()
+        if background:
+            params["background"] = background
 
-        blur = self._blur_var.get().strip()
-        blur_default = float(str(self._DEFAULTS["blur"]))
-        blur_val = max(0.0, min(20.0, _safe_float(blur, blur_default)))
-        if blur_val != blur_default:
-            params["blur"] = f"{blur_val:.10g}"
+        blur_text = self._blur_var.get().strip()
+        default_blur = float(str(self._DEFAULTS["blur"]))
+        blur = max(0.0, min(20.0, _safe_float(blur_text, default_blur)))
+        if blur != default_blur:
+            params["blur"] = f"{blur:.10g}"
 
-        dt = self._digital_threshold_var.get().strip()
-        dt_default = int(str(self._DEFAULTS["digitalThreshold"]))
-        dt_pct = max(1, min(100, int(_safe_float(dt, float(dt_default)))))
-        if dt_pct != dt_default:
-            params["digitalThreshold"] = str(dt_pct)
+        threshold_text = self._digital_threshold_var.get().strip()
+        default_threshold = int(str(self._DEFAULTS["digitalThreshold"]))
+        threshold_percent = max(
+            1,
+            min(
+                100, int(_safe_float(threshold_text, float(default_threshold)))
+            ),
+        )
+        if threshold_percent != default_threshold:
+            params["digitalThreshold"] = str(threshold_percent)
 
         if params:
             return base + "?" + urlencode(params)
@@ -642,15 +634,15 @@ class GamepadSelectorWindow:
             self.gamepad_list.heading("name", text="Gamepad")
             self.gamepad_list.heading("identity", text="Identity")
             self.gamepad_list.heading("port", text="Physical Port")
-            _init_w = 700
-            _default_col_proportions = (0.41, 0.26, 0.33)
-            for _col, _proportion in zip(
-                ("name", "identity", "port"),
-                _default_col_proportions,
-                strict=True,
+            initial_list_width = 700
+            column_proportions = (0.41, 0.26, 0.33)
+            for column_name, proportion in zip(
+                ("name", "identity", "port"), column_proportions, strict=True
             ):
                 self.gamepad_list.column(
-                    _col, width=int(_init_w * _proportion), anchor=tk.W
+                    column_name,
+                    width=int(initial_list_width * proportion),
+                    anchor=tk.W,
                 )
             self.gamepad_list.tag_configure("active", foreground="#2e7d32")
             self.gamepad_list.tag_configure("pinned", foreground="#1565c0")
@@ -825,14 +817,20 @@ class GamepadSelectorWindow:
         self.select_button.state(["!disabled"])
 
     def _on_gamepad_list_resize(self, event: tk.Event[tk.Widget]) -> None:
-        cols = ("name", "identity", "port")
-        widths = [int(self.gamepad_list.column(c, "width")) for c in cols]
-        total = sum(widths)
-        if total <= 0:
+        column_names = ("name", "identity", "port")
+        current_widths = [
+            int(self.gamepad_list.column(name, "width"))
+            for name in column_names
+        ]
+        total_width = sum(current_widths)
+        if total_width <= 0:
             return
-        for col, w in zip(cols, widths, strict=True):
+        for column_name, width in zip(
+            column_names, current_widths, strict=True
+        ):
             self.gamepad_list.column(
-                col, width=max(1, int(w / total * event.width))
+                column_name,
+                width=max(1, int(width / total_width * event.width)),
             )
 
     def _add_disabled_gamepad_row(self, text: str) -> None:
@@ -876,8 +874,12 @@ class GamepadSelectorWindow:
                         cast("tk.PhotoImage", icon)
                     )
 
-    def _update_connection_state(self) -> None:
+    def update_connection_state(self) -> None:
         self._invoke_ui(self._update_connection_state_ui)
+
+    def run_on_ui_thread(self, callback: Callable[[], object]) -> None:
+        """Run ``callback`` on the tkinter event-loop thread."""
+        self._invoke_ui(callback)
 
     def _request_quit(self) -> None:
         if self.quit_callback is not None:
@@ -913,22 +915,19 @@ class GamepadSelectorWindow:
             else:
                 tag = ""
             row_name = f"★ {display_name}" if is_active else display_name
-            vp = gamepad.vid_pid()
-            identity_str = (
-                f"[{vp}]"
-                if vp
-                else (
-                    f"[{gamepad.guid}]"
-                    if gamepad.guid
-                    else "No stable identifier"
-                )
-            )
-            port_str = port_display_name(gamepad.port) if gamepad.port else ""
+            vid_pid = gamepad.vid_pid()
+            if vid_pid:
+                identity_text = f"[{vid_pid}]"
+            elif gamepad.guid:
+                identity_text = f"[{gamepad.guid}]"
+            else:
+                identity_text = "No stable identifier"
+            port_text = port_display_name(gamepad.port) if gamepad.port else ""
             self.gamepad_list.insert(
                 "",
                 tk.END,
                 iid=str(index),
-                values=(row_name, identity_str, port_str),
+                values=(row_name, identity_text, port_text),
                 tags=(tag,) if tag else (),
             )
         if selected_row is not None:
@@ -993,11 +992,13 @@ class GamepadSelectorWindow:
         def _show() -> None:
             self._reload()
             if self.root.state() == "withdrawn":
-                mx, my, mw, mh = self._primary_monitor_bounds()
-                ww = self.root.winfo_reqwidth()
-                wh = self.root.winfo_reqheight()
-                x = mx + max(0, (mw - ww) // 2)
-                y = my + max(0, (mh - wh) // 3)
+                monitor_x, monitor_y, monitor_width, monitor_height = (
+                    self._primary_monitor_bounds()
+                )
+                window_width = self.root.winfo_reqwidth()
+                window_height = self.root.winfo_reqheight()
+                x = monitor_x + max(0, (monitor_width - window_width) // 2)
+                y = monitor_y + max(0, (monitor_height - window_height) // 3)
                 self.root.geometry(f"+{x}+{y}")
             self.root.deiconify()
             self.root.lift()
@@ -1018,15 +1019,15 @@ class GamepadSelectorWindow:
                 if "primary" in line:
                     match = re.search(r"(\d+)x(\d+)\+(\d+)\+(\d+)", line)
                     if match:
-                        w, h, x, y = map(int, match.groups())
-                        return (x, y, w, h)
+                        width, height, x, y = map(int, match.groups())
+                        return (x, y, width, height)
         except (OSError, subprocess.SubprocessError):
             logger.debug(
                 "Could not query xrandr for monitor bounds", exc_info=True
             )
-        sw = self.root.winfo_screenwidth()
-        sh = self.root.winfo_screenheight()
-        return (0, 0, sw, sh)
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        return (0, 0, screen_width, screen_height)
 
     def refresh(self) -> None:
         self._invoke_ui(self._reload)
@@ -1035,20 +1036,20 @@ class GamepadSelectorWindow:
         def _confirm() -> bool:
             result = tk.BooleanVar(value=False)
 
-            d = tk.Toplevel()
-            d.title("Quit Gamepad Overlay")
-            d.resizable(False, False)
+            dialog = tk.Toplevel()
+            dialog.title("Quit Gamepad Overlay")
+            dialog.resizable(False, False)
             if str(self.root.state()) != "withdrawn":
-                d.transient(self.root)
+                dialog.transient(self.root)
 
             # Copy the main window icon to the dialog title bar
             if self._window_icon_connected is not None:
                 icon = self._window_icons.get(self._window_icon_connected)
                 if icon is not None:
                     with contextlib.suppress(tk.TclError):
-                        d.iconphoto(True, cast("tk.PhotoImage", icon))
+                        dialog.iconphoto(True, cast("tk.PhotoImage", icon))
 
-            frame = ttk.Frame(d, padding=20)
+            frame = ttk.Frame(dialog, padding=20)
             frame.pack()
 
             ttk.Label(
@@ -1057,47 +1058,49 @@ class GamepadSelectorWindow:
                 wraplength=300,
             ).pack(pady=(0, 10))
 
-            btn_frame = ttk.Frame(frame)
-            btn_frame.pack()
+            button_frame = ttk.Frame(frame)
+            button_frame.pack()
 
-            def _done() -> None:
+            def close_dialog() -> None:
                 self._quit_dialog = None
-                d.destroy()
+                dialog.destroy()
 
-            def _yes() -> None:
+            def on_yes() -> None:
                 result.set(True)
-                _done()
+                close_dialog()
 
-            def _no() -> None:
+            def on_no() -> None:
                 result.set(False)
-                _done()
+                close_dialog()
 
-            ttk.Button(btn_frame, text="Yes", command=_yes).pack(
+            ttk.Button(button_frame, text="Yes", command=on_yes).pack(
                 side=tk.LEFT, padx=5
             )
-            ttk.Button(btn_frame, text="No", command=_no).pack(
+            ttk.Button(button_frame, text="No", command=on_no).pack(
                 side=tk.LEFT, padx=5
             )
 
-            dw = d.winfo_reqwidth()
-            dh = d.winfo_reqheight()
+            dialog_width = dialog.winfo_reqwidth()
+            dialog_height = dialog.winfo_reqheight()
             if str(self.root.state()) != "withdrawn":
-                rx = self.root.winfo_x()
-                ry = self.root.winfo_y()
-                rw = self.root.winfo_width()
-                rh = self.root.winfo_height()
-                x = rx + (rw - dw) // 2
-                y = ry + (rh - dh) // 2
+                root_x = self.root.winfo_x()
+                root_y = self.root.winfo_y()
+                root_width = self.root.winfo_width()
+                root_height = self.root.winfo_height()
+                x = root_x + (root_width - dialog_width) // 2
+                y = root_y + (root_height - dialog_height) // 2
             else:
-                mx, my, mw, mh = self._primary_monitor_bounds()
-                x = mx + max(0, (mw - dw) // 2)
-                y = my + max(0, (mh - dh) // 3)
-            d.geometry(f"+{x}+{y}")
-            d.update_idletasks()
-            self._quit_dialog = d
-            d.grab_set()
-            d.focus_set()
-            d.wait_window()
+                monitor_x, monitor_y, monitor_width, monitor_height = (
+                    self._primary_monitor_bounds()
+                )
+                x = monitor_x + max(0, (monitor_width - dialog_width) // 2)
+                y = monitor_y + max(0, (monitor_height - dialog_height) // 3)
+            dialog.geometry(f"+{x}+{y}")
+            dialog.update_idletasks()
+            self._quit_dialog = dialog
+            dialog.grab_set()
+            dialog.focus_set()
+            dialog.wait_window()
 
             return result.get()
 

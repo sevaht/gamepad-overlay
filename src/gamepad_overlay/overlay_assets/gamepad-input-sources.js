@@ -1,4 +1,16 @@
+(() => {
 const clampToEllipseInput = OverlayCore.clampNormalizedOffsetToEllipse;
+const {clamp01, clamp11} = OverlayCore;
+
+// Every input that reports a 0..1 "pressed amount" (buttons, bumpers, stick
+// clicks, triggers). The stick movement axes (LX/LY/RX/RY) and d-pad axes
+// (DX/DY) are handled separately because they are signed.
+const DIGITAL_STATE_KEYS = [
+    "A", "B", "X", "Y",
+    "SELECT", "START", "GUIDE",
+    "LB", "RB", "LS", "RS",
+    "LT", "RT",
+];
 
 function createEmptyGamepadState() {
     return {
@@ -11,29 +23,11 @@ function createEmptyGamepadState() {
     };
 }
 
-function clamp01(value) {
-    return Math.max(0, Math.min(1, Number(value) || 0));
-}
-
-function clamp11(value) {
-    return Math.max(-1, Math.min(1, Number(value) || 0));
-}
-
 function normalizeGamepadState(partialState, {deadzoneMode = "none", fixedDeadzone = 0.0} = {}) {
     const state = {...createEmptyGamepadState(), ...partialState};
-    state.A = clamp01(state.A);
-    state.B = clamp01(state.B);
-    state.X = clamp01(state.X);
-    state.Y = clamp01(state.Y);
-    state.SELECT = clamp01(state.SELECT);
-    state.START = clamp01(state.START);
-    state.GUIDE = clamp01(state.GUIDE);
-    state.LB = clamp01(state.LB);
-    state.RB = clamp01(state.RB);
-    state.LS = clamp01(state.LS);
-    state.RS = clamp01(state.RS);
-    state.LT = clamp01(state.LT);
-    state.RT = clamp01(state.RT);
+    for (const key of DIGITAL_STATE_KEYS) {
+        state[key] = clamp01(state[key]);
+    }
 
     const applyDeadzone = (value) => {
         value = clamp11(value);
@@ -141,7 +135,7 @@ class BrowserGamepadSource {
     #tick() {
         const gamepads = Array.from(navigator.getGamepads?.() ?? []);
         const selected = this.#selectGamepad(gamepads);
-        this.#formatPadList(gamepads);
+        this.#logPadListIfChanged(gamepads);
 
         if (!selected) {
             this.#config.onState(createEmptyGamepadState());
@@ -217,33 +211,30 @@ class BrowserGamepadSource {
         return pad;
     }
 
-    #formatPadList(gamepads) {
+    #logPadListIfChanged(gamepads) {
         const connected = gamepads.filter((pad) => pad != null && pad.connected);
         const signature = connected
             .map((pad) => `${pad.index}|${pad.id}|${pad.mapping}|${pad.connected ? 1 : 0}`)
             .join("||");
-        if (connected.length === 0) {
-            if (this.#lastPadListSignature !== signature) {
-                console.info("[pads] none connected");
-            }
-            this.#lastPadListSignature = signature;
-            return "PADS none";
-        }
-        if (this.#lastPadListSignature !== signature) {
-            console.info("[pads] connected gamepads:");
-            for (const pad of connected) {
-                const line = [
-                    `id=\"${pad.id}\"`,
-                    `mapping=${pad.mapping || ""}`,
-                    `index=${pad.index}`,
-                    `connected=${pad.connected ? "yes" : "no"}`,
-                ].join(" | ");
-                console.info(`  - ${line}`);
-            }
-            console.info("[pads] Tip: use the exact id string (or a unique contiguous substring) with padIdContains=<value> to prefer a gamepad.");
+        if (this.#lastPadListSignature === signature) {
+            return;
         }
         this.#lastPadListSignature = signature;
-        return `PADS ${connected.map((pad) => `${pad.index}:${pad.id}`).join(" | ")}`;
+        if (connected.length === 0) {
+            console.info("[pads] none connected");
+            return;
+        }
+        console.info("[pads] connected gamepads:");
+        for (const pad of connected) {
+            const line = [
+                `id=\"${pad.id}\"`,
+                `mapping=${pad.mapping || ""}`,
+                `index=${pad.index}`,
+                `connected=${pad.connected ? "yes" : "no"}`,
+            ].join(" | ");
+            console.info(`  - ${line}`);
+        }
+        console.info("[pads] Tip: use the exact id string (or a unique contiguous substring) with padIdContains=<value> to prefer a gamepad.");
     }
 }
 
@@ -508,3 +499,9 @@ function createGamepadSource({
     }
     return new BrowserGamepadSource(config);
 }
+
+window.OverlayInput = Object.freeze({
+    createGamepadSource,
+    GamepadOverlayRenderer,
+});
+})();

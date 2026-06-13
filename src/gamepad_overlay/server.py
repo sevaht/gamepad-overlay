@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from .cli_output import announce
+from .config import read_section, update_section
 from .gamepad import (
     GamepadInfo,
     GamepadMonitor,
@@ -24,40 +24,22 @@ DEFAULT_PORT = 8765
 MIN_PORT = 1025
 MAX_PORT = 65535
 
+SERVER_SECTION = "server"
+
 logger = logging.getLogger(__name__)
 
 
 def load_server_port(path: Path) -> int:
-    try:
-        config = json.loads(path.read_text())
-        if isinstance(config, dict):
-            server = config.get("server")
-            if isinstance(server, dict):
-                port = server.get("port")
-                if isinstance(port, int) and MIN_PORT <= port <= MAX_PORT:
-                    return port
-    except Exception:  # noqa: BLE001, S110
-        pass
+    port = read_section(path, SERVER_SECTION).get("port")
+    if isinstance(port, int) and MIN_PORT <= port <= MAX_PORT:
+        return port
     return DEFAULT_PORT
 
 
 def save_server_port(port: int, path: Path) -> None:
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            config: dict[str, object] = json.loads(path.read_text())
-            if not isinstance(config, dict):
-                config = {}
-        except Exception:  # noqa: BLE001
-            config = {}
-        server_section = config.get("server", {})
-        if not isinstance(server_section, dict):
-            server_section = {}
-        server_section["port"] = port
-        config["server"] = server_section
-        path.write_text(json.dumps(config, indent=2))
-    except Exception:  # noqa: BLE001
-        logger.debug("Failed to save server port config", exc_info=True)
+    server_section = read_section(path, SERVER_SECTION)
+    server_section["port"] = port
+    update_section(path, SERVER_SECTION, server_section)
 
 
 @dataclass
@@ -123,7 +105,7 @@ class WebSocketGamepadMonitor(_GamepadStateMonitor):
 
 
 def run_server(config: ServerRunConfig) -> int:
-    selected_config = GamepadSelection.load(config.config_path)
+    saved_selection = GamepadSelection.load(config.config_path)
 
     if config.terminal:
         monitor: GamepadMonitor = TerminalGamepadMonitor()
@@ -140,12 +122,11 @@ def run_server(config: ServerRunConfig) -> int:
             websocket_broadcaster=websocket_broadcaster
         )
 
-    gamepad = SDLGamepad(selected_gamepad=selected_config)
-    selection_watch_path = config.config_path
+    gamepad = SDLGamepad(selected_gamepad=saved_selection)
     try:
         gamepad.read_loop(
             monitor,
-            selection_path=selection_watch_path,
+            selection_path=config.config_path,
             stop_event=config.stop_event,
             device_change_callback=config.device_change_callback,
             active_gamepad_callback=config.active_gamepad_callback,

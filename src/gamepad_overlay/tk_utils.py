@@ -9,11 +9,11 @@ from tkinter import ttk
 
 def setup_checkbutton_styles() -> None:
     """Replace clam's X indicator with alt's checkmark glyph for TCheckbutton."""
-    s = ttk.Style()
-    s.element_create(
+    style = ttk.Style()
+    style.element_create(
         "alt.Checkbutton.indicator", "from", "alt", "Checkbutton.indicator"
     )
-    s.layout(
+    style.layout(
         "TCheckbutton",
         [
             (
@@ -48,9 +48,13 @@ class LabelGrooveFrame(tk.LabelFrame):
     content appears vertically centered."""
 
     def __init__(self, parent: tk.Widget, *, text: str = "") -> None:
-        bg = ttk.Style().lookup("TFrame", "background")
+        background = ttk.Style().lookup("TFrame", "background")
         super().__init__(
-            parent, text=text, relief="groove", borderwidth=2, background=bg
+            parent,
+            text=text,
+            relief="groove",
+            borderwidth=2,
+            background=background,
         )
         inset = tkfont.nametofont("TkDefaultFont").metrics("linespace") // 2
         self.interior = ttk.Frame(self)

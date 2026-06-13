@@ -20,55 +20,10 @@
         }
     }
 
-    function clamp01(value) {
-        return Math.max(0, Math.min(1, Number(value) || 0));
-    }
-
-    function clamp255(value) {
-        return Math.max(0, Math.min(255, Number(value) || 0));
-    }
-
-    function parseColorToRgba(value, fallbackAlpha) {
-        const raw = String(value || "").trim();
-        if (!raw) {
-            return null;
-        }
-        const rgbMatch = raw.match(/^rgb\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*\)$/i);
-        if (rgbMatch) {
-            return `rgba(${clamp255(rgbMatch[1])}, ${clamp255(rgbMatch[2])}, ${clamp255(rgbMatch[3])}, ${clamp01(fallbackAlpha)})`;
-        }
-        const rgbaMatch = raw.match(/^rgba\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*\)$/i);
-        if (rgbaMatch) {
-            return `rgba(${clamp255(rgbaMatch[1])}, ${clamp255(rgbaMatch[2])}, ${clamp255(rgbaMatch[3])}, ${clamp01(rgbaMatch[4])})`;
-        }
-        const csv = raw.split(",").map((part) => part.trim());
-        if (csv.length === 3) {
-            return `rgba(${clamp255(csv[0])}, ${clamp255(csv[1])}, ${clamp255(csv[2])}, ${clamp01(fallbackAlpha)})`;
-        }
-        if (csv.length === 4) {
-            return `rgba(${clamp255(csv[0])}, ${clamp255(csv[1])}, ${clamp255(csv[2])}, ${clamp01(csv[3])})`;
-        }
-        return raw;
-    }
-
-    function normalizeButtonColorVars(element = document.documentElement) {
-        const styles = getComputedStyle(element);
-        const releasedDefaultAlpha = Number.parseFloat(styles.getPropertyValue("--btn-released-default-alpha")) || 0.7;
-        const pressedDefaultAlpha = Number.parseFloat(styles.getPropertyValue("--btn-pressed-default-alpha")) || 1;
-        const releasedResolved = parseColorToRgba(styles.getPropertyValue("--btn-released"), releasedDefaultAlpha);
-        const pressedResolved = parseColorToRgba(styles.getPropertyValue("--btn-pressed"), pressedDefaultAlpha);
-        if (releasedResolved != null) {
-            element.style.setProperty("--btn-released", releasedResolved);
-        }
-        if (pressedResolved != null) {
-            element.style.setProperty("--btn-pressed", pressedResolved);
-        }
-    }
-
     window.OverlayTheme = Object.freeze({
         CSS_DEFAULTS,
         applyCssDefaults,
-        normalizeButtonColorVars,
+        normalizeButtonColorVars: OverlayCore.normalizeButtonColorVars,
     });
 })();
 
@@ -128,7 +83,7 @@
 
     function createSource({query, mode, renderer}) {
         const pollHz = Math.max(1, queryInt(query, "pollHz", DEFAULTS.pollHz));
-        return createGamepadSource({
+        return OverlayInput.createGamepadSource({
             mode,
             wsUrl: resolveWebSocketUrl(query),
             pollMs: Math.max(1, Math.round(1000 / pollHz)),
@@ -150,14 +105,6 @@
         return /^[a-z0-9_-]+$/.test(normalized) ? normalized : null;
     }
 
-    function sanitizeThemeName(themeName) {
-        const value = sanitizeProfileName(themeName);
-        if (!value) {
-            return null;
-        }
-        return value;
-    }
-
     function attachThemeStylesheet(themeName) {
         const existing = document.getElementById("overlay-theme-css");
         if (existing) {
@@ -175,7 +122,7 @@
     }
 
     async function loadThemeCss(themeName) {
-        const requestedTheme = sanitizeThemeName(themeName);
+        const requestedTheme = sanitizeProfileName(themeName);
         if (requestedTheme == null) {
             console.error(`[theme] Invalid theme '${String(themeName)}'; allowed chars: a-z, 0-9, _, -. Falling back to 'xbox'.`);
             await attachThemeStylesheet("xbox");
@@ -217,7 +164,7 @@
     function resolveLayoutProfile(profile) {
         const model = profile?.model ?? {};
         const controls = profile?.controls ?? {};
-        const defaultTheme = sanitizeThemeName(profile?.defaultTheme) ?? "xbox";
+        const defaultTheme = sanitizeProfileName(profile?.defaultTheme) ?? "xbox";
         const defaultBlur = Number.isFinite(Number(profile?.defaultBlur))
             ? Number(profile.defaultBlur)
             : null;
@@ -334,15 +281,16 @@
             document.documentElement,
         );
         const model = createSharedModel(layoutProfile);
-        const context = new SvgContext(document.getElementById(svgId));
-        const overlay = new GamepadOverlay({
+        const context = new OverlayRenderer.SvgContext(
+            document.getElementById(svgId)
+        );
+        const overlay = new OverlayRenderer.GamepadOverlay({
             context,
             model,
-            topLeft: new Vector2({
+            topLeft: new OverlayCore.Vector2({
                 x: DEFAULTS.topLeftX,
                 y: DEFAULTS.topLeftY,
             }),
-            gap: layoutProfile.model.gap,
             digitalThreshold,
             prewarmPressFillVisuals: true,
             themeVariables: {},
@@ -391,7 +339,7 @@
             }
         }
 
-        const renderer = new GamepadOverlayRenderer({
+        const renderer = new OverlayInput.GamepadOverlayRenderer({
             overlay,
             deadzoneMode: "none",
             fixedDeadzone: 0,

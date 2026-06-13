@@ -2,7 +2,11 @@
 
 Shows your gamepad inputs as a visual overlay in OBS (or any tool that supports browser sources).
 
-The app runs in your system tray, reads your controller, and serves an overlay page your streaming software can display.
+The app runs in your system tray, reads your controller, and serves an overlay page your streaming software can display. The overlay has a transparent background, so it sits cleanly on top of your gameplay.
+
+**What you need:**
+- A game controller (Xbox, SNES-style, or any standard gamepad).
+- OBS Studio, or any streaming/recording tool that supports a **Browser Source**.
 
 ---
 
@@ -17,42 +21,42 @@ Download the latest release for your platform from the Releases page and extract
 
 ## Getting Started
 
-1. **Run the app.** A window opens showing your connected gamepads and a tray icon appears.
-2. **Select your controller.** Click the gamepad you want to use, then click **Save Selection**. If you only have one controller or don't care which one is used, leave it on *Any available gamepad*.
+1. **Run the app.** A window opens showing your connected gamepads, and a tray icon appears.
+2. **Pick your controller.** In the list, click the controller you want, then click **Select Gamepad**. If you only have one controller, or you don't care which one is used, click **Any Gamepad** instead.
 3. **Open OBS** and add a **Browser Source**.
-4. **Get the URL.** In the gamepad overlay window, click **Overlay URL**. Copy the URL shown and paste it into your OBS browser source.
+4. **Get the URL.** In the gamepad overlay window, click **Overlay URL...**, then click **Copy** to copy the address. Paste it into your OBS browser source.
 5. **Done.** The overlay will display your controller inputs in your stream or recording.
 
 ---
 
 ## Gamepad Selection
 
-The main window lists all connected gamepads. Select one and click **Save Selection** to lock in that controller.
+The main window lists all connected gamepads. Click one, decide how it should be matched using the **Criteria** checkboxes, then click **Select Gamepad**. To go back to using whatever controller is connected, click **Any Gamepad**.
 
-When you select a gamepad you can choose how it's matched:
+The **Criteria** checkboxes control how your controller is recognized the next time it's connected:
 
-- **Identity** — matches by hardware ID (GUID, vendor, product). The controller will be recognized regardless of which USB port it's plugged into.
-- **Physical Port** — matches by the specific USB port. Useful if you want to always use whichever controller is plugged into a particular port.
-- **Both** — requires both identity and port to match.
+- **Identity** — match by hardware ID (vendor/product, or GUID). The controller is recognized no matter which USB port it's plugged into.
+- **Physical port** — match by the specific USB port. Useful when you always want whichever controller is plugged into a particular port.
+- Tick **both** to require the same controller *and* the same port.
 
-If you select *Any available gamepad*, the overlay uses whatever controller is connected at the time.
+The controller currently in use is marked with a ★ in the list, and the **Target:** line at the top of the window always shows what the overlay is set to use.
 
 ---
 
 ## Overlay URL Window
 
-Open this from the main window with the **Overlay URL** button. It shows the full URL to paste into OBS and lets you configure the overlay appearance.
+Open this from the main window with the **Overlay URL...** button. It shows the full URL to paste into OBS and lets you configure the overlay appearance. Use **Copy** to copy the URL, or **Launch in Browser** to preview the overlay.
 
 ### Overlay Settings
 
 | Setting | Description |
 |---|---|
-| **Source** | `websocket` (normal use) or `demo` (animated preview, no controller needed) |
+| **Source** | `websocket` (normal use) or `demo` (animated preview that plays without a controller, handy for testing) |
 | **Layout** | Controller shape — `xbox`, `xbox-digital-triggers`, or `snes` |
-| **Theme** | Color scheme — `Auto` (follows layout default), `xbox`, or `snes` |
-| **Background** | Any CSS color or background value (e.g. `green`, `#00ff00`, `transparent`). Leave blank for the layout default. |
-| **Blur** | Anti-aliasing/blur amount. `0` disables it. |
-| **Digital Threshold %** | How far an analog trigger must be pressed before it registers as a digital press. Default is 20%. |
+| **Theme** | Color scheme — `Auto` (follows the layout's default), `xbox`, or `snes` |
+| **Background** | The overlay background. Leave blank to keep it transparent (recommended for streaming). Accepts any CSS color, e.g. `green`, `#00ff00`, or `transparent`. |
+| **Blur** | Softens the overlay's edges (anti-aliasing). Set to `0` for crisp, hard edges. |
+| **Digital Threshold %** | How far an analog trigger must be pressed before it counts as "pressed." Default is 20%. |
 
 Changes to overlay settings take effect immediately and are saved automatically.
 
@@ -108,6 +112,8 @@ Open the Overlay URL window, go to **Server Settings**, change the port, and cli
 ---
 
 ## Advanced / CLI
+
+> Everything below is for advanced users. If you're just using the app normally, you can stop here.
 
 The app can also be controlled from the command line.
 

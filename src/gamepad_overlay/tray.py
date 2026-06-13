@@ -7,7 +7,7 @@ from threading import Event, Lock, Thread
 from typing import TYPE_CHECKING, Any
 
 from . import user_config_path
-from .gamepad import CONFIG_FILE_NAME, GamepadInfo
+from .config import CONFIG_FILE_NAME
 from .gamepad_selector import (
     GamepadSelectorConfig,
     GamepadSelectorWindow,
@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    from .gamepad import GamepadInfo
     from .tray_backend import TrayIcon
 
 
@@ -173,18 +174,18 @@ class GamepadSelectorTray:
         self._sync_connection_state()
 
     def _sync_connection_state(self) -> None:
-        self.window._update_connection_state()
+        self.window.update_connection_state()
         self._apply_tray_state()
 
     def _request_quit(self) -> None:
-        def _do_quit() -> None:
+        def confirm_and_shutdown() -> None:
             if not self.window.confirm_quit():
                 return
-            self._quit()
+            self.shutdown()
 
-        self.window._invoke_ui(_do_quit)
+        self.window.run_on_ui_thread(confirm_and_shutdown)
 
-    def _quit(self) -> None:
+    def shutdown(self) -> None:
         self.window.close()
         self.server_backend.stop()
         self.icon.stop()
@@ -239,7 +240,7 @@ def run_tray(
     start_hidden: bool = False,
 ) -> int:
     tray = GamepadSelectorTray(config_path, lan=lan, terminal=terminal)
-    handlers = _install_signal_handlers(tray._quit)
+    handlers = _install_signal_handlers(tray.shutdown)
     try:
         return tray.run(start_hidden=start_hidden)
     finally:

@@ -153,7 +153,7 @@ function createOverlayModel(config = {}) {
     const width = rightLayout.topRight.bottomRight.x - topLeft.x + borderWidth;
     const height = leftLayout.bottomLeft.bottomRight.y - topLeft.y + borderWidth;
 
-    const half = (r, sx, sy) => OverlayModelCore.Region.fromCenter({center: r.center, size: new OverlayModelCore.Vector2({x: r.size.x * sx, y: r.size.y * sy})});
+    const scaledRegion = (region, scaleX, scaleY) => OverlayModelCore.Region.fromCenter({center: region.center, size: new OverlayModelCore.Vector2({x: region.size.x * scaleX, y: region.size.y * scaleY})});
     const cornerCompensation = gapPixels + borderWidth * 2;
     const applyCornerCompensation = (region, regionName, compensation, compensateOuterEdges = true) => {
         const x = Math.max(0, compensation.x);
@@ -191,14 +191,14 @@ function createOverlayModel(config = {}) {
             }),
         });
     };
-    const cornerButtonRegion = (layout, regionName, sx, sy) => {
+    const cornerButtonRegion = (layout, regionName, scaleX, scaleY) => {
         const compensated = applyCornerCompensation(
             layout[regionName],
             regionName,
             OverlayModelCore.Vector2.splat(cornerCompensation),
             true
         );
-        return half(compensated, sx, sy);
+        return scaledRegion(compensated, scaleX, scaleY);
     };
 
     const analogStickRingScale = Math.max(0, Number(analogStickRingPercent) || 70) / 100;

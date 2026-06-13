@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import ctypes
-import json
 import logging
 import platform
 from dataclasses import dataclass, field
@@ -12,14 +11,15 @@ from typing import TYPE_CHECKING, Any, Protocol
 import sdl3
 
 from .cli_output import announce
+from .config import read_section, remove_section, update_section
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from threading import Event
 
-CONFIG_FILE_NAME = "config.json"
-
 logger = logging.getLogger(__name__)
+
+SELECTION_SECTION = "selection"
 
 
 @dataclass(frozen=True)
@@ -201,6 +201,13 @@ def _format_hex_identifier(value: object) -> str:
         return text
 
 
+def format_vid_pid(vendor: str, product: str) -> str:
+    """Return ``"vvvv:pppp"`` when both ids are present, otherwise ``""``."""
+    vendor_hex = _format_hex_identifier(vendor)
+    product_hex = _format_hex_identifier(product)
+    return f"{vendor_hex}:{product_hex}" if vendor_hex and product_hex else ""
+
+
 def _get_device_port_path(device_path: str) -> str:
     """Return a stable port identifier for a device node, cross-platform."""
     if not device_path:
@@ -241,20 +248,18 @@ class GamepadInfo:
     product_version: str
 
     def vid_pid(self) -> str:
-        v = _format_hex_identifier(self.vendor)
-        p = _format_hex_identifier(self.product)
-        return f"{v}:{p}" if v and p else ""
+        return format_vid_pid(self.vendor, self.product)
 
     def metadata_summary(self) -> str:
-        id_parts: list[str] = []
-        vp = self.vid_pid()
-        if vp:
-            id_parts.append(f"[{vp}]")
+        identity_parts: list[str] = []
+        vid_pid = self.vid_pid()
+        if vid_pid:
+            identity_parts.append(f"[{vid_pid}]")
         elif self.guid:
-            id_parts.append(f"[{self.guid}]")
+            identity_parts.append(f"[{self.guid}]")
         if self.port:
-            id_parts.append(f"[{port_display_name(self.port)}]")
-        return " ".join(id_parts)
+            identity_parts.append(f"[{port_display_name(self.port)}]")
+        return " ".join(identity_parts)
 
     def as_selection(
         self, *, pin_identity: bool = True, pin_port: bool = False
@@ -280,16 +285,18 @@ class GamepadSelection:
         return not any([self.guid, self.vendor, self.product, self.port])
 
     def metadata_summary(self) -> str:
-        parts: list[str] = []
-        v = _format_hex_identifier(self.vendor)
-        p = _format_hex_identifier(self.product)
-        if v and p:
-            parts.append(f"[{v}:{p}]")
-        elif v or p:
-            parts.append(f"[{v or '????'}:{p or '????'}]")
+        summary_parts: list[str] = []
+        vendor_hex = _format_hex_identifier(self.vendor)
+        product_hex = _format_hex_identifier(self.product)
+        if vendor_hex and product_hex:
+            summary_parts.append(f"[{vendor_hex}:{product_hex}]")
+        elif vendor_hex or product_hex:
+            summary_parts.append(
+                f"[{vendor_hex or '????'}:{product_hex or '????'}]"
+            )
         if self.port:
-            parts.append(f"[{port_display_name(self.port)}]")
-        return " ".join(parts)
+            summary_parts.append(f"[{port_display_name(self.port)}]")
+        return " ".join(summary_parts)
 
     def matches(self, gamepad: GamepadInfo) -> bool:
         matched = False
@@ -312,34 +319,23 @@ class GamepadSelection:
         has_identity = bool(self.guid or self.vendor or self.product)
         port = self.port
         name = self.name or "unknown controller"
-        vp = _format_hex_identifier(self.vendor)
-        pp = _format_hex_identifier(self.product)
-        vid_pid = f"{vp}:{pp}" if vp and pp else ""
+        vid_pid = format_vid_pid(self.vendor, self.product)
         if vid_pid:
-            name_str = f"{name} [{vid_pid}]"
+            named_identity = f"{name} [{vid_pid}]"
         elif has_identity:
-            name_str = f"{name} [{self.guid}]" if self.guid else name
+            named_identity = f"{name} [{self.guid}]" if self.guid else name
         else:
-            name_str = name
+            named_identity = name
         if has_identity and port:
-            return f"{name_str} on {port_display_name(port)}"
+            return f"{named_identity} on {port_display_name(port)}"
         if has_identity:
-            return f"{name_str} (any port)"
+            return f"{named_identity} (any port)"
         if port:
             return f"any controller on {port_display_name(port)}"
         return "any gamepad"
 
     def save(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            config: dict[str, object] = json.loads(
-                path.read_text(encoding="utf-8")
-            )
-            if not isinstance(config, dict):
-                config = {}
-        except Exception:  # noqa: BLE001
-            config = {}
-        config["selection"] = {
+        selection_data = {
             key: value
             for key, value in (
                 ("guid", self.guid),
@@ -350,44 +346,25 @@ class GamepadSelection:
             )
             if value
         }
-        path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+        update_section(path, SELECTION_SECTION, selection_data)
 
     @classmethod
     def load(cls, path: Path) -> GamepadSelection | None:
-        if not path.exists():
+        selection_data = read_section(path, SELECTION_SECTION)
+        if not selection_data:
             return None
-        try:
-            config = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            logger.warning("Failed to read config at %s", path)
-            return None
-        if not isinstance(config, dict):
-            return None
-        payload = config.get("selection")
-        if not isinstance(payload, dict):
-            return None
-        result = cls(
-            guid=str(payload.get("guid", "")).strip(),
-            vendor=str(payload.get("vendor", "")).strip(),
-            product=str(payload.get("product", "")).strip(),
-            port=str(payload.get("port", "")).strip(),
-            name=str(payload.get("name", "")).strip(),
+        loaded_selection = cls(
+            guid=str(selection_data.get("guid", "")).strip(),
+            vendor=str(selection_data.get("vendor", "")).strip(),
+            product=str(selection_data.get("product", "")).strip(),
+            port=str(selection_data.get("port", "")).strip(),
+            name=str(selection_data.get("name", "")).strip(),
         )
-        return None if result.is_any() else result
+        return None if loaded_selection.is_any() else loaded_selection
 
     @staticmethod
     def clear(path: Path) -> None:
-        if not path.exists():
-            return
-        try:
-            config = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(config, dict) and "selection" in config:
-                del config["selection"]
-                path.write_text(
-                    json.dumps(config, indent=2) + "\n", encoding="utf-8"
-                )
-        except Exception:  # noqa: BLE001, S110
-            pass
+        remove_section(path, SELECTION_SECTION)
 
 
 @dataclass

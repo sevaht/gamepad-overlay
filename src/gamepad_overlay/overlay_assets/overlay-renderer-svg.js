@@ -1,14 +1,11 @@
+(() => {
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 const nextMonotonicId = new Map();
 function monotonicId(prefix) {
-    const n = nextMonotonicId.get(prefix) ?? 1;
-    nextMonotonicId.set(prefix, n + 1);
-    return `${prefix}${n}`;
-}
-
-function getIdPrefixedChild({target, prefix}) {
-    return target.querySelector(`:scope > [id^="${prefix}-"]`);
+    const nextValue = nextMonotonicId.get(prefix) ?? 1;
+    nextMonotonicId.set(prefix, nextValue + 1);
+    return `${prefix}${nextValue}`;
 }
 
 function setAttributes(element, attributes = {}) {
@@ -42,58 +39,7 @@ function setMask(element, id) {
     });
 }
 
-function setTranslation(element, offset) {
-    return setAttributes(element, {
-        transform: (offset == null || Vector2.ZERO.equals(offset))
-            ? null
-            : `translate(${offset.x} ${offset.y})`,
-    });
-}
-
-function clamp01(value) {
-    return Math.max(0, Math.min(1, Number(value) || 0));
-}
-
-function clamp255(value) {
-    return Math.max(0, Math.min(255, Number(value) || 0));
-}
-
-function parseColorToRgba(value, fallbackAlpha) {
-    const raw = String(value || "").trim();
-    if (!raw) {
-        return null;
-    }
-    const rgbMatch = raw.match(/^rgb\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*\)$/i);
-    if (rgbMatch) {
-        return `rgba(${clamp255(rgbMatch[1])}, ${clamp255(rgbMatch[2])}, ${clamp255(rgbMatch[3])}, ${clamp01(fallbackAlpha)})`;
-    }
-    const rgbaMatch = raw.match(/^rgba\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*\)$/i);
-    if (rgbaMatch) {
-        return `rgba(${clamp255(rgbaMatch[1])}, ${clamp255(rgbaMatch[2])}, ${clamp255(rgbaMatch[3])}, ${clamp01(rgbaMatch[4])})`;
-    }
-    const csv = raw.split(",").map((part) => part.trim());
-    if (csv.length === 3) {
-        return `rgba(${clamp255(csv[0])}, ${clamp255(csv[1])}, ${clamp255(csv[2])}, ${clamp01(fallbackAlpha)})`;
-    }
-    if (csv.length === 4) {
-        return `rgba(${clamp255(csv[0])}, ${clamp255(csv[1])}, ${clamp255(csv[2])}, ${clamp01(csv[3])})`;
-    }
-    return raw;
-}
-
-function normalizeButtonColorVarsOnElement(element) {
-    const style = getComputedStyle(element);
-    const releasedDefaultAlpha = Number.parseFloat(style.getPropertyValue("--btn-released-default-alpha")) || 0.7;
-    const pressedDefaultAlpha = Number.parseFloat(style.getPropertyValue("--btn-pressed-default-alpha")) || 1;
-    const releasedResolved = parseColorToRgba(style.getPropertyValue("--btn-released"), releasedDefaultAlpha);
-    const pressedResolved = parseColorToRgba(style.getPropertyValue("--btn-pressed"), pressedDefaultAlpha);
-    if (releasedResolved != null) {
-        element.style.setProperty("--btn-released", releasedResolved);
-    }
-    if (pressedResolved != null) {
-        element.style.setProperty("--btn-pressed", pressedResolved);
-    }
-}
+const normalizeButtonColorVarsOnElement = OverlayCore.normalizeButtonColorVars;
 
 const assertFiniteNumber = OverlayCore.assertFiniteNumber;
 const Vector2 = OverlayCore.Vector2;
@@ -656,12 +602,6 @@ class GamepadEntity {
     getConnectedDefinitionElements() {
         return [...this.#connectedElements];
     }
-    getPressFillShapeId() {
-        return this.#pressFillShapeId;
-    }
-    getBorderCutoutShapeId() {
-        return this.#borderCutoutShapeId;
-    }
     maskStyleSourceBySourceId(sourceId) {
         if (this.#styleSourceElement == null) {
             return this;
@@ -673,7 +613,7 @@ class GamepadEntity {
     get element() {
         return this.#element;
     }
-    get cutoutId() {  // cache?
+    get cutoutId() {
         return `cutout-${this.element.id}`;
     }
     createMaskRect({sourceId = this.element.id} = {}) {
@@ -758,7 +698,6 @@ class RenderableControl {
     maskStyleSourceBySourceId(sourceId) { this.#entity.maskStyleSourceBySourceId(sourceId); return this; }
     connect(element, options) { this.#entity.connect(element, options); return this; }
     getConnectedDefinitionElements() { return this.#entity.getConnectedDefinitionElements(); }
-    getBorderCutoutShapeId() { return this.#entity.getBorderCutoutShapeId(); }
 }
 
 class CompositeControl {
@@ -801,23 +740,12 @@ class CompositeControl {
 }
 
 
-//function clampToUnitCircle(x, y) {
-//    const len = Math.hypot(x, y);
-//    if (len > 1) {
-//        return { x: x / len, y: y / len };
-//    }
-//    return { x, y };
-//}
-//
-
-
 class GamepadOverlay {
     #context;
     #model;
     #leftLayout;
     #rightLayout;
     #entities;
-    #cornerCompensation;
     #borderWidth;
     #innerBorderSize;
     #outerBorderSize;
@@ -831,7 +759,6 @@ class GamepadOverlay {
         context,
         topLeft,
         model,
-        gap = 1,
         digitalThreshold = 0.5,
         themeVariables = {},
         prewarmPressFillVisuals = true,
@@ -850,7 +777,6 @@ class GamepadOverlay {
         this.#themeVariables = {...themeVariables};
         this.#prewarmPressFillVisuals = Boolean(prewarmPressFillVisuals);
         this.#drawLeftOriginRingWithoutStick = Boolean(drawLeftOriginRingWithoutStick);
-        this.#cornerCompensation = (gap * this.#model.borderWidth) + this.#model.borderWidth * 2;
         this.#leftLayout = this.#model.leftLayout;
         this.#rightLayout = this.#model.rightLayout;
         const size = new Vector2({x: this.#model.width, y: this.#model.height});
@@ -1005,7 +931,7 @@ class GamepadOverlay {
     }
 
     #strokeBorderClasses(includeBorder) {
-        if (!Boolean(includeBorder)) {
+        if (!includeBorder) {
             return [];
         }
         if (this.#innerBorderEnabled(includeBorder)) {
@@ -1162,119 +1088,6 @@ class GamepadOverlay {
         });
     }
 
-    #createCornerButton({group, sidePrefix, sideName, roleName, layout, idSuffix, spec}) {
-        if (!spec) {
-            return null;
-        }
-        const {
-            regionName,
-            scale = {x: 1, y: 1},
-            shapeType = ShapeType.RECTANGLE,
-            cornerRadiusPercent,
-            compensateOuterEdges = true,
-            pressFillDirection,
-            pressMode = "digital",
-            digitalThreshold,
-        } = spec;
-        const region = layout[regionName];
-        if (!(region instanceof Region)) {
-            throw new Error(`Invalid corner region '${String(regionName)}' for ${sidePrefix}${idSuffix}`);
-        }
-        const compensation = this.#resolveCornerCompensationVector(spec.cornerCompensation);
-        const scaleVector = new Vector2(scale);
-        const cornerRadiusPercentVector = cornerRadiusPercent == null
-            ? undefined
-            : new Vector2(cornerRadiusPercent);
-        const compensatedRegion = this.#applyCornerCompensation(
-            region,
-            regionName,
-            compensation,
-            {compensateOuterEdges},
-        );
-
-        const button = this.#createButton({
-            group,
-            id: `${sidePrefix}${idSuffix}`,
-            region: compensatedRegion.scale(scaleVector),
-            shapeType,
-            cornerRadiusPercent: cornerRadiusPercentVector,
-            includeBorder: true,
-            semanticClasses: [`side-${sideName}`, `role-${roleName}`],
-            semanticAttributes: {"data-side": sideName, "data-role": roleName},
-            pressMode,
-            digitalThreshold,
-            prewarmPressFillVisual: this.#prewarmPressFillVisuals && pressMode === "analog",
-        });
-        if (pressFillDirection != null) {
-            button.setPressFillDirection(pressFillDirection);
-            if (this.#prewarmPressFillVisuals && pressMode === "analog") {
-                button.enablePressVisual();
-            }
-        }
-        return button;
-    }
-
-    #resolveCornerCompensationVector(value) {
-        if (value == null) {
-            return Vector2.splat(this.#cornerCompensation);
-        }
-        if (typeof value === "number") {
-            return Vector2.splat(assertFiniteNumber(value, "cornerCompensation"));
-        }
-        return new Vector2(value);
-    }
-
-    #applyCornerCompensation(region, regionName, compensation, {compensateOuterEdges = false} = {}) {
-        const x = Math.max(0, compensation.x);
-        const y = Math.max(0, compensation.y);
-        const insets = {top: 0, right: 0, bottom: 0, left: 0};
-
-        switch (regionName) {
-            case "topLeft":
-                insets.right += x;
-                insets.bottom += y;
-                if (compensateOuterEdges) {
-                    insets.left += x;
-                    insets.top += y;
-                }
-                break;
-            case "topRight":
-                insets.left += x;
-                insets.bottom += y;
-                if (compensateOuterEdges) {
-                    insets.right += x;
-                    insets.top += y;
-                }
-                break;
-            case "bottomLeft":
-                insets.right += x;
-                insets.top += y;
-                if (compensateOuterEdges) {
-                    insets.left += x;
-                    insets.bottom += y;
-                }
-                break;
-            case "bottomRight":
-                insets.left += x;
-                insets.top += y;
-                if (compensateOuterEdges) {
-                    insets.right += x;
-                    insets.bottom += y;
-                }
-                break;
-            default:
-                throw new Error(`Unsupported corner region for compensation: ${String(regionName)}`);
-        }
-
-        const size = new Vector2({
-            x: Math.max(0, region.size.x - insets.left - insets.right),
-            y: Math.max(0, region.size.y - insets.top - insets.bottom),
-        });
-        const topLeft = region.topLeft.clone().add({x: insets.left, y: insets.top});
-
-        return new Region({topLeft, size});
-    }
-
     #buildSide({
         sidePrefix,
         sideName,
@@ -1387,15 +1200,12 @@ class GamepadOverlay {
             semanticClasses: [`side-${sideName}`, "role-down", ...(drawCrossBorder ? ["dpad-press-only"] : [])],
             semanticAttributes: {"data-side": sideName, "data-role": "down"},
         });
-        const originButton = null;
 
         const leftBumper = makeButton({group: dpadGroup, idSuffix: "LeftBumperButton", spec: sideButtons.leftBumper, roleName: "left-bumper"});
         const select = makeButton({group: dpadGroup, idSuffix: "SelectButton", spec: sideButtons.select, roleName: "select"});
         const leftTrigger = makeButton({group: dpadGroup, idSuffix: "LeftTriggerButton", spec: sideButtons.leftTrigger, roleName: "left-trigger"});
-        const leftSpecial = makeButton({group: dpadGroup, idSuffix: "LeftSpecialButton", spec: sideButtons.leftSpecial, roleName: "left-special"});
         const start = makeButton({group: dpadGroup, idSuffix: "StartButton", spec: sideButtons.start, roleName: "start"});
         const rightBumper = makeButton({group: dpadGroup, idSuffix: "RightBumperButton", spec: sideButtons.rightBumper, roleName: "right-bumper"});
-        const rightSpecial = makeButton({group: dpadGroup, idSuffix: "RightSpecialButton", spec: sideButtons.rightSpecial, roleName: "right-special"});
         const rightTrigger = makeButton({group: dpadGroup, idSuffix: "RightTriggerButton", spec: sideButtons.rightTrigger, roleName: "right-trigger"});
 
         let analogAreaGroup = null;
@@ -1498,14 +1308,11 @@ class GamepadOverlay {
                 upButton,
                 rightButton,
                 downButton,
-                originButton,
                 leftBumper,
                 select,
                 leftTrigger,
-                leftSpecial,
                 start,
                 rightBumper,
-                rightSpecial,
                 rightTrigger,
                 analogArea,
                 analogStick,
@@ -1543,3 +1350,9 @@ class GamepadOverlay {
     }
 
 }
+
+window.OverlayRenderer = Object.freeze({
+    SvgContext,
+    GamepadOverlay,
+});
+})();
