@@ -34,3 +34,11 @@ tar -C "${PROJECT_ROOT}/release" -cf - "$(basename "${ARCHIVE_ROOT}")" \
 # Keep only the staged bundle directory and the archive; drop PyInstaller's
 # work dir and the now-empty dist dir.
 rm -rf "${DIST_ROOT}" "${WORK_ROOT}"
+
+# PyInstaller logs reference its scratch --distpath (dist-linux), but that dir
+# is moved into the tagged folder and then deleted above. Point at the real
+# artifacts so the actual output location is unambiguous.
+echo
+echo "Build complete. Artifacts:"
+echo "  ${ARCHIVE_ROOT}/"
+echo "  ${ARCHIVE_PATH}"

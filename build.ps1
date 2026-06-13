@@ -30,6 +30,14 @@ try {
 
     # Keep only the staged bundle directory and the archive; drop intermediates.
     Remove-Item -Recurse -Force $DistRoot, $WorkRoot -ErrorAction SilentlyContinue
+
+    # PyInstaller logs reference its scratch --distpath (dist-windows), but that
+    # dir is moved into the tagged folder and then deleted above. Point at the
+    # real artifacts so the actual output location is unambiguous.
+    Write-Host ""
+    Write-Host "Build complete. Artifacts:"
+    Write-Host "  $ArchiveRoot/"
+    Write-Host "  $ArchivePath"
 }
 finally {
     Pop-Location
