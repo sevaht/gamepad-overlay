@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from sevaht_utility.log_utility import add_log_arguments, configure_logging
 
-from . import platform_dirs
+from . import user_config_path
 from .gamepad import (
     CONFIG_FILE_NAME,
     GamepadSelection,
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 def _config_path() -> Path:
-    return platform_dirs().user_config_path / CONFIG_FILE_NAME
+    return user_config_path() / CONFIG_FILE_NAME
 
 
 def _build_parser() -> argparse.ArgumentParser:

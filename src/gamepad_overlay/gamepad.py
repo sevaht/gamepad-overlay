@@ -340,11 +340,15 @@ class GamepadSelection:
         except Exception:  # noqa: BLE001
             config = {}
         config["selection"] = {
-            "guid": self.guid,
-            "vendor": self.vendor,
-            "product": self.product,
-            "port": self.port,
-            "name": self.name,
+            key: value
+            for key, value in (
+                ("guid", self.guid),
+                ("vendor", self.vendor),
+                ("product", self.product),
+                ("port", self.port),
+                ("name", self.name),
+            )
+            if value
         }
         path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
 

@@ -75,7 +75,6 @@ def test_save_selected_gamepad_persists_only_match_fields(
             "guid": "guid-1",
             "vendor": "1118",
             "product": "654",
-            "port": "",
             "name": "Pad",
         }
     }

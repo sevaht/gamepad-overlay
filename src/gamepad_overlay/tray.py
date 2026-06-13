@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from threading import Event, Lock, Thread
 from typing import TYPE_CHECKING, Any
 
-from . import platform_dirs
+from . import user_config_path
 from .gamepad import CONFIG_FILE_NAME, GamepadInfo
 from .gamepad_selector import (
     GamepadSelectorConfig,
@@ -111,9 +111,7 @@ class GamepadSelectorTray:
         lan: bool = False,
         terminal: bool = False,
     ) -> None:
-        self.config_path = (
-            config_path or platform_dirs().user_config_path / CONFIG_FILE_NAME
-        )
+        self.config_path = config_path or user_config_path() / CONFIG_FILE_NAME
         self.server_backend = ManagedServerBackend(
             config_path=self.config_path,
             port=load_server_port(self.config_path),
