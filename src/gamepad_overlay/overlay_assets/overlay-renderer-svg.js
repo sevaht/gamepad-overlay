@@ -44,8 +44,6 @@ const normalizeButtonColorVarsOnElement = OverlayCore.normalizeButtonColorVars;
 const assertFiniteNumber = OverlayCore.assertFiniteNumber;
 const Vector2 = OverlayCore.Vector2;
 const Region = OverlayCore.Region;
-const DpadLayout = OverlayCore.DpadLayout;
-const clampNormalizedOffsetToEllipse = OverlayCore.clampNormalizedOffsetToEllipse;
 
 const ShapeType = Object.freeze({
     RECTANGLE: Symbol("RECTANGLE"),
