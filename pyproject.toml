@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "gamepad-overlay"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Reads gamepad input and serves a local OBS overlay."
 authors = [
     {name = "Jacob McIntosh",email = "nacitar.sevaht@gmail.com"}
@@ -12,6 +12,24 @@ authors = [
 readme = "README.md"
 license = "Unlicense"
 requires-python = ">=3.12"
+keywords = [
+    "gamepad", "controller", "obs", "overlay", "streaming", "sdl",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Games/Entertainment",
+    "Topic :: Multimedia :: Graphics",
+    "Typing :: Typed",
+]
 dependencies = [
     "Pillow>=12.2.0",
     "PySDL3>=0.9.11b1",
@@ -40,11 +58,22 @@ dev = [
     "vulture (>=2.14,<3.0.0)",
 ]
 
+[project.urls]
+Homepage = "https://github.com/sevaht/gamepad-overlay"
+Source = "https://github.com/sevaht/gamepad-overlay"
+Issues = "https://github.com/sevaht/gamepad-overlay/issues"
+
 [tool.hatch.version]
 source = "vcs"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/gamepad_overlay"]
+
+[tool.hatch.build.targets.sdist]
+# Allowlist so dev/local files (.claude, checks, build.sh/.ps1, the PyInstaller
+# spec, release/, typings/, .github, ...) never leak into a published sdist.
+# pyproject.toml/PKG-INFO/README/.gitignore are force-included by hatchling.
+include = ["/src", "/tests", "/LICENSE"]
 
 [tool.entrypoint]
 module = "gamepad_overlay"

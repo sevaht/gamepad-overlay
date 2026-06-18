@@ -6,3 +6,5 @@ __pycache__/
 .mypy_cache/
 .ipynb_checkpoints/
 .pytest_cache/
+.ruff_cache/
+.claude/settings.local.json
