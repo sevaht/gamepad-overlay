@@ -85,7 +85,7 @@ skip-magic-trailing-comma = true
 [tool.mypy]
 strict = true
 mypy_path = ["typings"]
-exclude = ["^release/"]
+exclude = ["^release/", "^dist/"]
 
 [[tool.mypy.overrides]]
 module = "gamepad_overlay.tray_sni"
