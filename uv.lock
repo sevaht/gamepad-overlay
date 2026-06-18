@@ -493,7 +493,7 @@ requires-dist = [
     { name = "pysdl3", specifier = ">=0.9.11b1" },
     { name = "pystray", marker = "sys_platform == 'darwin' or sys_platform == 'win32'", specifier = ">=0.19.5" },
     { name = "python-xlib", marker = "sys_platform == 'linux'", specifier = ">=0.33" },
-    { name = "sevaht-utility", git = "https://github.com/nacitar/sevaht-utility.git?rev=main" },
+    { name = "sevaht-utility", specifier = ">=1.0.0" },
     { name = "websockets", specifier = ">=16.0" },
 ]
 
@@ -1347,8 +1347,12 @@ wheels = [
 
 [[package]]
 name = "sevaht-utility"
-version = "0.1.0"
-source = { git = "https://github.com/nacitar/sevaht-utility.git?rev=main#3e0190719cef24479ad5fa64ca582502a8823132" }
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/34/06/86d1d6ddca04fcad6560ab89fe83c8749035612e3f1aff54ccfd559ab08a/sevaht_utility-1.0.0.tar.gz", hash = "sha256:86e968598894eb320fcef5314a9b64434afebc0a84cd0adb352a37f2d5214ecb", size = 22417, upload-time = "2026-06-18T05:29:39.636Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/db/4c/2b8e4b536bcd5e378dd0b46b86ea14fd9ddf63524810515982964467087f/sevaht_utility-1.0.0-py3-none-any.whl", hash = "sha256:07ba477caeba7add130c537e35da237703388d425a962f00caf7060afea8ae59", size = 17964, upload-time = "2026-06-18T05:29:38.099Z" },
+]
 
 [[package]]
 name = "six"

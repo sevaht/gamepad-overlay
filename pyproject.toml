@@ -33,7 +33,7 @@ classifiers = [
 dependencies = [
     "Pillow>=12.2.0",
     "PySDL3>=0.9.11b1",
-    "sevaht-utility",
+    "sevaht-utility>=1.0.0",
     "websockets>=16.0",
     # Windows/macOS tray uses pystray; Linux uses the StatusNotifierItem
     # (dbus-next) backend, falling back to a self-contained XEmbed icon
@@ -121,6 +121,3 @@ select = [
 
 [tool.vulture]
 ignore_decorators = ["@dbus_method", "@dbus_property", "@dbus_signal"]
-
-[tool.uv.sources]
-sevaht-utility = { git = "https://github.com/nacitar/sevaht-utility.git", rev = "main" }
