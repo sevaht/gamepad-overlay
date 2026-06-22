@@ -318,7 +318,7 @@ class GamepadSelection:
             return "any gamepad"
         has_identity = bool(self.guid or self.vendor or self.product)
         port = self.port
-        name = self.name or "unknown controller"
+        name = self.name or "unknown gamepad"
         vid_pid = format_vid_pid(self.vendor, self.product)
         if vid_pid:
             named_identity = f"{name} [{vid_pid}]"
@@ -331,7 +331,7 @@ class GamepadSelection:
         if has_identity:
             return f"{named_identity} (any port)"
         if port:
-            return f"any controller on {port_display_name(port)}"
+            return f"any gamepad on {port_display_name(port)}"
         return "any gamepad"
 
     def save(self, path: Path) -> None:

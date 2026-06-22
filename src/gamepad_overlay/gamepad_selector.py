@@ -97,8 +97,8 @@ def _mode_texts(selected: GamepadSelection | None) -> tuple[str, str]:
     if selected is None or selected.is_any():
         return ("Any available gamepad", "")
     has_identity = bool(selected.guid or selected.vendor or selected.product)
-    name = selected.name or "Unknown controller"
-    main = name if has_identity else "Any controller"
+    name = selected.name or "Unknown gamepad"
+    main = name if has_identity else "Any gamepad"
     detail = selected.metadata_summary()
     return (main, detail)
 

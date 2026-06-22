@@ -71,7 +71,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--gamepad-name",
         metavar="NAME",
         help="Save a gamepad selection by name substring (resolves to the"
-        " matching controller's hardware identity) and exit.",
+        " matching gamepad's hardware identity) and exit.",
     )
     selection_group.add_argument(
         "--gamepad-port",
@@ -304,7 +304,7 @@ def _prompt_match_criteria(
     if selected_gamepad.port:
         port_label = port_display_name(selected_gamepad.port)
         print("  Match by:")
-        print("    1) Controller identity only (any port)")
+        print("    1) Gamepad identity only (any port)")
         print(f"    2) Physical port only ({port_label})")
         print("    3) Both identity and physical port")
         while True:
