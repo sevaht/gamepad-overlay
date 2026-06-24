@@ -245,7 +245,6 @@ class GamepadInfo:
     port: str
     vendor: str
     product: str
-    product_version: str
 
     def vid_pid(self) -> str:
         return format_vid_pid(self.vendor, self.product)
@@ -453,9 +452,6 @@ class SDLGamepad:
             ),
             product=SDLGamepad._device_integer(
                 gamepad_id, "SDL_GetGamepadProductForID"
-            ),
-            product_version=SDLGamepad._device_integer(
-                gamepad_id, "SDL_GetGamepadProductVersionForID"
             ),
         )
 

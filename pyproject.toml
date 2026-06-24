@@ -20,7 +20,6 @@ classifiers = [
     "Intended Audience :: End Users/Desktop",
     "Operating System :: POSIX :: Linux",
     "Operating System :: Microsoft :: Windows",
-    "Operating System :: MacOS",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.12",
@@ -34,13 +33,10 @@ dependencies = [
     "Pillow>=12.2.0",
     "PySDL3>=0.9.11b1",
     "sevaht-utility>=1.0.0",
+    # Tray icon + tkinter app base. Pulls in the platform tray backends
+    # transitively (pystray on Windows; dbus-next/python-xlib on Linux).
+    "sevaht-gui",
     "websockets>=16.0",
-    # Windows/macOS tray uses pystray; Linux uses the StatusNotifierItem
-    # (dbus-next) backend, falling back to a self-contained XEmbed icon
-    # (python-xlib) on bare X11 window managers with no SNI host.
-    "pystray>=0.19.5; sys_platform == 'win32' or sys_platform == 'darwin'",
-    "dbus-next>=0.2.3; sys_platform == 'linux'",
-    "python-xlib>=0.33; sys_platform == 'linux'",
     "platformdirs>=4.10.0",
 ]
 
@@ -66,6 +62,12 @@ Issues = "https://github.com/sevaht/gamepad-overlay/issues"
 [tool.hatch.version]
 source = "vcs"
 
+# Allow building before any tags/commits exist (fresh checkout with no history,
+# or a source tree with no .git): falls back instead of erroring. Real tags
+# override it, so release builds (which run on version tags) never use it.
+[tool.hatch.version.raw-options]
+fallback_version = "0.0.0"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/gamepad_overlay"]
 
@@ -84,18 +86,7 @@ skip-magic-trailing-comma = true
 
 [tool.mypy]
 strict = true
-mypy_path = ["typings"]
 exclude = ["^release/", "^dist/"]
-
-[[tool.mypy.overrides]]
-module = "gamepad_overlay.tray_sni"
-ignore_errors = true
-
-# pystray is a Windows/macOS-only dependency (not installed on Linux, where the
-# linters run) and ships no type stubs.
-[[tool.mypy.overrides]]
-module = "pystray"
-ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -116,8 +107,3 @@ select = [
 [tool.ruff.lint.per-file-ignores]
 "checks" = ["S603"]
 "tests/**/*" = ["PLR2004", "S101"]
-"**/tray_sni.py" = ["ANN201", "ARG002", "F722", "F821", "N802", "UP037"]
-"typings/Xlib/**/*.pyi" = ["ANN401", "A002", "N818"]
-
-[tool.vulture]
-ignore_decorators = ["@dbus_method", "@dbus_property", "@dbus_signal"]

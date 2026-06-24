@@ -4,16 +4,15 @@ from __future__ import annotations
 
 import contextlib
 import logging
-import queue
-import re
-import subprocess
 import tkinter as tk
 import webbrowser
 from dataclasses import dataclass, field
-from threading import Event, Thread, current_thread
+from threading import Thread
 from tkinter import ttk
-from typing import TYPE_CHECKING, ClassVar, Protocol, cast
+from typing import TYPE_CHECKING, ClassVar, Protocol
 from urllib.parse import urlencode
+
+from sevaht_gui import LabelGrooveFrame
 
 from .config import read_section, update_section
 from .gamepad import (
@@ -29,20 +28,19 @@ from .server import (
     load_server_port,
     save_server_port,
 )
-from .tk_utils import LabelGrooveFrame, setup_checkbutton_styles
-from .tray_render import _create_tk_window_icon
+from .tray_render import _create_face_buttons_image
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
+
+    from sevaht_gui import TkApp
 
 logger = logging.getLogger(__name__)
 
 
 class ServerBackend(Protocol):
     def ensure_started(self) -> None: ...
-
-    def status_label(self) -> str: ...
 
     def is_gamepad_connected(self) -> bool: ...
 
@@ -55,13 +53,25 @@ class ServerBackend(Protocol):
     def restart(self, new_port: int) -> None: ...
 
 
-def _status_text(*, attached: bool, client_count: int) -> str:
+APP_TITLE = "Gamepad Overlay"
+
+
+def _status_detail(*, attached: bool, client_count: int) -> str:
     state = "Attached" if attached else "Detached"
     client_label = "Client" if client_count == 1 else "Clients"
-    return (
-        f"Gamepad Overlay - {state} "
-        f"({client_count} {client_label} Connected)"
-    )
+    return f"{state} ({client_count} {client_label} Connected)"
+
+
+def _status_text(*, attached: bool, client_count: int) -> str:
+    """Single-line status for the window title bar."""
+    detail = _status_detail(attached=attached, client_count=client_count)
+    return f"{APP_TITLE} - {detail}"
+
+
+def _status_tooltip(*, attached: bool, client_count: int) -> str:
+    """Multiline status for the tray tooltip: title line then the detail."""
+    detail = _status_detail(attached=attached, client_count=client_count)
+    return f"{APP_TITLE}\n{detail}"
 
 
 def _gamepad_display_names(gamepads: list[GamepadInfo]) -> list[str]:
@@ -125,12 +135,16 @@ def _safe_float(text: str, default: float) -> float:
 @dataclass
 class GamepadSelectorConfig:
     hide_on_close: bool
-    quit_callback: Callable[[], None] | None = field(default=None)
     selection_changed_callback: Callable[[], None] | None = field(default=None)
 
 
 class OverlayUrlWindow:
-    """Singleton Toplevel for viewing and configuring the overlay URL."""
+    """Toplevel for viewing and configuring the overlay URL.
+
+    Created on demand and destroyed on close (settings persist to config, so a
+    fresh instance restores the same state); ``on_close`` notifies the owner so
+    it can drop its reference.
+    """
 
     _DEFAULTS: ClassVar[dict[str, object]] = {
         "source": "websocket",
@@ -143,19 +157,26 @@ class OverlayUrlWindow:
 
     def __init__(
         self,
-        parent: tk.Tk,
+        app: TkApp,
         config_path: Path,
         server_backend: ServerBackend | None = None,
+        on_close: Callable[[], None] | None = None,
     ) -> None:
         self._config_path = config_path
         self._server_backend = server_backend
+        self._on_close = on_close
         self._apply_button: ttk.Button | None = None
         self._applied_port: int = load_server_port(self._config_path)
-        self._window = tk.Toplevel(parent)
+        self._window = tk.Toplevel(app.root)
         self._window.title("Gamepad Overlay URL")
         self._window.resizable(False, False)
-        self._window.transient(parent)
-        self._window.protocol("WM_DELETE_WINDOW", self._window.withdraw)
+        self._window.transient(app.root)
+        self._window.protocol("WM_DELETE_WINDOW", self._close)
+        # Build the window hidden so it does not flash at its initial tiny size
+        # while widgets are laid out; show_and_raise reveals it once sized.
+        self._window.withdraw()
+        # Mirror the main window's (connection-state) icon, live.
+        app.track_window_icon(self._window)
 
         window = self._window
         self._source_var = tk.StringVar(master=window)
@@ -368,9 +389,9 @@ class OverlayUrlWindow:
 
         reset_frame = ttk.Frame(outer)
         reset_frame.pack(fill=tk.X, padx=4, pady=(8, 4))
-        ttk.Button(
-            reset_frame, text="Close", command=self._window.withdraw
-        ).pack(side=tk.RIGHT)
+        ttk.Button(reset_frame, text="Close", command=self._close).pack(
+            side=tk.RIGHT
+        )
         ttk.Button(
             reset_frame,
             text="Reset to Defaults",
@@ -487,13 +508,17 @@ class OverlayUrlWindow:
     def _launch_browser(self) -> None:
         webbrowser.open(self._url_var.get())
 
-    def update_icon(self, icon: tk.PhotoImage) -> None:
-        self._window.iconphoto(True, icon)
-        self._window.update_idletasks()
+    def _close(self) -> None:
+        self._window.destroy()
+        if self._on_close is not None:
+            self._on_close()
 
     def show_and_raise(self) -> None:
         self._port_var.set(str(self._applied_port))
         self._update_apply_button_state()
+        # Compute the layout while still hidden so it appears at full size and
+        # the WM positions it (relative to the parent) correctly.
+        self._window.update_idletasks()
         self._window.deiconify()
         self._window.lift()
         self._window.focus_force()
@@ -503,281 +528,184 @@ class OverlayUrlWindow:
 class GamepadSelectorWindow:
     def __init__(
         self,
+        app: TkApp,
         config_path: Path,
         window_config: GamepadSelectorConfig,
         *,
         server_backend: ServerBackend | None = None,
     ) -> None:
+        self.app = app
+        self.root = app.root
         self.config_path = config_path
         self.server_backend = server_backend
         self.hide_on_close = window_config.hide_on_close
-        self.quit_callback = window_config.quit_callback
         self.selection_changed_callback = (
             window_config.selection_changed_callback
         )
         self.gamepads: list[GamepadInfo] = []
         self._saved_selection: GamepadSelection | None = None
         self._window_icon_connected: bool | None = None
-        self._quit_dialog: tk.Toplevel | None = None
         self._overlay_url_window: OverlayUrlWindow | None = None
-        self._ui_ready = Event()
-        self._ui_closed = Event()
-        self._ui_queue: queue.SimpleQueue[
-            tuple[Callable[[], object], Event | None, list[object] | None]
-        ] = queue.SimpleQueue()
-        self._ui_error: Exception | None = None
-        self._poll_after_id: str | None = None
-        self._ui_thread = Thread(
-            target=self._run_ui_thread,
-            name="gamepad-overlay-selector",
-            daemon=True,
+        self._build_ui()
+        self._reload()
+        # Start hidden; the tray decides when (and whether) to show the window.
+        self.root.withdraw()
+
+    def _build_ui(self) -> None:  # noqa: PLR0915
+        # Theme and the window-close protocol are handled by TkApp.
+        self.root.geometry("750x500")
+        self.root.minsize(750, 420)
+
+        content = ttk.Frame(self.root, padding=18)
+        content.pack(fill=tk.BOTH, expand=True)
+        content.columnconfigure(0, weight=1)
+        # row 0=mode bar, row 1=list (expands), row 2=criteria, row 3=buttons
+        content.rowconfigure(1, weight=1)
+
+        # Row 0: Target indicator — "Target:" prefix | name (row 0) / detail (row 1)
+        mode_frame = ttk.Frame(content)
+        mode_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        mode_frame.columnconfigure(1, weight=1)
+        ttk.Label(
+            mode_frame, text="Target:", font=("TkDefaultFont", 0, "bold")
+        ).grid(row=0, column=0, sticky="nw", padx=(0, 8))
+        self.mode_label = ttk.Label(
+            mode_frame,
+            text="Any available gamepad",
+            font=("TkDefaultFont", 0, "bold"),
         )
-        self._ui_thread.start()
-        self._ui_ready.wait(timeout=5)
-        if self._ui_error is not None:
-            msg = "Failed to initialize tkinter selector"
-            raise RuntimeError(msg) from self._ui_error
-        if not self._ui_ready.is_set():
-            msg = "Timed out initializing tkinter selector window."
-            raise RuntimeError(msg)
+        self.mode_label.grid(row=0, column=1, sticky="w")
+        self.mode_detail_label = ttk.Label(mode_frame, text="")
+        self.mode_detail_label.grid(row=1, column=1, sticky="w")
 
-    def _on_ui_thread(self) -> bool:
-        return current_thread() is self._ui_thread
+        # Row 1: Gamepad list
+        list_frame = ttk.Frame(content)
+        list_frame.grid(row=1, column=0, sticky="nsew")
+        list_frame.columnconfigure(0, weight=1)
+        list_frame.rowconfigure(0, weight=1)
 
-    def _invoke_ui(self, callback: Callable[[], object]) -> None:
-        if self._ui_closed.is_set():
-            return
-        if self._on_ui_thread():
-            callback()
-            return
-        self._ui_queue.put((callback, None, None))
-
-    def _invoke_ui_sync(self, callback: Callable[[], object]) -> object:
-        if self._ui_closed.is_set():
-            return False
-        if self._on_ui_thread():
-            return callback()
-        done = Event()
-        result: list[object] = []
-        self._ui_queue.put((callback, done, result))
-        done.wait(timeout=5)
-        return result[0] if result else False
-
-    def _poll_ui_queue(self) -> None:
-        while True:
-            try:
-                callback, done, result = self._ui_queue.get_nowait()
-            except queue.Empty:
-                break
-            try:
-                value = callback()
-                if result is not None:
-                    result.append(value)
-            except Exception:  # noqa: BLE001
-                # A queued UI callback may raise anything; one bad callback
-                # must not tear down the Tk event loop, so swallow and log it.
-                logger.debug("Error in UI callback", exc_info=True)
-            finally:
-                if done is not None:
-                    done.set()
-        if not self._ui_closed.is_set():
-            if self._poll_after_id is not None:
-                with contextlib.suppress(tk.TclError):
-                    self.root.after_cancel(self._poll_after_id)
-            self._poll_after_id = self.root.after(25, self._poll_ui_queue)
-
-    def _run_ui_thread(self) -> None:  # noqa: PLR0915
-        try:
-            self.root = tk.Tk()
-            style = ttk.Style()
-            style.theme_use("clam")
-            setup_checkbutton_styles()
-            self._window_icons: dict[bool, object] = {}
-            self.root.geometry("750x500")
-            self.root.minsize(750, 420)
-            self.root.protocol("WM_DELETE_WINDOW", self._dismiss)
-
-            content = ttk.Frame(self.root, padding=18)
-            content.pack(fill=tk.BOTH, expand=True)
-            content.columnconfigure(0, weight=1)
-            # row 0=mode bar, row 1=list (expands), row 2=criteria, row 3=buttons
-            content.rowconfigure(1, weight=1)
-
-            # Row 0: Target indicator — "Target:" prefix | name (row 0) / detail (row 1)
-            mode_frame = ttk.Frame(content)
-            mode_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
-            mode_frame.columnconfigure(1, weight=1)
-            ttk.Label(
-                mode_frame, text="Target:", font=("TkDefaultFont", 0, "bold")
-            ).grid(row=0, column=0, sticky="nw", padx=(0, 8))
-            self.mode_label = ttk.Label(
-                mode_frame,
-                text="Any available gamepad",
-                font=("TkDefaultFont", 0, "bold"),
+        self.gamepad_list = ttk.Treeview(
+            list_frame,
+            columns=("name", "identity", "port"),
+            show="headings",
+            selectmode="browse",
+        )
+        self.gamepad_list.heading("name", text="Gamepad")
+        self.gamepad_list.heading("identity", text="Identity")
+        self.gamepad_list.heading("port", text="Physical Port")
+        initial_list_width = 700
+        column_proportions = (0.41, 0.26, 0.33)
+        for column_name, proportion in zip(
+            ("name", "identity", "port"), column_proportions, strict=True
+        ):
+            self.gamepad_list.column(
+                column_name,
+                width=int(initial_list_width * proportion),
+                anchor=tk.W,
             )
-            self.mode_label.grid(row=0, column=1, sticky="w")
-            self.mode_detail_label = ttk.Label(mode_frame, text="")
-            self.mode_detail_label.grid(row=1, column=1, sticky="w")
+        self.gamepad_list.tag_configure("active", foreground="#2e7d32")
+        self.gamepad_list.tag_configure("pinned", foreground="#1565c0")
+        self.gamepad_list.tag_configure(
+            "active_pinned", foreground="#2e7d32", background="#e3f2fd"
+        )
+        self.gamepad_list.grid(row=0, column=0, sticky="nsew")
+        self.gamepad_list.bind(
+            "<<TreeviewSelect>>",
+            lambda _event: self._update_select_button_state(),
+        )
+        self.gamepad_list.bind(
+            "<Double-1>", lambda _event: self.select_current_gamepad()
+        )
+        self.gamepad_list.bind("<Configure>", self._on_gamepad_list_resize)
 
-            # Row 1: Gamepad list
-            list_frame = ttk.Frame(content)
-            list_frame.grid(row=1, column=0, sticky="nsew")
-            list_frame.columnconfigure(0, weight=1)
-            list_frame.rowconfigure(0, weight=1)
+        scrollbar = ttk.Scrollbar(
+            list_frame, orient=tk.VERTICAL, command=self.gamepad_list.yview
+        )
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        self.gamepad_list.configure(yscrollcommand=scrollbar.set)
 
-            self.gamepad_list = ttk.Treeview(
-                list_frame,
-                columns=("name", "identity", "port"),
-                show="headings",
-                selectmode="browse",
-            )
-            self.gamepad_list.heading("name", text="Gamepad")
-            self.gamepad_list.heading("identity", text="Identity")
-            self.gamepad_list.heading("port", text="Physical Port")
-            initial_list_width = 700
-            column_proportions = (0.41, 0.26, 0.33)
-            for column_name, proportion in zip(
-                ("name", "identity", "port"), column_proportions, strict=True
-            ):
-                self.gamepad_list.column(
-                    column_name,
-                    width=int(initial_list_width * proportion),
-                    anchor=tk.W,
-                )
-            self.gamepad_list.tag_configure("active", foreground="#2e7d32")
-            self.gamepad_list.tag_configure("pinned", foreground="#1565c0")
-            self.gamepad_list.tag_configure(
-                "active_pinned", foreground="#2e7d32", background="#e3f2fd"
-            )
-            self.gamepad_list.grid(row=0, column=0, sticky="nsew")
-            self.gamepad_list.bind(
-                "<<TreeviewSelect>>",
-                lambda _event: self._update_select_button_state(),
-            )
-            self.gamepad_list.bind(
-                "<Double-1>", lambda _event: self.select_current_gamepad()
-            )
-            self.gamepad_list.bind("<Configure>", self._on_gamepad_list_resize)
+        # Row 2: Criteria LabelFrame (left) + other buttons (right), all in one row
+        self.pin_identity_var = tk.BooleanVar(value=True)
+        self.pin_port_var = tk.BooleanVar(value=False)
 
-            scrollbar = ttk.Scrollbar(
-                list_frame, orient=tk.VERTICAL, command=self.gamepad_list.yview
-            )
-            scrollbar.grid(row=0, column=1, sticky="ns")
-            self.gamepad_list.configure(yscrollcommand=scrollbar.set)
+        bottom_row = ttk.Frame(content)
+        bottom_row.grid(row=2, column=0, sticky="ew", pady=(8, 0))
 
-            # Row 2: Criteria LabelFrame (left) + other buttons (right), all in one row
-            self.pin_identity_var = tk.BooleanVar(value=True)
-            self.pin_port_var = tk.BooleanVar(value=False)
+        criteria_box = LabelGrooveFrame(bottom_row, text="Criteria")
+        criteria_box.pack(side=tk.LEFT, anchor="sw")
 
-            bottom_row = ttk.Frame(content)
-            bottom_row.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        left_frame = ttk.Frame(criteria_box.interior)
+        left_frame.grid(row=0, column=0, sticky="nsw", padx=(6, 0))
 
-            criteria_box = LabelGrooveFrame(bottom_row, text="Criteria")
-            criteria_box.pack(side=tk.LEFT, anchor="sw")
+        ttk.Checkbutton(
+            left_frame, text="Identity", variable=self.pin_identity_var
+        ).pack(anchor="w")
+        ttk.Checkbutton(
+            left_frame, text="Physical port", variable=self.pin_port_var
+        ).pack(anchor="w")
+        self.select_button = ttk.Button(
+            left_frame,
+            text="Select Gamepad",
+            command=self.select_current_gamepad,
+        )
+        self.select_button.pack(anchor="w", pady=(4, 0))
 
-            left_frame = ttk.Frame(criteria_box.interior)
-            left_frame.grid(row=0, column=0, sticky="nsw", padx=(6, 0))
+        self.pin_identity_var.trace_add(
+            "write", lambda *_: self._update_select_button_state()
+        )
+        self.pin_port_var.trace_add(
+            "write", lambda *_: self._update_select_button_state()
+        )
 
-            ttk.Checkbutton(
-                left_frame, text="Identity", variable=self.pin_identity_var
-            ).pack(anchor="w")
-            ttk.Checkbutton(
-                left_frame, text="Physical port", variable=self.pin_port_var
-            ).pack(anchor="w")
-            self.select_button = ttk.Button(
-                left_frame,
-                text="Select Gamepad",
-                command=self.select_current_gamepad,
-            )
-            self.select_button.pack(anchor="w", pady=(4, 0))
+        ttk.Separator(criteria_box.interior, orient=tk.VERTICAL).grid(
+            row=0, column=1, sticky="nsew", padx=10
+        )
 
-            self.pin_identity_var.trace_add(
-                "write", lambda *_: self._update_select_button_state()
-            )
-            self.pin_port_var.trace_add(
-                "write", lambda *_: self._update_select_button_state()
-            )
+        self.any_button = ttk.Button(
+            criteria_box.interior,
+            text="Any Gamepad",
+            command=self.use_any_gamepad,
+        )
+        self.any_button.grid(row=0, column=2, sticky="sw", padx=(0, 6))
 
-            ttk.Separator(criteria_box.interior, orient=tk.VERTICAL).grid(
-                row=0, column=1, sticky="nsew", padx=10
-            )
+        # Right side: Overlay URL button above Quit/Hide buttons
+        right_frame = ttk.Frame(bottom_row)
+        right_frame.pack(side=tk.RIGHT, anchor="s")
 
-            self.any_button = ttk.Button(
-                criteria_box.interior,
-                text="Any Gamepad",
-                command=self.use_any_gamepad,
-            )
-            self.any_button.grid(row=0, column=2, sticky="sw", padx=(0, 6))
+        ttk.Button(
+            right_frame,
+            text="Overlay URL...",
+            command=self._open_overlay_url_window,
+        ).pack(fill=tk.X, pady=(0, 4))
 
-            # Right side: Overlay URL button above Quit/Hide buttons
-            right_frame = ttk.Frame(bottom_row)
-            right_frame.pack(side=tk.RIGHT, anchor="s")
+        dismiss_frame = ttk.Frame(right_frame)
+        dismiss_frame.pack(fill=tk.X)
 
-            ttk.Button(
-                right_frame,
-                text="Overlay URL...",
-                command=self._open_overlay_url_window,
-            ).pack(fill=tk.X, pady=(0, 4))
-
-            dismiss_frame = ttk.Frame(right_frame)
-            dismiss_frame.pack(fill=tk.X)
-
-            if self.hide_on_close:
-                ttk.Button(
-                    dismiss_frame, text="Hide", command=self._dismiss
-                ).pack(side=tk.RIGHT)
-
-            ttk.Button(
-                dismiss_frame,
-                text="Quit" if self.hide_on_close else "Close",
-                command=(
-                    self._request_quit if self.hide_on_close else self._dismiss
-                ),
-            ).pack(
-                side=tk.RIGHT, padx=(0, 6) if self.hide_on_close else (0, 0)
-            )
-
-            self.root.withdraw()
-            self._ui_ready.set()
-            self._poll_ui_queue()
-            self._reload()
-            self.root.mainloop()
-        except tk.TclError as exc:
-            self._ui_error = exc
-            self._ui_ready.set()
-        finally:
-            self._ui_closed.set()
-
-    def _dismiss(self) -> None:
+        # The window-close (X) button is handled by TkApp: it hides when a tray
+        # houses the window and quits (with confirmation) otherwise.
         if self.hide_on_close:
-            self.root.withdraw()
-            return
-        self._close_ui()
+            ttk.Button(dismiss_frame, text="Hide", command=self.app.hide).pack(
+                side=tk.RIGHT
+            )
+
+        ttk.Button(dismiss_frame, text="Quit", command=self.app.quit).pack(
+            side=tk.RIGHT, padx=(0, 6) if self.hide_on_close else (0, 0)
+        )
 
     def _open_overlay_url_window(self) -> None:
+        # Create on demand and destroy on close (settings persist to config, so
+        # nothing is lost); the guard just avoids opening a second copy.
         if self._overlay_url_window is None:
             self._overlay_url_window = OverlayUrlWindow(
-                self.root, self.config_path, server_backend=self.server_backend
+                self.app,
+                self.config_path,
+                server_backend=self.server_backend,
+                on_close=self._clear_overlay_url_window,
             )
-            if self._window_icon_connected is not None:
-                icon = self._window_icons.get(self._window_icon_connected)
-                if icon is not None:
-                    self._overlay_url_window.update_icon(
-                        cast("tk.PhotoImage", icon)
-                    )
         self._overlay_url_window.show_and_raise()
 
-    def hide(self) -> None:
-        self._invoke_ui(self.root.withdraw)
-
-    def _close_ui(self) -> bool:
-        if self._ui_closed.is_set():
-            return False
-        try:
-            self.root.destroy()
-        except tk.TclError:
-            return False
-        return True
+    def _clear_overlay_url_window(self) -> None:
+        self._overlay_url_window = None
 
     def _current_selected_row(self) -> int | None:
         selection = self.gamepad_list.selection()
@@ -854,36 +782,15 @@ class GamepadSelectorWindow:
             _status_text(attached=attached, client_count=client_count)
         )
         if attached != self._window_icon_connected:
-            icon = self._window_icons.get(attached)
-            if icon is None:
-                icon = _create_tk_window_icon(connected=attached)
-                self._window_icons[attached] = icon
-            self.root.iconphoto(True, cast("tk.PhotoImage", icon))
+            # Updates the root icon (and, via Tk's default, any toplevels
+            # opened afterwards such as the quit-confirm dialog).
+            self.app.set_window_icon(
+                _create_face_buttons_image(connected=attached)
+            )
             self._window_icon_connected = attached
-            if self._quit_dialog is not None:
-                try:
-                    self._quit_dialog.iconphoto(
-                        True, cast("tk.PhotoImage", icon)
-                    )
-                    self._quit_dialog.update_idletasks()
-                except tk.TclError:
-                    pass
-            if self._overlay_url_window is not None:
-                with contextlib.suppress(tk.TclError):
-                    self._overlay_url_window.update_icon(
-                        cast("tk.PhotoImage", icon)
-                    )
 
     def update_connection_state(self) -> None:
-        self._invoke_ui(self._update_connection_state_ui)
-
-    def run_on_ui_thread(self, callback: Callable[[], object]) -> None:
-        """Run ``callback`` on the tkinter event-loop thread."""
-        self._invoke_ui(callback)
-
-    def _request_quit(self) -> None:
-        if self.quit_callback is not None:
-            self.quit_callback()
+        self.app.run_on_ui_thread(self._update_connection_state_ui)
 
     def _populate_gamepad_rows(
         self,
@@ -939,9 +846,10 @@ class GamepadSelectorWindow:
         self._update_select_button_state()
 
     def _reload(self) -> None:
-        if self.server_backend is not None:
-            self.server_backend.ensure_started()
-
+        # The tray owns the server lifecycle; _reload only reads from it. (It
+        # used to call ensure_started here, but that races the tray's own
+        # startup -- the server thread could fire callbacks before self.icon
+        # existed.)
         previous_row = self._current_selected_row()
         self.gamepad_list.delete(*self.gamepad_list.get_children())
 
@@ -989,122 +897,13 @@ class GamepadSelectorWindow:
         self._populate_gamepad_rows(selected, active_gamepad, previous_row)
 
     def show(self) -> None:
-        def _show() -> None:
-            self._reload()
-            if self.root.state() == "withdrawn":
-                monitor_x, monitor_y, monitor_width, monitor_height = (
-                    self._primary_monitor_bounds()
-                )
-                window_width = self.root.winfo_reqwidth()
-                window_height = self.root.winfo_reqheight()
-                x = monitor_x + max(0, (monitor_width - window_width) // 2)
-                y = monitor_y + max(0, (monitor_height - window_height) // 3)
-                self.root.geometry(f"+{x}+{y}")
-            self.root.deiconify()
-            self.root.lift()
-            self.root.focus_force()
-
-        self._invoke_ui(_show)
-
-    def _primary_monitor_bounds(self) -> tuple[int, int, int, int]:
-        try:
-            result = subprocess.run(
-                ["xrandr", "--current"],  # noqa: S607
-                capture_output=True,
-                text=True,
-                timeout=2,
-                check=False,
-            )
-            for line in result.stdout.splitlines():
-                if "primary" in line:
-                    match = re.search(r"(\d+)x(\d+)\+(\d+)\+(\d+)", line)
-                    if match:
-                        width, height, x, y = map(int, match.groups())
-                        return (x, y, width, height)
-        except (OSError, subprocess.SubprocessError):
-            logger.debug(
-                "Could not query xrandr for monitor bounds", exc_info=True
-            )
-        screen_width = self.root.winfo_screenwidth()
-        screen_height = self.root.winfo_screenheight()
-        return (0, 0, screen_width, screen_height)
+        # Refresh the gamepad list, then let TkApp center and reveal the
+        # window (its show centers on the primary monitor when withdrawn).
+        self.app.run_on_ui_thread(self._reload)
+        self.app.show()
 
     def refresh(self) -> None:
-        self._invoke_ui(self._reload)
-
-    def confirm_quit(self) -> bool:
-        def _confirm() -> bool:
-            result = tk.BooleanVar(value=False)
-
-            dialog = tk.Toplevel()
-            dialog.title("Quit Gamepad Overlay")
-            dialog.resizable(False, False)
-            if str(self.root.state()) != "withdrawn":
-                dialog.transient(self.root)
-
-            # Copy the main window icon to the dialog title bar
-            if self._window_icon_connected is not None:
-                icon = self._window_icons.get(self._window_icon_connected)
-                if icon is not None:
-                    with contextlib.suppress(tk.TclError):
-                        dialog.iconphoto(True, cast("tk.PhotoImage", icon))
-
-            frame = ttk.Frame(dialog, padding=20)
-            frame.pack()
-
-            ttk.Label(
-                frame,
-                text="Quit the tray and stop the managed gamepad server?",
-                wraplength=300,
-            ).pack(pady=(0, 10))
-
-            button_frame = ttk.Frame(frame)
-            button_frame.pack()
-
-            def close_dialog() -> None:
-                self._quit_dialog = None
-                dialog.destroy()
-
-            def on_yes() -> None:
-                result.set(True)
-                close_dialog()
-
-            def on_no() -> None:
-                result.set(False)
-                close_dialog()
-
-            ttk.Button(button_frame, text="Yes", command=on_yes).pack(
-                side=tk.LEFT, padx=5
-            )
-            ttk.Button(button_frame, text="No", command=on_no).pack(
-                side=tk.LEFT, padx=5
-            )
-
-            dialog_width = dialog.winfo_reqwidth()
-            dialog_height = dialog.winfo_reqheight()
-            if str(self.root.state()) != "withdrawn":
-                root_x = self.root.winfo_x()
-                root_y = self.root.winfo_y()
-                root_width = self.root.winfo_width()
-                root_height = self.root.winfo_height()
-                x = root_x + (root_width - dialog_width) // 2
-                y = root_y + (root_height - dialog_height) // 2
-            else:
-                monitor_x, monitor_y, monitor_width, monitor_height = (
-                    self._primary_monitor_bounds()
-                )
-                x = monitor_x + max(0, (monitor_width - dialog_width) // 2)
-                y = monitor_y + max(0, (monitor_height - dialog_height) // 3)
-            dialog.geometry(f"+{x}+{y}")
-            dialog.update_idletasks()
-            self._quit_dialog = dialog
-            dialog.grab_set()
-            dialog.focus_set()
-            dialog.wait_window()
-
-            return result.get()
-
-        return bool(self._invoke_ui_sync(_confirm))
+        self.app.run_on_ui_thread(self._reload)
 
     def select_current_gamepad(self) -> None:
         def _select() -> None:
@@ -1123,7 +922,7 @@ class GamepadSelectorWindow:
             if self.selection_changed_callback is not None:
                 self.selection_changed_callback()
 
-        self._invoke_ui(_select)
+        self.app.run_on_ui_thread(_select)
 
     def use_any_gamepad(self) -> None:
         def _use_any() -> None:
@@ -1132,9 +931,4 @@ class GamepadSelectorWindow:
             if self.selection_changed_callback is not None:
                 self.selection_changed_callback()
 
-        self._invoke_ui(_use_any)
-
-    def close(self) -> None:
-        self._invoke_ui_sync(self._close_ui)
-        if self._ui_thread.is_alive() and not self._on_ui_thread():
-            self._ui_thread.join(timeout=1)
+        self.app.run_on_ui_thread(_use_any)

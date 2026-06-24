@@ -29,7 +29,6 @@ def _make_gamepad(  # noqa: PLR0913
     port: str = "",
     vendor: str = "",
     product: str = "",
-    product_version: str = "",
 ) -> GamepadInfo:
     return GamepadInfo(
         index=index,
@@ -39,7 +38,6 @@ def _make_gamepad(  # noqa: PLR0913
         port=port,
         vendor=vendor,
         product=product,
-        product_version=product_version,
     )
 
 
@@ -87,9 +85,7 @@ def test_gamepad_matches_selection_is_case_insensitive_for_guid() -> None:
 
 
 def test_gamepad_matches_selection_ignores_unstable_metadata() -> None:
-    gamepad = _make_gamepad(
-        guid="guid-1", name="Pad", path="new-path", product_version="2"
-    )
+    gamepad = _make_gamepad(guid="guid-1", name="Pad", path="new-path")
     selection = GamepadSelection(guid="GUID-1", name="Pad")
     assert selection.matches(gamepad)
 
@@ -112,9 +108,7 @@ def test_gamepad_matches_selection_ignores_name_differences() -> None:
 
 
 def test_gamepad_metadata_summary_formats_vid_pid() -> None:
-    gamepad = _make_gamepad(
-        vendor="1118", product="654", product_version="276"
-    )
+    gamepad = _make_gamepad(vendor="1118", product="654")
     assert gamepad.metadata_summary() == "[045e:028e]"
 
 
@@ -159,7 +153,8 @@ def test_managed_server_backend_starts_in_process_server(
     backend.thread.join(timeout=1) if backend.thread is not None else None
 
     assert calls
-    assert backend.status_label() == "Server: stopped"
+    assert backend.thread is not None
+    assert not backend.thread.is_alive()
 
 
 def test_managed_server_backend_tracks_gamepad_connection() -> None:
@@ -196,7 +191,7 @@ def test_reload_selection_updates_saved_match_fields(tmp_path: Path) -> None:
     assert gamepad.selected_gamepad is None
 
 
-def test_managed_server_backend_status_is_running_while_thread_alive(
+def test_managed_server_backend_thread_alive_while_running(
     monkeypatch: MonkeyPatch,
 ) -> None:
     started = False
@@ -213,7 +208,8 @@ def test_managed_server_backend_status_is_running_while_thread_alive(
     backend.ensure_started()
 
     assert started
-    assert backend.status_label() == "Server: running"
+    assert backend.thread is not None
+    assert backend.thread.is_alive()
 
     backend.stop()
 

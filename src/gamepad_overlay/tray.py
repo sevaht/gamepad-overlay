@@ -1,20 +1,20 @@
 from __future__ import annotations
 
 import logging
-import signal
 from dataclasses import dataclass, field
 from threading import Event, Lock, Thread
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
+
+from sevaht_gui import TkApp
 
 from . import user_config_path
 from .config import CONFIG_FILE_NAME
 from .gamepad_selector import (
     GamepadSelectorConfig,
     GamepadSelectorWindow,
-    _status_text,
+    _status_tooltip,
 )
 from .server import DEFAULT_PORT, ServerRunConfig, load_server_port, run_server
-from .tray_backend import create_tray_icon
 from .tray_render import _tray_icon_renderer
 
 logger = logging.getLogger(__name__)
@@ -23,8 +23,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    from sevaht_gui import TrayIcon
+
     from .gamepad import GamepadInfo
-    from .tray_backend import TrayIcon
 
 
 @dataclass
@@ -38,14 +39,12 @@ class ManagedServerBackend:
     client_count_callback: Callable[[int], None] | None = None
     thread: Thread | None = field(default=None, init=False)
     stop_event: Event = field(default_factory=Event, init=False)
-    failed: bool = field(default=False, init=False)
     active_gamepad_info: GamepadInfo | None = field(default=None, init=False)
     connected_client_count: int = field(default=0, init=False)
 
     def ensure_started(self) -> None:
         if self.thread is not None and self.thread.is_alive():
             return
-        self.failed = False
         self.stop_event.clear()
         self.thread = Thread(
             target=self._run_server, name="gamepad-overlay", daemon=True
@@ -67,17 +66,9 @@ class ManagedServerBackend:
                 )
             )
         except Exception:
-            # Top-level guard for the background server thread: surface any
-            # failure via the status label instead of dying silently.
-            self.failed = True
+            # Top-level guard for the background server thread: log any failure
+            # instead of dying silently.
             logger.exception("Managed gamepad server stopped unexpectedly")
-
-    def status_label(self) -> str:
-        if self.thread is not None and self.thread.is_alive():
-            return "Server: running"
-        if self.failed:
-            return "Server: stopped unexpectedly"
-        return "Server: stopped"
 
     def is_gamepad_connected(self) -> bool:
         return self.active_gamepad_info is not None
@@ -122,39 +113,55 @@ class GamepadSelectorTray:
             active_gamepad_callback=self._handle_active_gamepad_changed,
             client_count_callback=self._handle_client_count_changed,
         )
-        self.server_backend.ensure_started()
+        self._tray_lock = Lock()
+        self._tray_icon_connected: bool | None = None
+        self._tray_title = _status_tooltip(attached=False, client_count=0)
+        self._start_hidden = False
+        # Option A: tk owns the main thread; the tray icon (if any) runs on a
+        # worker thread via app.run. The app handles theme, the window-close
+        # behavior, and the quit confirmation.
+        self.app = TkApp(
+            quit_confirm="Quit the tray and stop the managed gamepad server?"
+        )
+        # Create the tray first so the window knows whether one exists (it
+        # adapts its close button accordingly). None => no system tray, and the
+        # app runs window-only.
+        # on_activate resolves self.window lazily (it is created just below).
+        self.tray_icon: TrayIcon | None = self.app.create_tray_icon(
+            "gamepad-overlay",
+            self._tray_title,
+            _tray_icon_renderer(False),
+            on_activate=self._show_window,
+            activate_label="Configure...",
+        )
         self.window = GamepadSelectorWindow(
+            self.app,
             self.config_path,
             GamepadSelectorConfig(
-                hide_on_close=True,
-                quit_callback=self._request_quit,
+                hide_on_close=self.app.has_tray,
                 selection_changed_callback=self._sync_connection_state,
             ),
             server_backend=self.server_backend,
         )
-        self._tray_lock = Lock()
-        self._tray_icon_connected: bool | None = None
-        self._tray_title = _status_text(attached=False, client_count=0)
-        self._start_hidden = False
-        self.icon: TrayIcon = create_tray_icon(
-            "gamepad-overlay",
-            self._tray_title,
-            _tray_icon_renderer(False),
-            on_activate=self.window.show,
-            on_quit=self._request_quit,
-        )
         self._sync_connection_state()
+        # Start the managed server last: its callbacks touch self.tray_icon and
+        # self.window, so both must exist before the server thread can fire.
+        self.server_backend.ensure_started()
 
     def _apply_tray_state(self) -> None:
+        if self.tray_icon is None:
+            # No system tray; the window still reflects status (title/icon) via
+            # update_connection_state, so there is nothing to update here.
+            return
         with self._tray_lock:
             connected = self.server_backend.is_gamepad_connected()
-            title = _status_text(
+            title = _status_tooltip(
                 attached=connected,
                 client_count=self.server_backend.client_count(),
             )
-            self.icon.title = title
+            self.tray_icon.title = title
             if connected != self._tray_icon_connected:
-                self.icon.set_icon(_tray_icon_renderer(connected))
+                self.tray_icon.set_icon(_tray_icon_renderer(connected))
                 self._tray_icon_connected = connected
             self._tray_title = title
 
@@ -177,27 +184,18 @@ class GamepadSelectorTray:
         self.window.update_connection_state()
         self._apply_tray_state()
 
-    def _request_quit(self) -> None:
-        def confirm_and_shutdown() -> None:
-            if not self.window.confirm_quit():
-                return
-            self.shutdown()
+    def _show_window(self) -> None:
+        self.window.show()
 
-        self.window.run_on_ui_thread(confirm_and_shutdown)
-
-    def shutdown(self) -> None:
-        self.window.close()
-        self.server_backend.stop()
-        self.icon.stop()
-
-    def _setup(self, _icon: object) -> None:
-        self.icon.visible = True
+    def _on_tray_ready(self) -> None:
+        # Runs on the tray's own thread once its event loop is live (passed to
+        # app.run as tray_setup).
         with self._tray_lock:
             # pystray on Windows can't update the HICON before the event loop
-            # starts, so any set_icon calls made before _setup (e.g. from the
-            # server's initial gamepad-detection callback) are silently lost.
-            # Reset the cached state here so _apply_tray_state always calls
-            # set_icon once the loop is running and NIM_MODIFY will take effect.
+            # starts, so any set_icon calls made before it is running are
+            # silently lost. Reset the cached state here so _apply_tray_state
+            # always calls set_icon once the loop is live and NIM_MODIFY takes
+            # effect.
             self._tray_icon_connected = None
         self._apply_tray_state()
         if not self._start_hidden:
@@ -205,31 +203,15 @@ class GamepadSelectorTray:
 
     def run(self, *, start_hidden: bool = False) -> int:
         self._start_hidden = start_hidden
-        self.icon.run(setup=self._setup)
+        if self.tray_icon is None:
+            # No system tray: the window is the only UI, so it must be visible.
+            self.window.show()
+            self.app.run()
+        else:
+            self.app.run(self.tray_icon, tray_setup=self._on_tray_ready)
+        # The UI loop has exited; stop the managed server.
+        self.server_backend.stop()
         return 0
-
-
-def _install_signal_handlers(
-    quit_callback: Callable[[], None],
-) -> list[tuple[int, Any]]:
-    handlers: list[tuple[int, Any]] = []
-
-    def handle_signal(_signum: int, _frame: object | None) -> None:
-        quit_callback()
-
-    handlers.append(
-        (signal.SIGINT, signal.signal(signal.SIGINT, handle_signal))
-    )
-    if hasattr(signal, "SIGTERM"):
-        handlers.append(
-            (signal.SIGTERM, signal.signal(signal.SIGTERM, handle_signal))
-        )
-    return handlers
-
-
-def _restore_signal_handlers(handlers: list[tuple[int, Any]]) -> None:
-    for signum, previous_handler in handlers:
-        signal.signal(signum, previous_handler)
 
 
 def run_tray(
@@ -240,8 +222,4 @@ def run_tray(
     start_hidden: bool = False,
 ) -> int:
     tray = GamepadSelectorTray(config_path, lan=lan, terminal=terminal)
-    handlers = _install_signal_handlers(tray.shutdown)
-    try:
-        return tray.run(start_hidden=start_hidden)
-    finally:
-        _restore_signal_handlers(handlers)
+    return tray.run(start_hidden=start_hidden)
